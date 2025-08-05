@@ -254,7 +254,7 @@ function Install-AV {
         $config = Get-Content $configPath -Raw | ConvertFrom-Json
         $source = $config.DefaultInstallSource
         $sourcePath = $config.InstallSourcePaths.$source
-        $fileName = $config.Antywirus.FileName
+        $fileName = $config.AntyVirus.FileName
 
         if (-not $fileName) {
             Write-Log "Brak pliku instalacyjnego antywirusa w konfiguracji" -Color "Red" -IsError
@@ -751,5 +751,6 @@ $CheckboxControls["InstallApplications"].Add_CheckedChanged({
 
 Get-AppSelection
 
-
+$form.Add_Shown({ $form.Activate() })
+$form.ShowDialog() | Out-Null
 

@@ -4,6 +4,9 @@
         "network": "\\\\MARS\\installer\\",
         "web": "https://apps.ebkk.pl/Data/"
     },
+    "CustomWebDataLocation": {
+        "URL": "https://apps.ebkk.pl/Data/CustomWebData/"
+    },
     "DomainJoin": {
         "DomainName": "home.local",
         "Username": "ad\\administrator"
@@ -23,8 +26,8 @@
         "FileName": "TeamViewer_Host.msi",
         "Arguments": "/qn CUSTOMCONFIGID=62h5mt2 APITOKEN=8158247-example ASSIGNMENTOPTIONS=\"--alias %COMPUTERNAME% --grant-easy-access\""
     },
-    "Antywirus": {
-        "FileName": "Antywirus.exe"
+    "AntyVirus": {
+        "FileName": "AntyVirus.exe"
     },
     "WiFiProfile": {
         "FileName": "WiFiProfile.xml"
