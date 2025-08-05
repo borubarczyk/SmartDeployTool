@@ -1,0 +1,755 @@
+﻿#Requires -RunAsAdministrator
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+[System.Windows.Forms.Application]::EnableVisualStyles()
+
+
+$configPath = ".\config.json"
+$SelectedApps = @{}
+$CheckboxControls = @{}
+$checkboxOptions = [ordered]@{
+    "DisableHibernation"    = @{
+        "Text"    = "Wyłącz hibernację"
+        "Tooltip" = "Wyłącza funkcję hibernacji systemu Windows, na czas konfiguracji."
+        "Enabled" = $true
+    }
+    "ImportWiFiProfile"     = @{
+        "Text"    = "Importuj profil Wi-Fi"
+        "Tooltip" = "Importuje zapisany profil Wi-Fi z pliku."
+        "Enabled" = $false
+    }
+    "UninstallMicrosoft365" = @{
+        "Text"    = "Odinstaluj preinstalowane produkty Microsoft 365"
+        "Tooltip" = "Usuwa preinstalowane aplikacje Microsoft 365."
+        "Enabled" = $false
+    }
+    "InstallTeamViewer"     = @{
+        "Text"    = "Zainstaluj TeamViewer (jeśli jest przeinstaluje)"
+        "Tooltip" = "Instaluje TeamViewer, jeśli jest już zainstalowany."
+        "Enabled" = $true
+    }
+    "InstallApplications"   = @{
+        "Text"    = "Zainstaluj aplikacje (wybór)"
+        "Tooltip" = "Instaluje wybrane aplikacje."
+        "Enabled" = $true
+    }
+    "CreateLocalAdmin"      = @{
+        "Text"    = "Utwórz lokalnego administratora"
+        "Tooltip" = "Tworzy lokalne konto administratora."
+        "Enabled" = $true
+    }
+    "InstallAV"             = @{
+        "Text"    = "Zainstaluj Antywirusa"
+        "Tooltip" = "Instaluje oprogramowanie antywirusowe."
+        "Enabled" = $true
+    }
+    "JoinDomain"            = @{
+        "Text"    = "Dołącz do domeny"
+        "Tooltip" = "Dołącza komputer do domeny."
+        "Enabled" = $true
+    }
+    "ChangeSystemSettings"  = @{
+        "Text"    = "Zmiany rejestru i ustawień systemowych"
+        "Tooltip" = "Wprowadza zmiany w rejestrze i ustawieniach systemowych."
+        "Enabled" = $true
+    }
+    "RunWindowsUpdate"      = @{
+        "Text"    = "Uruchom Windows Update"
+        "Tooltip" = "Uruchamia usługę Windows Update."
+        "Enabled" = $true
+    }
+    "ChangeComputerName"    = @{
+        "Text"    = "Zmień nazwę komputera"
+        "Tooltip" = "Zmienia nazwę komputera."
+        "Enabled" = $false
+    }
+}
+
+function Test-ConfigurationFile {
+    if (-not (Test-Path $configPath)) {
+        Write-Log "Brak pliku config.json" -Color "Red"
+        return $false
+    }
+    try {
+        $config = Get-Content $configPath -Raw | ConvertFrom-Json
+        if ($null -eq $config.Programs) {
+            Write-Log "Nie znaleziono sekcji 'Programs' w config.json" -Color "Red"
+            return $false
+        }
+        return $true
+    }
+    catch {
+        Write-Log "Błąd podczas odczytu config.json: $_" -Color "Red"
+        return $false
+    }
+    
+}
+
+function Write-Log {
+    param(
+        [string]$Text,
+        [string]$Color = "Black",
+        [switch]$IsError
+    )
+    $timestamp = Get-Date -Format "HH:mm:ss"
+    $rtbLog.SelectionColor = $Color
+    $rtbLog.AppendText("[$timestamp] $Text`r`n")
+    $rtbLog.ScrollToCaret()
+    Add-Content -Path "C:\deploy-log.txt" -Value "[$timestamp] $Text"
+    if ($IsError) {
+        Add-Content -Path "C:\deploy-errors.txt" -Value "[$timestamp] $Text"
+    }
+}
+
+function Install-SelectedApps {
+    if (-not (Test-Path $configPath)) {
+        Write-Log "Brak pliku config.json" -Color "Red"
+        return
+    }
+
+    $config = Get-Content $configPath -Raw | ConvertFrom-Json
+    $source = $config.DefaultInstallSource
+    $sourcePath = $config.InstallSourcePaths.$source
+
+    foreach ($appName in $SelectedApps.Keys) {
+        $app = $config.Programs.$appName
+        $fileName = $app.FileName
+        $silentArgs = $app.SilentArgs
+        $fullPath = if ($sourcePath -like "http*") {
+            "$sourcePath$fileName"
+        }
+        else {
+            Join-Path $sourcePath $fileName
+        }
+
+        $localPath = "$env:TEMP\$fileName"
+
+        try {
+            Write-Log "Pobieranie $appName z $fullPath..."
+            Invoke-WebRequest -Uri $fullPath -OutFile $localPath -UseBasicParsing
+            Write-Log "Instalacja $appName..."
+
+            if ($fileName -like "*.msi") {
+                Start-Process "msiexec.exe" -ArgumentList "/i `"$localPath`" $silentArgs" -Wait
+            }
+            else {
+                Start-Process $localPath -ArgumentList $silentArgs -Wait
+            }
+
+            Write-Log "$appName zainstalowany." -Color "Green"
+        }
+        catch {
+            Write-Log "Błąd przy $($appName): $_" -Color "Red"
+        }
+    }
+}
+
+function Disable-Hibernation {
+    try {
+        Write-Log "Wyłączanie hibernacji..."
+        powercfg /h off
+        Write-Log "Hibernacja wyłączona." -Color "Green"
+    }
+    catch { Write-Log "Błąd: $_" -Color "Red" }
+}
+
+function Install-TeamViewer {
+    try {
+        if (-not (Test-Path $configPath)) {
+            Write-Log "Brak pliku config.json" -Color "Red" -IsError
+            return
+        }
+
+        $config = Get-Content $configPath -Raw | ConvertFrom-Json
+        $source = $config.DefaultInstallSource
+        $sourcePath = $config.InstallSourcePaths.$source
+        $msiArgs = $config.TeamViewer.Arguments
+        $fileName = $config.TeamViewer.FileName
+        $localPath = "$env:TEMP\$fileName"
+
+        $regPaths = @(
+            "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+        )
+
+
+        $isInstalled = $false
+        $uninstallString = $null
+
+        foreach ($path in $regPaths) {
+            $items = Get-ItemProperty -Path $path -ErrorAction SilentlyContinue
+            foreach ($item in $items) {
+                if ($item.DisplayName -like "*TeamViewer*") {
+                    $isInstalled = $true
+                    $uninstallString = $item.QuietUninstallString
+                    if (-not $uninstallString) { $uninstallString = $item.UninstallString }
+
+                    Write-Log "Znaleziono wpis TeamViewer: $($item.DisplayName)" -Color "Gray"
+                    break
+                }
+            }
+            if ($isInstalled) { break }
+        }
+
+
+        if ($isInstalled) {
+            Write-Log "TeamViewer już zainstalowany, odinstalowuję..." -Color "Blue"
+            if ($uninstallString) {
+                $uninstallCommand = ($uninstallString -replace "/I", "/X") + " /qn"
+                Get-Process -Name "*TeamViewer*" -ErrorAction SilentlyContinue | Stop-Process -Force
+                Start-Sleep -Seconds 5
+                Write-Log "Uruchamiam odinstalowanie: $uninstallCommand" -Color "Blue"
+                Start-Process -FilePath "cmd.exe" -ArgumentList "/c $uninstallCommand" -Wait -ErrorAction Stop
+                Write-Log "TeamViewer odinstalowany." -Color "Green"
+            }
+            else {
+                Write-Log "Nie znaleziono polecenia odinstalowania TeamViewer." -Color "Red" -IsError
+                return
+            }
+        }
+        else {
+            Write-Log "TeamViewer nie jest zainstalowany, przechodzę do instalacji." -Color "Blue"
+            if ( [System.Windows.Forms.MessageBox]::Show("TeamViewer nie jest zainstalowany. Czy chcesz kontynuować instalację?", "Potwierdzenie", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question) -ne [System.Windows.Forms.DialogResult]::Yes ) {
+                Write-Log "Instalacja anulowana przez użytkownika." -Color "Red"
+                return
+            }
+            Get-Process -Name "*TeamViewer*" -ErrorAction SilentlyContinue | Stop-Process -Force
+        }
+
+        if ($sourcePath -like "http*") {
+            $DownloadPathOrUrl = "$sourcePath$fileName"
+            Write-Log "Pobieranie TeamViewer z $DownloadPathOrUrl..." -Color "Blue"
+            Invoke-WebRequest -Uri $DownloadPathOrUrl -OutFile $localPath -UseBasicParsing -ErrorAction Stop
+            Write-Log "Pobrano TeamViewer do: $localPath" -Color "Green"
+        }
+        else {
+            $localPath = Join-Path $sourcePath $fileName
+            Write-Log "Instalacja TeamViewer z lokalnej ścieżki: $localPath" -Color "Blue"
+        }
+
+        Write-Log "Instalacja TeamViewer..." -Color "Blue"
+        Write-Log "Używam argumentów MSI: $msiArgs" -Color "Blue"
+        Start-Process "msiexec.exe" -ArgumentList "/i `"$localPath`" $msiArgs" -Wait -ErrorAction Stop
+        Write-Log "TeamViewer zainstalowany." -Color "Green"
+    }
+    catch {
+        Write-Log "Błąd podczas instalacji TeamViewer: $_" -Color "Red" -IsError
+    }
+    finally {
+        if (Test-Path $localPath) {
+            Remove-Item -Path $localPath -Force -ErrorAction SilentlyContinue
+            Write-Log "Usunięto plik instalacyjny TeamViewer: $localPath" -Color "Green"
+        }
+    }
+}
+
+function Install-AV {
+    try {
+        if (-not (Test-Path $configPath)) {
+            Write-Log "Brak pliku config.json" -Color "Red" -IsError
+            return
+        }
+
+        $config = Get-Content $configPath -Raw | ConvertFrom-Json
+        $source = $config.DefaultInstallSource
+        $sourcePath = $config.InstallSourcePaths.$source
+        $fileName = $config.Antywirus.FileName
+
+        if (-not $fileName) {
+            Write-Log "Brak pliku instalacyjnego antywirusa w konfiguracji" -Color "Red" -IsError
+            return
+        }
+
+        if ($fileName -like "http*") {
+            $avPath = Join-Path $env:TEMP (Split-Path $fileName -Leaf)
+            Write-Log "Pobieranie antywirusa z $fileName..."
+            Invoke-WebRequest -Uri $fileName -OutFile $avPath -UseBasicParsing
+        }
+        else {
+            $avPath = Join-Path $sourcePath $fileName
+        }
+
+        if (-not (Test-Path $avPath)) {
+            Write-Log "Plik instalacyjny nie został znaleziony: $avPath" -Color "Red" -IsError
+            return
+        }
+
+        Write-Log "Instalacja antywirusa z $avPath..."
+        Start-Process -FilePath $avPath -Wait
+        Write-Log "Instalacja antywirusa zakończona"
+    }
+    catch {
+        Write-Log "Błąd podczas instalacji antywirusa: $_" -Color "Red" -IsError
+    }
+}
+
+function Import-WiFiProfile {
+    if (-not (Test-Path $configPath)) {
+        Write-Log "Brak pliku config.json" -Color "Red" -IsError
+        return
+    }
+    $config = Get-Content $configPath -Raw | ConvertFrom-Json
+    $wifiProfile = $config.WiFiProfile.FileName
+    if (Test-Path $wifiProfile) {
+        Write-Log "Import profilu Wi-Fi..."
+        Start-Process netsh -ArgumentList "wlan add profile filename=`"$wifiProfile`"" -Wait
+        Write-Log "Profil Wi-Fi zaimportowany." -Color "Green"
+    }
+    else {
+        Write-Log "Brak pliku profilu Wi-Fi." -Color "Red"
+    }
+}
+
+function New-LocalAdmin {
+    if (-not (Test-Path $configPath)) {
+        Write-Log "Brak pliku config.json" -Color "Red" -IsError
+        return
+    }
+    try {
+        $config = Get-Content $configPath -Raw | ConvertFrom-Json
+        $username = $config.LocalAdmin.Username
+        $PasswordSecure = Read-Host "Wprowadź hasło dla konta $username" -AsSecureString
+        if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
+            if ($null -ne $PasswordSecure -and $PasswordSecure.Length -gt 8) {
+                New-LocalUser -Name $username -Password $PasswordSecure -PasswordNeverExpires -AccountNeverExpires
+                Add-LocalGroupMember -SID S-1-5-32-544 -Member $username
+                Write-Log "Utworzono lokalne konto '$username' w grupie 'Administratorzy'." -Color "Green"
+            }
+            else {
+                Write-Log "Nie podano hasła dla konta $username lub hasło jest zbyt krótkie." -Color "Red" -IsError
+            }
+        }
+        else {
+            Write-Log "Użytkownik '$username' już istnieje  pomijam." -Color "Red"
+        }
+    }
+    catch {
+        Write-Log "Błąd tworzenia konta: $_" -Color "Red"
+    }
+}
+
+function Join-Domain {
+    if (-not (Test-Path $configPath)) {
+        Write-Log "Brak pliku config.json" -Color "Red" -IsError
+        return
+    }
+    try {
+        $config = Get-Content $configPath -Raw | ConvertFrom-Json
+        if (-not $config.DomainJoin -or -not $config.DomainJoin.DomainName) {
+            Write-Log "Brak sekcji DomainJoin w config.json lub DomainName" -Color "Red" -IsError
+            return
+        }
+
+        Add-Type -AssemblyName System.Windows.Forms
+
+        $DomainName = ($config.DomainJoin.DomainName).Trim()
+        $UserForJoin = $config.DomainJoin.Username
+        $ComputerName = $env:COMPUTERNAME
+
+        Write-Log "Dołączanie do domeny $DomainName jako $UserForJoin..." -Color "Blue"
+        $Credential = Get-Credential -UserName $UserForJoin -Message "Podaj dane domenowe dla $UserForJoin"
+
+        Add-Computer -DomainName $DomainName -Credential $Credential -Force -Restart -ErrorAction Stop
+
+        Write-Log "Dołączono do domeny $DomainName z nazwą '$ComputerName'" -Color "Green"
+    }
+    catch {
+        Write-Log "Błąd dołączania do domeny: $_" -Color "Red" -IsError
+    }
+}
+
+function Set-NewComputerName {
+    Read-Host "Podaj nową nazwę komputera (domyślnie 'PC-SERIAL_NUMBER'): " -OutVariable NewName
+    if ([string]::IsNullOrWhiteSpace($NewName)) {
+        $NewName = "PC-$((Get-WmiObject -Class Win32_BIOS).SerialNumber)"
+    }
+    Rename-Computer -NewName $NewName -Force
+    Write-Log "Zmieniono nazwę komputera na '$NewName'." -Color "Green"
+}
+
+function Set-SystemTweaks {
+    try {
+        if (-not (Test-Path $configPath)) {
+            Write-Log "Brak pliku config.json" -Color "Red"
+            return
+        }
+        $settings = (Get-Content $configPath -Raw | ConvertFrom-Json).SystemSettings
+
+        Write-Log "Zastosowanie ustawień systemowych..."
+
+        if ($settings.DisableDeliveryOptimization) {
+            Write-Log "Wyłączanie Delivery Optimization..."
+            Set-ItemProperty -Path "HKU:\S-1-5-20\Software\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Settings" -Name "DownloadMode" -Value 0 -Type DWord -Force
+        }
+
+        if ($settings.EnableWin10StartMenu) {
+            Write-Log "Włączanie klasycznego menu Start (Win10)..."
+            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Start_ShowClassicMode" -Value 1 -Type DWord -Force
+        }
+
+        if ($settings.DisableTelemetry) {
+            Write-Log "Wyłączanie telemetryki..."
+            Set-ItemProperty -Path "HKU:\S-1-5-20\Software\Microsoft\Windows\CurrentVersion\Privacy" -Name "Telemetry" -Value 0 -Type DWord -Force
+        }
+
+        if ( $settings.DisableCortana) {
+            Write-Log "Wyłączanie Cortany..."
+            Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCortana" -Value 0 -Type DWord -Force
+        }
+        if ($settings.DisableFastStartup) {
+            Write-Log "Wyłączanie szybkiego uruchamiania..."
+            Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" -Name "HiberbootEnabled" -Value 0 -Type DWord -Force
+        }
+        if ($settings.DisableNewsAndInterests) {
+            Write-Log "Wyłączanie News and Interests..."
+            Set-ItemProperty -Path "HKLM:\Software\Policies\Microsoft\Dsh" -Name "AllowNewsAndInterests" -Value 0 -Type DWord -Force
+        }
+
+        Write-Log "Zmiany systemowe zastosowane." -Color "Green"
+    }
+    catch {
+        Write-Log "Błąd zmian systemowych: $_" -Color "Red"
+    }
+}
+
+function Start-WindowsUpdate {
+    try {
+        Write-Log "Uruchamianie Windows Update..."
+        Start-Process "control.exe" -ArgumentList "/name Microsoft.WindowsUpdate"
+    }
+    catch {
+        Write-Log "Nie udało się uruchomić WU: $_" -Color "Red"
+    }
+}
+
+function Uninstall-Microsoft365Apps {
+    $OfficeUninstallStrings = (Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* | Where-Object { $_.DisplayName -like "*Microsoft 365*" } | Select-Object UninstallString).UninstallString
+    ForEach ($UninstallString in $OfficeUninstallStrings) {
+        $UninstallEXE = ($UninstallString -split '"')[1]
+        $UninstallArg = ($UninstallString -split '"')[2] + " DisplayLevel=False"
+        Start-Process -FilePath $UninstallEXE -ArgumentList $UninstallArg -Wait
+    }    
+}
+
+function Show-AppSelectionWindow {
+    if (-not (Test-Path $configPath)) {
+        Write-Log "Brak pliku config.json" -Color "Red"
+        return
+    }
+
+    $config = Get-Content $configPath -Raw | ConvertFrom-Json
+    $programs = $config.Programs
+    $popup = New-Object Windows.Forms.Form
+    $popup.Text = "Wybór aplikacji"
+    $popup.AutoScroll = $true
+    $popup.Size = "400,600"
+    $popup.StartPosition = "CenterScreen"
+    $popup.FormBorderStyle = "FixedDialog"
+    $popup.MaximizeBox = $false
+    $popup.MinimizeBox = $false
+    $popup.TopMost = $true
+
+    $checkboxes = @{}
+    $y = 20
+
+    foreach ($name in $programs.PSObject.Properties.Name) {
+        $cb = New-Object Windows.Forms.CheckBox
+        $cb.Text = $name
+        $cb.Checked = $programs.$name.Enabled
+        $cb.Location = New-Object Drawing.Point(20, $y)
+        $cb.Size = New-Object Drawing.Size(340, 20)
+        $popup.Controls.Add($cb)
+        $checkboxes[$name] = $cb
+        $y += 25
+    }
+
+    $btnOK = New-Object Windows.Forms.Button
+    $btnOK.Text = "OK"
+    $btnOK.Location = New-Object Drawing.Point(20, ($y + 10))
+    $btnOK.Size = New-Object Drawing.Size(340, 30)
+    $btnOK.Add_Click({
+            $SelectedApps.Clear()
+            foreach ($key in $checkboxes.Keys) {
+                if ($checkboxes[$key].Checked) {
+                    $SelectedApps[$key] = $true
+                }
+            }
+            $popup.Close()
+            if ($null -ne $btnChooseApps) {
+                $btnChooseApps.Text = "Wybierz aplikacje ($($SelectedApps.Count))"
+                $checkboxControls["InstallApplications"].Checked = $SelectedApps.Count -gt 0
+            }
+            
+            if ($SelectedApps.Count -eq 0) {
+                $CheckboxControls["InstallApplications"].Checked = $false
+                Write-Log "Nie wybrano żadnych aplikacji do instalacji."
+            }
+            else {
+                Write-Log "Wybrano aplikacje: $($SelectedApps.Keys -join ', ')" -Color "Green"
+            }
+        })
+
+    $btnSelectAll = New-Object Windows.Forms.Button
+    $btnSelectAll.Text = "Zaznacz wszystko"
+    $btnSelectAll.Location = New-Object Drawing.Point(20, ($y + 50))
+    $btnSelectAll.Size = New-Object Drawing.Size(160, 30)
+    $btnSelectAll.Add_Click({
+            foreach ($cb in $checkboxes.Values) {
+                $cb.Checked = $true
+            }
+        })
+
+    $btnDeselectAll = New-Object Windows.Forms.Button
+    $btnDeselectAll.Text = "Odznacz wszystko"
+    $btnDeselectAll.Location = New-Object Drawing.Point(200, ($y + 50))
+    $btnDeselectAll.Size = New-Object Drawing.Size(160, 30)
+    $btnDeselectAll.Add_Click({
+            foreach ($cb in $checkboxes.Values) {
+                $cb.Checked = $false
+            }
+        })
+    
+    $btnCancel = New-Object Windows.Forms.Button
+    $btnCancel.Text = "Anuluj"
+    $btnCancel.Location = New-Object Drawing.Point(20, ($y + 90))
+    $btnCancel.Size = New-Object Drawing.Size(340, 30)
+    $btnCancel.Add_Click({
+            $popup.Close()
+        })
+    $popup.Controls.Add($btnCancel)
+
+    $bottomBuffer = New-Object Windows.Forms.Label
+    $bottomBuffer.Size = New-Object Drawing.Size(1, 40)
+    $bottomBuffer.Location = New-Object Drawing.Point(1, ($y + 100))
+
+    $popup.Controls.Add($bottomBuffer)
+    $popup.Controls.Add($btnDeselectAll)
+    $popup.Controls.Add($btnSelectAll)
+    $popup.Controls.Add($btnOK)
+    
+    $popup.KeyPreview = $true
+
+    $popup.Add_KeyDown({
+            if ($_.KeyCode -eq "Enter") {
+                $btnOK.PerformClick()
+            }
+        })
+
+    $popup.Add_KeyDown({
+            if ($_.KeyCode -eq "Escape") {
+                $popup.Close()
+            }
+        })
+
+    $popup.Add_Shown({ $popup.Activate() })
+    $popup.ShowDialog()
+}
+
+function Start-Deployment {
+    $btnStart.Enabled = $false
+    $btnStart.BackColor = "Yellow"
+    $progressBar.Value = 0
+
+    if ($CheckboxControls["DisableHibernation"].Checked) { Disable-Hibernation }
+    $progressBar.Value = 10
+
+    if ($CheckboxControls["InstallTeamViewer"].Checked) { Install-TeamViewer }
+    $progressBar.Value = 20
+
+    if ($CheckboxControls["UninstallMicrosoft365"].Checked) { Uninstall-Microsoft365Apps }
+    $progressBar.Value = 25
+
+    if ($CheckboxControls["InstallAV"].Checked) { Install-AV }
+    $progressBar.Value = 30
+
+    if ($CheckboxControls["ImportWiFiProfile"].Checked) { Import-WiFiProfile }
+    $progressBar.Value = 40
+
+    if ($CheckboxControls["CreateLocalAdmin"].Checked) { New-LocalAdmin }
+    $progressBar.Value = 55
+
+    if ($CheckboxControls["JoinDomain"].Checked) { Join-Domain }
+    $progressBar.Value = 70
+
+    if ($CheckboxControls["InstallApplications"].Checked -and $SelectedApps.Count -gt 0) {
+        Install-SelectedApps
+    }
+    else {
+        Write-Log "Instalacja aplikacji pominięta." 
+    }
+    $progressBar.Value = 85
+
+    if ($CheckboxControls["JoinIntune"].Checked) { Join-Intune }
+    $progressBar.Value = 90
+
+    if ($CheckboxControls["ChangeSystemSettings"].Checked) { Set-SystemTweaks }
+    if ($CheckboxControls["RunWindowsUpdate"].Checked) { 
+        Write-Log "Uruchamianie Windows Update..."
+        Start-WindowsUpdate 
+    }
+    
+    $progressBar.Value = 100
+    Write-Log "Konfiguracja zakończona." -Color "Green"
+    [System.Windows.Forms.MessageBox]::Show("Gotowe!", "Zakończono", "OK", "Information")
+    $btnStart.BackColor = "Green"
+    $btnStart.Enabled = $true
+}
+
+function Get-AppSelection {
+    if (-not (Test-Path $configPath)) {
+        Write-Log "Brak pliku config.json" -Color "Red"
+        return
+    }
+
+    $config = Get-Content $configPath -Raw | ConvertFrom-Json
+
+    if ($null -eq $config.Programs) {
+        Write-Log "Nie znaleziono sekcji 'Programs' w config.json" -Color "Red"
+        return
+    }
+
+    $SelectedApps.Clear()
+
+    foreach ($app in $config.Programs.PSObject.Properties.Name) {
+        $appObj = $config.Programs.$app
+        if ($appObj.Enabled -eq $true) {
+            $SelectedApps[$app] = $true
+        }
+    }
+
+    Write-Log "Załadowano domyślnie zaznaczone aplikacje: $($SelectedApps.Keys -join ', ')" -Color "Green"
+    if ($null -ne $btnChooseApps) {
+        $btnChooseApps.Text = "Wybierz aplikacje ($($SelectedApps.Count))"
+    }
+}
+
+
+if (-not (Test-ConfigurationFile)) {
+    Write-Log "Błąd konfiguracji. Sprawdź plik config.json." -Color "Red"
+    exit 1
+}
+
+$form = New-Object Windows.Forms.Form
+$form.Text = "SmartDeployTool"
+$form.Size = '600,625'
+$form.StartPosition = "CenterScreen"
+$form.FormBorderStyle = "FixedDialog"
+$form.MaximizeBox = $false
+
+$y = 20
+
+$tooltip = New-Object Windows.Forms.ToolTip
+
+foreach ($key in $checkboxOptions.Keys) {
+    $cb = New-Object Windows.Forms.CheckBox
+    $cb.Text = $checkboxOptions[$key].Text
+    $cb.Name = $key
+    $cb.Checked = $checkboxOptions[$key].Enabled
+    $cb.Location = New-Object Drawing.Point(20, $y)
+    $cb.Size = New-Object Drawing.Size(550, 20)
+    $cb.AutoSize = $true
+    $cb.Tag = $key
+
+    # Utrwalenie lokalnej zmiennej do działania w bloku skryptu
+    $localCb = $cb
+    $tooltip.SetToolTip($localCb, $checkboxOptions[$key].Tooltip)
+
+    $form.Controls.Add($localCb)
+    $CheckboxControls[$key] = $localCb
+    $y += 25
+}
+
+
+$btnChooseApps = New-Object Windows.Forms.Button
+$btnChooseApps.Text = "Wybierz aplikacje"
+$btnChooseApps.Location = New-Object Drawing.Point(20, $y)
+$btnChooseApps.Size = New-Object Drawing.Size(150, 30)
+$btnChooseApps.Add_Click({
+        Show-AppSelectionWindow
+    })
+$form.Controls.Add($btnChooseApps)
+
+
+$btnSelectAll = New-Object Windows.Forms.Button
+$btnSelectAll.Text = "Zaznacz wszystko"
+$btnSelectAll.Location = New-Object Drawing.Point(180, $y)
+$btnSelectAll.Size = New-Object Drawing.Size(150, 30)
+$btnSelectAll.Add_Click({
+        foreach ($cb in $CheckboxControls.Values) {
+            $cb.Checked = $true
+        }
+        Write-Log "Zaznaczono wszystkie opcje w głównym oknie." -Color "Green"
+    })
+$form.Controls.Add($btnSelectAll)
+
+$btnDeselectAll = New-Object Windows.Forms.Button
+$btnDeselectAll.Text = "Odznacz wszystko"
+$btnDeselectAll.Location = New-Object Drawing.Point(340, $y)
+$btnDeselectAll.Size = New-Object Drawing.Size(150, 30)
+$btnDeselectAll.Add_Click({
+        foreach ($cb in $CheckboxControls.Values) {
+            $cb.Checked = $false
+        }
+        Write-Log "Odznaczono wszystkie opcje w głównym oknie." -Color "Green"
+    })
+$form.Controls.Add($btnDeselectAll)
+$y += 40
+
+$progressBar = New-Object Windows.Forms.ProgressBar
+$progressBar.Location = New-Object Drawing.Point(20, $y)
+$progressBar.Size = New-Object Drawing.Size(550, 20)
+$form.Controls.Add($progressBar)
+$y += 30
+
+$rtbLog = New-Object Windows.Forms.RichTextBox
+$rtbLog.Location = New-Object Drawing.Point(20, $y)
+$rtbLog.Size = New-Object Drawing.Size(550, 160)
+$rtbLog.ReadOnly = $true
+$form.Controls.Add($rtbLog)
+
+$btnStart = New-Object Windows.Forms.Button
+$btnStart.Text = "START"
+$btnStart.BackColor = "Green"
+$btnStart.Location = New-Object Drawing.Point(20, ($y + 170))
+$btnStart.Size = New-Object Drawing.Size(550, 40)
+$btnStart.Add_Click({ 
+        Start-Deployment 
+    })
+$form.Controls.Add($btnStart)
+$form.Add_Shown({ $form.Activate() })
+
+$form.KeyPreview = $true
+$form.Add_KeyDown({
+        if ($_.KeyCode -eq "Enter") {
+            if ($btnStart.Enabled) {
+                if ([System.Windows.Forms.MessageBox]::Show("Czy na pewno chcesz rozpocząć konfigurację?", "Potwierdzenie", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question) -eq [System.Windows.Forms.DialogResult]::Yes) {
+                    $btnStart.PerformClick()
+                }
+            }
+        }
+    })
+
+$form.Add_KeyDown({
+        if ($_.KeyCode -eq "Escape") {
+            if ([System.Windows.Forms.MessageBox]::Show("Czy na pewno chcesz zamknąć aplikację?", "Potwierdzenie", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question) -eq [System.Windows.Forms.DialogResult]::Yes) {
+                $form.Close()
+            }
+        }
+    })
+
+$CheckboxControls["InstallApplications"].Add_CheckedChanged({
+        if ($CheckboxControls["InstallApplications"].Checked) {
+            if ($btnChooseApps.Enabled -eq $false) {
+                $btnChooseApps.Enabled = $true
+            }
+        }
+        else {
+            $btnChooseApps.Enabled = $false
+        }
+    })
+
+Get-AppSelection
+
+
+
