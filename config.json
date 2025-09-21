@@ -1,172 +1,185 @@
 {
-    "DefaultInstallSource": "web",
+  "DefaultInstallSource": "network",
+  "InstallSourcePaths": {
+    "network": "\\\\MARS\\installer\\",
+    "web": "https://apps.ebkk.pl/Data/"
+  },
+  "CustomWebDataLocation": {
+    "URL": "https://apps.ebkk.pl/Data/CustomWebData/"
+  },
+  "DomainJoin": {
+    "DomainName": "home.local",
+    "Username": "ad\\administrator"
+  },
+  "LocalAdmin": {
+    "Username": "adm_local"
+  },
+  "SystemSettings": {
+    "DisableDeliveryOptimization": true,
+    "EnableWin10StartMenu": true,
+    "DisableTelemetry": true,
+    "DisableCortana": true,
+    "DisableFastStartup": true,
+    "DisableNewsAndInterests": true
+  },
+  "WebAuth": {
+    "Username": "admin",
+    "Password": "admin@123"
+  },
+  "TeamViewer": {
+    "FileName": "TeamViewer_Host.msi",
+    "Arguments": "/qn CUSTOMCONFIGID=62h5mt2 APITOKEN=8158247-example ASSIGNMENTOPTIONS=\"--alias %COMPUTERNAME% --grant-easy-access\""
+  },
+  "AntyVirus": {
+    "DefaultInstallSource": "network",
     "InstallSourcePaths": {
-        "network": "\\\\MARS\\installer\\",
-        "web": "https://apps.ebkk.pl/Data/"
+      "network": "\\\\MARS\\installer\\antivirus\\",
+      "web": "https://apps.ebkk.pl/Data/antivirus/"
     },
-    "CustomWebDataLocation": {
-        "URL": "https://apps.ebkk.pl/Data/CustomWebData/"
+    "Credentials": {
+      "Username": "admin",
+      "Password": "admin@123"
     },
-    "DomainJoin": {
-        "DomainName": "home.local",
-        "Username": "ad\\administrator"
+    "FileName": "AntyVirus.exe"
+  },
+  "WiFiProfile": {
+    "FileName": "WiFiProfile.xml"
+  },
+  "Programs": {
+    "Chrome": {
+      "Enabled": true,
+      "FileName": "ChromeSetup.exe",
+      "SilentArgs": "/silent /install"
     },
-    "LocalAdmin": {
-        "Username": "Homies"
+    "7zip": {
+      "Enabled": true,
+      "FileName": "7z.exe",
+      "SilentArgs": "/S"
     },
-    "SystemSettings": {
-        "DisableDeliveryOptimization": true,
-        "EnableWin10StartMenu": true,
-        "DisableTelemetry": true,
-        "DisableCortana": true,
-        "DisableFastStartup": true,
-        "DisableNewsAndInterests": true
+    "VLC": {
+      "Enabled": false,
+      "FileName": "vlc.exe",
+      "SilentArgs": "/L=1045 /S"
     },
-    "TeamViewer": {
-        "FileName": "TeamViewer_Host.msi",
-        "Arguments": "/qn CUSTOMCONFIGID=62h5mt2 APITOKEN=8158247-example ASSIGNMENTOPTIONS=\"--alias %COMPUTERNAME% --grant-easy-access\""
+    "Firefox": {
+      "Enabled": true,
+      "FileName": "FirefoxSetup.exe",
+      "SilentArgs": "-ms -ma"
     },
-    "AntyVirus": {
-        "FileName": "AntyVirus.exe"
+    "Notepad++": {
+      "Enabled": true,
+      "FileName": "npp.exe",
+      "SilentArgs": "/S"
     },
-    "WiFiProfile": {
-        "FileName": "WiFiProfile.xml"
+    "DoubleCommander": {
+      "Enabled": true,
+      "FileName": "doublecmd.msi",
+      "SilentArgs": "/qn /norestart"
     },
-    "Programs": {
-        "Chrome": {
-            "Enabled": true,
-            "FileName": "ChromeSetup.exe",
-            "SilentArgs": "/silent /install"
-        },
-        "7zip": {
-            "Enabled": true,
-            "FileName": "7z.exe",
-            "SilentArgs": "/S"
-        },
-        "VLC": {
-            "Enabled": false,
-            "FileName": "vlc.exe",
-            "SilentArgs": "/L=1045 /S"
-        },
-        "Firefox": {
-            "Enabled": true,
-            "FileName": "FirefoxSetup.exe",
-            "SilentArgs": "-ms -ma"
-        },
-        "Notepad++": {
-            "Enabled": true,
-            "FileName": "npp.exe",
-            "SilentArgs": "/S"
-        },
-        "DoubleCommander": {
-            "Enabled": true,
-            "FileName": "doublecmd.msi",
-            "SilentArgs": "/qn /norestart"
-        },
-        "LanSweeper_Agent": {
-            "Enabled": true,
-            "FileName": "LsAgent-windows.exe",
-            "SilentArgs": "--mode unattended --server 192.168.10.50"
-        },
-        "FortiClient": {
-            "Enabled": true,
-            "FileName": "FortiClientVPN.msi",
-            "SilentArgs": "/quiet /norestart /passive"
-        },
-        "AdobeReader": {
-            "Enabled": true,
-            "FileName": "AcroRdr.exe",
-            "SilentArgs": "/sAll"
-        },
-        "PowerToys": {
-            "Enabled": true,
-            "FileName": "PowerToysSetup.exe",
-            "SilentArgs": "/quiet"
-        },
-        "PowerShell_7": {
-            "Enabled": true,
-            "FileName": "PowerShell.msi",
-            "SilentArgs": "/qn /norestart"
-        },
-        "FoxitReader": {
-            "Enabled": true,
-            "FileName": "FoxitReader.exe",
-            "SilentArgs": "/SP- /VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
-        },
-        "Java": {
-            "Enabled": true,
-            "FileName": "jre-8u361-windows-x64.exe",
-            "SilentArgs": "/s"
-        },
-        "LibreOffice": {
-            "Enabled": true,
-            "FileName": "LibreOffice.msi",
-            "SilentArgs": "/qn /norestart"
-        },
-        "Office_2024": {
-            "Enabled": true,
-            "FileName": "Office2024Setup.exe",
-            "SilentArgs": "/quiet /norestart"
-        },
-        "Office_2021": {
-            "Enabled": true,
-            "FileName": "Office2021Setup.exe",
-            "SilentArgs": "/quiet /norestart"
-        },
-        "Office_M365": {
-            "Enabled": true,
-            "FileName": "Office365Setup.exe",
-            "SilentArgs": "/quiet /norestart"
-        },
-        "Revit_2024": {
-            "Enabled": true,
-            "FileName": "Revit2024Setup.exe",
-            "SilentArgs": "-q"
-        },
-        "Autodesk_2024": {
-            "Enabled": true,
-            "FileName": "Autodesk2024Setup.exe",
-            "SilentArgs": "-q"
-        },
-        "Slack": {
-            "Enabled": true,
-            "FileName": "slack-standalone.msi",
-            "SilentArgs": "/qn /norestart"
-        },
-        "Szafir_KIR": {
-            "Enabled": true,
-            "FileName": "Szafir_Instalator.msi",
-            "SilentArgs": "/quiet"
-        },
-        "Szafir_CloudSingner": {
-            "Enabled": true,
-            "FileName": "SzafirCloudSignerSetup.msi",
-            "SilentArgs": "/S"
-        },
-        "DropBox": {
-            "Enabled": false,
-            "FileName": "DropboxInstaller.exe",
-            "SilentArgs": "/S"
-        },
-        "Zoom": {
-            "Enabled": false,
-            "FileName": "ZoomInstaller.exe",
-            "SilentArgs": "/silent /install"
-        },
-        "iManageAgentService": {
-            "Enabled": true,
-            "FileName": "iManageAgentServiceSetup.exe",
-            "SilentArgs": "/Silent"
-        },
-        "IManageWorkDesktopforWindows": {
-            "Enabled": true,
-            "FileName": "IManageWorkDesktopforWindowsSetup.exe",
-            "SilentArgs": "/Silent"
-        },
-        "MailStoreClient": {
-            "Enabled": true,
-            "FileName": "MailStoreClientSetup.exe",
-            "SilentArgs": "/qn /norestart"
-        }
+    "LanSweeper_Agent": {
+      "Enabled": true,
+      "FileName": "LsAgent-windows.exe",
+      "SilentArgs": "--mode unattended --server 192.168.10.50"
+    },
+    "FortiClient": {
+      "Enabled": true,
+      "FileName": "FortiClientVPN.msi",
+      "SilentArgs": "/quiet /norestart /passive"
+    },
+    "AdobeReader": {
+      "Enabled": true,
+      "FileName": "AcroRdr.exe",
+      "SilentArgs": "/sAll"
+    },
+    "PowerToys": {
+      "Enabled": true,
+      "FileName": "PowerToysSetup.exe",
+      "SilentArgs": "/quiet"
+    },
+    "PowerShell_7": {
+      "Enabled": true,
+      "FileName": "PowerShell.msi",
+      "SilentArgs": "/qn /norestart"
+    },
+    "FoxitReader": {
+      "Enabled": true,
+      "FileName": "FoxitReader.exe",
+      "SilentArgs": "/SP- /VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
+    },
+    "Java": {
+      "Enabled": true,
+      "FileName": "jre-8u361-windows-x64.exe",
+      "SilentArgs": "/s"
+    },
+    "LibreOffice": {
+      "Enabled": true,
+      "FileName": "LibreOffice.msi",
+      "SilentArgs": "/qn /norestart"
+    },
+    "Office_2024": {
+      "Enabled": true,
+      "FileName": "Office2024Setup.exe",
+      "SilentArgs": "/quiet /norestart"
+    },
+    "Office_2021": {
+      "Enabled": true,
+      "FileName": "Office2021Setup.exe",
+      "SilentArgs": "/quiet /norestart"
+    },
+    "Office_M365": {
+      "Enabled": true,
+      "FileName": "Office365Setup.exe",
+      "SilentArgs": "/quiet /norestart"
+    },
+    "Revit_2024": {
+      "Enabled": true,
+      "FileName": "Revit2024Setup.exe",
+      "SilentArgs": "-q"
+    },
+    "Autodesk_2024": {
+      "Enabled": true,
+      "FileName": "Autodesk2024Setup.exe",
+      "SilentArgs": "-q"
+    },
+    "Slack": {
+      "Enabled": true,
+      "FileName": "slack-standalone.msi",
+      "SilentArgs": "/qn /norestart"
+    },
+    "Szafir_KIR": {
+      "Enabled": true,
+      "FileName": "Szafir_Instalator.msi",
+      "SilentArgs": "/quiet"
+    },
+    "Szafir_CloudSingner": {
+      "Enabled": true,
+      "FileName": "SzafirCloudSignerSetup.msi",
+      "SilentArgs": "/S"
+    },
+    "DropBox": {
+      "Enabled": false,
+      "FileName": "DropboxInstaller.exe",
+      "SilentArgs": "/S"
+    },
+    "Zoom": {
+      "Enabled": false,
+      "FileName": "ZoomInstaller.exe",
+      "SilentArgs": "/silent /install"
+    },
+    "iManageAgentService": {
+      "Enabled": true,
+      "FileName": "iManageAgentServiceSetup.exe",
+      "SilentArgs": "/Silent"
+    },
+    "IManageWorkDesktopforWindows": {
+      "Enabled": true,
+      "FileName": "IManageWorkDesktopforWindowsSetup.exe",
+      "SilentArgs": "/Silent"
+    },
+    "MailStoreClient": {
+      "Enabled": true,
+      "FileName": "MailStoreClientSetup.exe",
+      "SilentArgs": "/qn /norestart"
     }
+  }
 }

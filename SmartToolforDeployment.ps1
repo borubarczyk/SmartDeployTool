@@ -3,6 +3,7 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 [System.Windows.Forms.Application]::EnableVisualStyles()
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
 
 
 $configPath = ".\config.json"
@@ -16,7 +17,7 @@ $checkboxOptions = [ordered]@{
     }
     "ImportWiFiProfile"     = @{
         "Text"    = "Importuj profil Wi-Fi"
-        "Tooltip" = "Importuje zapisany profil Wi-Fi z pliku."
+        "Tooltip" = "Importuje zapisany profil Wi-Fi z pliku (Lizard-Tech)."
         "Enabled" = $false
     }
     "UninstallMicrosoft365" = @{
@@ -26,42 +27,42 @@ $checkboxOptions = [ordered]@{
     }
     "InstallTeamViewer"     = @{
         "Text"    = "Zainstaluj TeamViewer (jeśli jest przeinstaluje)"
-        "Tooltip" = "Instaluje TeamViewer, jeśli jest już zainstalowany."
+        "Tooltip" = "Instaluje TeamViewer, jeśli jest już zainstalowany, odinstaluje i zainstaluje ponownie, jeśli jest uruchomiony QS zamknie proces i rozpocznie instalację."
         "Enabled" = $true
     }
     "InstallApplications"   = @{
         "Text"    = "Zainstaluj aplikacje (wybór)"
-        "Tooltip" = "Instaluje wybrane aplikacje."
+        "Tooltip" = "Instaluje wybrane aplikacje z listy."
         "Enabled" = $true
     }
     "CreateLocalAdmin"      = @{
         "Text"    = "Utwórz lokalnego administratora"
-        "Tooltip" = "Tworzy lokalne konto administratora."
+        "Tooltip" = "Tworzy lokalne konto administratora z niewygasającym hasłem, nazwa konta utworzy się na podstawie konfiguracji w pliku JSON."
         "Enabled" = $true
     }
     "InstallAV"             = @{
         "Text"    = "Zainstaluj Antywirusa"
-        "Tooltip" = "Instaluje oprogramowanie antywirusowe."
+        "Tooltip" = "Instaluje oprogramowanie antywirusowe (IN DEVELOPMENT)."
         "Enabled" = $true
     }
     "JoinDomain"            = @{
         "Text"    = "Dołącz do domeny"
-        "Tooltip" = "Dołącza komputer do domeny."
+        "Tooltip" = "Dołącza komputer do domeny - zgodnie z konfiguracją w pliku JSON - trzeba wpisać hasło do konta domenowego uprawnionego do tego."
         "Enabled" = $true
     }
     "ChangeSystemSettings"  = @{
         "Text"    = "Zmiany rejestru i ustawień systemowych"
-        "Tooltip" = "Wprowadza zmiany w rejestrze i ustawieniach systemowych."
+        "Tooltip" = "Wprowadza zmiany w rejestrze i ustawieniach systemowych, zgodnie z konfiguracją w pliku JSON zmiana pobierania aktualizacji, ustawienia prywatności, wyłączenie Cortany, szybkiego uruchamiania, włącza stary widok menu kontekstowego itp."
         "Enabled" = $true
     }
     "RunWindowsUpdate"      = @{
         "Text"    = "Uruchom Windows Update"
-        "Tooltip" = "Uruchamia usługę Windows Update."
+        "Tooltip" = "Uruchamia usługę Windows Update po zakończeniu instalacji i sprawdza dostępność aktualizacji."
         "Enabled" = $true
     }
     "ChangeComputerName"    = @{
         "Text"    = "Zmień nazwę komputera"
-        "Tooltip" = "Zmienia nazwę komputera."
+        "Tooltip" = "Zmienia nazwę komputera na podstawie konfiguracji w pliku JSON i wprowadzonych danych wymaga ponownego uruchomienia."
         "Enabled" = $false
     }
 }
@@ -126,15 +127,31 @@ function Install-SelectedApps {
         $localPath = "$env:TEMP\$fileName"
 
         try {
-            Write-Log "Pobieranie $appName z $fullPath..."
-            Invoke-WebRequest -Uri $fullPath -OutFile $localPath -UseBasicParsing
+            Write-Log "Pobieranie $appName"
+
+            $iwrParams = @{
+                Uri             = $fullPath
+                OutFile         = $localPath
+                UseBasicParsing = $true
+                ErrorAction     = 'Stop'
+            }
+
+            if ($config.WebAuth.Username -and $config.WebAuth.Password) {
+                $sec = ConvertTo-SecureString $config.WebAuth.Password -AsPlainText -Force
+                $cred = [pscredential]::new($config.WebAuth.Username, $sec)
+                $iwrParams.Credential = $cred
+            }
+
+            Invoke-WebRequest @iwrParams 
+
             Write-Log "Instalacja $appName..."
 
             if ($fileName -like "*.msi") {
-                Start-Process "msiexec.exe" -ArgumentList "/i `"$localPath`" $silentArgs" -Wait
+                $args = "/i `"$localPath`" $silentArgs"
+                Start-Process "msiexec.exe" -ArgumentList $args -Wait -NoNewWindow
             }
             else {
-                Start-Process $localPath -ArgumentList $silentArgs -Wait
+                Start-Process $localPath -ArgumentList $silentArgs -Wait -NoNewWindow
             }
 
             Write-Log "$appName zainstalowany." -Color "Green"
@@ -142,6 +159,7 @@ function Install-SelectedApps {
         catch {
             Write-Log "Błąd przy $($appName): $_" -Color "Red"
         }
+
     }
 }
 
@@ -210,7 +228,7 @@ function Install-TeamViewer {
         }
         else {
             Write-Log "TeamViewer nie jest zainstalowany, przechodzę do instalacji." -Color "Blue"
-            if ( [System.Windows.Forms.MessageBox]::Show("TeamViewer nie jest zainstalowany. Czy chcesz kontynuować instalację?", "Potwierdzenie", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question) -ne [System.Windows.Forms.DialogResult]::Yes ) {
+            if ( [System.Windows.Forms.MessageBox]::Show("Nie wykryto instalacji TeamViewer. Czy chcesz kontynuować instalację? (Jeśli istnieje proces TeamViewera zostanie on ubity)", "Potwierdzenie", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question) -ne [System.Windows.Forms.DialogResult]::Yes ) {
                 Write-Log "Instalacja anulowana przez użytkownika." -Color "Red"
                 return
             }
@@ -252,19 +270,41 @@ function Install-AV {
         }
 
         $config = Get-Content $configPath -Raw | ConvertFrom-Json
-        $source = $config.DefaultInstallSource
-        $sourcePath = $config.InstallSourcePaths.$source
-        $fileName = $config.AntyVirus.FileName
 
+        $avConfig = $config.AntyVirus
+        $source = if ($avConfig.DefaultInstallSource) { 
+            $avConfig.DefaultInstallSource 
+        } else { 
+            $config.DefaultInstallSource 
+        }
+
+        $sourcePath = $avConfig.InstallSourcePaths.$source
+        if (-not $sourcePath) {
+            $sourcePath = $config.InstallSourcePaths.$source
+        }
+
+        $fileName = $avConfig.FileName
         if (-not $fileName) {
-            Write-Log "Brak pliku instalacyjnego antywirusa w konfiguracji" -Color "Red" -IsError
+            Write-Log "Brak nazwy pliku instalacyjnego antywirusa w konfiguracji" -Color "Red" -IsError
             return
         }
 
-        if ($fileName -like "http*") {
-            $avPath = Join-Path $env:TEMP (Split-Path $fileName -Leaf)
-            Write-Log "Pobieranie antywirusa z $fileName..."
-            Invoke-WebRequest -Uri $fileName -OutFile $avPath -UseBasicParsing
+        if ($source -eq "web") {
+            $avPath = Join-Path $env:TEMP $fileName
+            Write-Log "Pobieranie antywirusa z $sourcePath$fileName..."
+
+            $cred = $null
+            if ($avConfig.Credentials.Username -and $avConfig.Credentials.Password) {
+                $sec = ConvertTo-SecureString $avConfig.Credentials.Password -AsPlainText -Force
+                $cred = New-Object System.Management.Automation.PSCredential ($avConfig.Credentials.Username, $sec)
+            }
+
+            if ($cred) {
+                Invoke-WebRequest -Uri ($sourcePath + $fileName) -OutFile $avPath -UseBasicParsing -Credential $cred
+            }
+            else {
+                Invoke-WebRequest -Uri ($sourcePath + $fileName) -OutFile $avPath -UseBasicParsing
+            }
         }
         else {
             $avPath = Join-Path $sourcePath $fileName
@@ -350,9 +390,9 @@ function Join-Domain {
         Write-Log "Dołączanie do domeny $DomainName jako $UserForJoin..." -Color "Blue"
         $Credential = Get-Credential -UserName $UserForJoin -Message "Podaj dane domenowe dla $UserForJoin"
 
-        Add-Computer -DomainName $DomainName -Credential $Credential -Force -Restart -ErrorAction Stop
-
+        Add-Computer -DomainName $DomainName -Credential $Credential -Force -ErrorAction Stop
         Write-Log "Dołączono do domeny $DomainName z nazwą '$ComputerName'" -Color "Green"
+        Write-Log "Wymagane jest ponowne uruchomienie komputera, aby zmiany zaczęły obowiązywać." -Color "Yellow"
     }
     catch {
         Write-Log "Błąd dołączania do domeny: $_" -Color "Red" -IsError
@@ -368,48 +408,77 @@ function Set-NewComputerName {
     Write-Log "Zmieniono nazwę komputera na '$NewName'." -Color "Green"
 }
 
+function Set-RegistryDword {
+    param(
+        [string]$Path,
+        [string]$Name,
+        [int]$Value
+    )
+    try {
+        # Sprawdź, czy wartość już istnieje
+        $current = Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue
+        if ($null -eq $current) {
+            New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType DWord -Force | Out-Null
+            Write-Log "Utworzono wartość $Name w $Path"
+        }
+        else {
+            Set-ItemProperty -Path $Path -Name $Name -Value $Value -Force
+            Write-Log "Zmieniono wartość $Name w $Path"
+        }
+    }
+    catch {
+        Write-Log "Błąd rejestru dla $Name w $($Path): $_" -Color "Red"
+    }
+}
+
 function Set-SystemTweaks {
     try {
         if (-not (Test-Path $configPath)) {
             Write-Log "Brak pliku config.json" -Color "Red"
             return
         }
-        $settings = (Get-Content $configPath -Raw | ConvertFrom-Json).SystemSettings
 
+        $settings = (Get-Content $configPath -Raw | ConvertFrom-Json).SystemSettings
         Write-Log "Zastosowanie ustawień systemowych..."
 
         if ($settings.DisableDeliveryOptimization) {
             Write-Log "Wyłączanie Delivery Optimization..."
-            Set-ItemProperty -Path "HKU:\S-1-5-20\Software\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Settings" -Name "DownloadMode" -Value 0 -Type DWord -Force
+            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" -Force | Out-Null
+            Set-RegistryDword -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" -Name "DODownloadMode" -Value 0
         }
 
         if ($settings.EnableWin10StartMenu) {
             Write-Log "Włączanie klasycznego menu Start (Win10)..."
-            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Start_ShowClassicMode" -Value 1 -Type DWord -Force
+            Set-RegistryDword -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Start_ShowClassicMode" -Value 1
         }
 
         if ($settings.DisableTelemetry) {
             Write-Log "Wyłączanie telemetryki..."
-            Set-ItemProperty -Path "HKU:\S-1-5-20\Software\Microsoft\Windows\CurrentVersion\Privacy" -Name "Telemetry" -Value 0 -Type DWord -Force
+            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Force | Out-Null
+            Set-RegistryDword -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value 0
         }
 
-        if ( $settings.DisableCortana) {
+        if ($settings.DisableCortana) {
             Write-Log "Wyłączanie Cortany..."
-            Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCortana" -Value 0 -Type DWord -Force
+            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Force | Out-Null
+            Set-RegistryDword -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCortana" -Value 0
         }
+
         if ($settings.DisableFastStartup) {
             Write-Log "Wyłączanie szybkiego uruchamiania..."
-            Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" -Name "HiberbootEnabled" -Value 0 -Type DWord -Force
+            Set-RegistryDword -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" -Name "HiberbootEnabled" -Value 0
         }
+
         if ($settings.DisableNewsAndInterests) {
             Write-Log "Wyłączanie News and Interests..."
-            Set-ItemProperty -Path "HKLM:\Software\Policies\Microsoft\Dsh" -Name "AllowNewsAndInterests" -Value 0 -Type DWord -Force
+            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" -Force | Out-Null
+            Set-RegistryDword -Path "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" -Name "AllowNewsAndInterests" -Value 0
         }
 
         Write-Log "Zmiany systemowe zastosowane." -Color "Green"
     }
     catch {
-        Write-Log "Błąd zmian systemowych: $_" -Color "Red"
+        Write-Log "Błąd w Set-SystemTweaks: $_" -Color "Red"
     }
 }
 
@@ -624,6 +693,165 @@ function Get-AppSelection {
     }
 }
 
+function Get-Config {
+    if (-not (Test-Path $configPath)) {
+        throw "Brak pliku config.json"
+    }
+    return (Get-Content $configPath -Raw | ConvertFrom-Json)
+}
+
+function Save-Config($config) {
+    $json = $config | ConvertTo-Json -Depth 10
+    $json | Set-Content -Path $configPath -Encoding UTF8
+    Write-Log "Zapisano zmiany do config.json" -Color "Green"
+}
+
+function Show-ConfigEditor {
+    try { $config = Get-Config } catch { Write-Log $_ -Color Red; return }
+
+    $dlg = New-Object Windows.Forms.Form
+    $dlg.Text = "Ustawienia – źródła, domena, konto lokalne"
+    $dlg.StartPosition = "CenterParent"
+    $dlg.FormBorderStyle = "FixedDialog"
+    $dlg.MaximizeBox = $false
+    $dlg.MinimizeBox = $false
+    $dlg.TopMost = $true
+    $dlg.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Font
+    $dlg.ClientSize = New-Object Drawing.Size(720, 380)
+
+    $grid = New-Object Windows.Forms.TableLayoutPanel
+    $grid.Dock = 'Fill'
+    $grid.Padding = New-Object Windows.Forms.Padding(16, 16, 16, 72) 
+    $grid.ColumnCount = 2
+    $grid.RowCount = 7
+    $grid.AutoSize = $false
+    $grid.GrowStyle = 'AddRows'
+    $grid.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 38)))
+    $grid.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 62)))
+
+    function AddRow([string]$labelText, [System.Windows.Forms.Control]$ctrl) {
+        $row = $grid.RowCount
+        $grid.RowStyles.Add((New-Object Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+        $lbl = New-Object Windows.Forms.Label
+        $lbl.Text = $labelText
+        $lbl.AutoSize = $true
+        $lbl.Margin = New-Object Windows.Forms.Padding(0, 0, 10, 10)
+        $ctrl.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 10)
+        $ctrl.Dock = 'Fill'
+        $grid.Controls.Add($lbl, 0, $row - 1)
+        $grid.Controls.Add($ctrl, 1, $row - 1)
+        $grid.RowCount++
+    }
+
+    $cmbSrc = New-Object Windows.Forms.ComboBox
+    $cmbSrc.DropDownStyle = 'DropDownList'
+    [void]$cmbSrc.Items.AddRange(@('network', 'web'))
+    $src = [string]$config.DefaultInstallSource
+    if ($cmbSrc.Items -contains $src) {
+        $cmbSrc.SelectedItem = $src
+    }
+    else {
+        $cmbSrc.SelectedItem = 'network'
+    }
+    AddRow "Domyślne źródło instalacji" $cmbSrc
+
+    $txtNet = New-Object Windows.Forms.TextBox
+    $txtNet.Text = [string]$config.InstallSourcePaths.network
+    AddRow "Ścieżka network (UNC)" $txtNet
+
+    $txtWeb = New-Object Windows.Forms.TextBox
+    $txtWeb.Text = [string]$config.InstallSourcePaths.web
+    AddRow "Ścieżka web (URL)" $txtWeb
+
+    $txtCwd = New-Object Windows.Forms.TextBox
+    $txtCwd.Text = [string]$config.CustomWebDataLocation.URL
+    AddRow "CustomWebData URL" $txtCwd
+
+    $txtDom = New-Object Windows.Forms.TextBox
+    $txtDom.Text = [string]$config.DomainJoin.DomainName
+    AddRow "Domena (DomainJoin.DomainName)" $txtDom
+
+    $txtDomUser = New-Object Windows.Forms.TextBox
+    $txtDomUser.Text = [string]$config.DomainJoin.Username
+    AddRow "Użytkownik do join (domain\\user)" $txtDomUser
+
+    $txtLoc = New-Object Windows.Forms.TextBox
+    $txtLoc.Text = [string]$config.LocalAdmin.Username
+    AddRow "Lokalny admin (LocalAdmin.Username)" $txtLoc
+
+    $btnPanel = New-Object Windows.Forms.FlowLayoutPanel
+    $btnPanel.Dock = 'Bottom'
+    $btnPanel.FlowDirection = 'RightToLeft'
+    $btnPanel.Padding = New-Object Windows.Forms.Padding(16, 12, 16, 16)
+    $btnPanel.Height = 64
+    $btnPanel.WrapContents = $false
+
+    $btnCancel = New-Object Windows.Forms.Button
+    $btnCancel.Text = "Anuluj"
+    $btnCancel.Width = 120
+    $btnCancel.Height = 34
+    $btnCancel.Margin = New-Object Windows.Forms.Padding(8, 0, 0, 0)
+    $btnCancel.Add_Click({ $dlg.Close() })
+
+    $btnSave = New-Object Windows.Forms.Button
+    $btnSave.Text = "Zapisz"
+    $btnSave.Width = 120
+    $btnSave.Height = 34
+    $btnSave.Margin = New-Object Windows.Forms.Padding(8, 0, 0, 0)
+
+    $btnPanel.Controls.Add($btnCancel)
+    $btnPanel.Controls.Add($btnSave)
+
+    $dlg.AcceptButton = $btnSave
+    $dlg.CancelButton = $btnCancel
+
+    $btnSave.Add_Click({
+            try {
+                $src = [string]$cmbSrc.SelectedItem
+                if ([string]::IsNullOrWhiteSpace($src) -or ($src -notin @('network', 'web'))) {
+                    [System.Windows.Forms.MessageBox]::Show("Wybierz poprawne źródło (network/web)."); return
+                }
+                $net = $txtNet.Text.Trim()
+                $web = $txtWeb.Text.Trim()
+                $cwd = $txtCwd.Text.Trim()
+                $dom = $txtDom.Text.Trim()
+                $domUser = $txtDomUser.Text.Trim()
+                $locUser = $txtLoc.Text.Trim()
+
+                if ($web -and $web[-1] -ne '/') { $web += '/' }
+                if ($cwd -and $cwd[-1] -ne '/') { $cwd += '/' }
+                if ($net -and $net -notmatch '^\\\\') {
+                    [System.Windows.Forms.MessageBox]::Show("Ścieżka network musi być w formacie UNC (\\server\share\)."); return
+                }
+
+                $config.DefaultInstallSource = $src
+                if (-not $config.InstallSourcePaths) { $config | Add-Member -NotePropertyName InstallSourcePaths -NotePropertyValue (@{}) -Force }
+                $config.InstallSourcePaths.network = $net
+                $config.InstallSourcePaths.web = $web
+
+                if (-not $config.CustomWebDataLocation) { $config | Add-Member -NotePropertyName CustomWebDataLocation -NotePropertyValue (@{}) -Force }
+                $config.CustomWebDataLocation.URL = $cwd
+
+                if (-not $config.DomainJoin) { $config | Add-Member -NotePropertyName DomainJoin -NotePropertyValue (@{}) -Force }
+                $config.DomainJoin.DomainName = $dom
+                $config.DomainJoin.Username = $domUser
+
+                if (-not $config.LocalAdmin) { $config | Add-Member -NotePropertyName LocalAdmin -NotePropertyValue (@{}) -Force }
+                $config.LocalAdmin.Username = $locUser
+
+                Save-Config $config
+                [System.Windows.Forms.MessageBox]::Show("Zapisano konfigurację.")
+                $dlg.Close()
+            }
+            catch {
+                [System.Windows.Forms.MessageBox]::Show("Błąd zapisu: $($_.Exception.Message)")
+            }
+        })
+
+    $dlg.Controls.Add($grid)
+    $dlg.Controls.Add($btnPanel)
+    $dlg.ShowDialog() | Out-Null
+}
 
 if (-not (Test-ConfigurationFile)) {
     Write-Log "Błąd konfiguracji. Sprawdź plik config.json." -Color "Red"
@@ -631,8 +859,8 @@ if (-not (Test-ConfigurationFile)) {
 }
 
 $form = New-Object Windows.Forms.Form
-$form.Text = "SmartDeployTool"
-$form.Size = '600,625'
+$form.Text = "Smart Tool for Deployment"
+$form.Size = '600,630'
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
@@ -660,7 +888,6 @@ foreach ($key in $checkboxOptions.Keys) {
     $y += 25
 }
 
-
 $btnChooseApps = New-Object Windows.Forms.Button
 $btnChooseApps.Text = "Wybierz aplikacje"
 $btnChooseApps.Location = New-Object Drawing.Point(20, $y)
@@ -674,7 +901,7 @@ $form.Controls.Add($btnChooseApps)
 $btnSelectAll = New-Object Windows.Forms.Button
 $btnSelectAll.Text = "Zaznacz wszystko"
 $btnSelectAll.Location = New-Object Drawing.Point(180, $y)
-$btnSelectAll.Size = New-Object Drawing.Size(150, 30)
+$btnSelectAll.Size = New-Object Drawing.Size(120, 30)
 $btnSelectAll.Add_Click({
         foreach ($cb in $CheckboxControls.Values) {
             $cb.Checked = $true
@@ -685,8 +912,8 @@ $form.Controls.Add($btnSelectAll)
 
 $btnDeselectAll = New-Object Windows.Forms.Button
 $btnDeselectAll.Text = "Odznacz wszystko"
-$btnDeselectAll.Location = New-Object Drawing.Point(340, $y)
-$btnDeselectAll.Size = New-Object Drawing.Size(150, 30)
+$btnDeselectAll.Location = New-Object Drawing.Point(310, $y)
+$btnDeselectAll.Size = New-Object Drawing.Size(120, 30)
 $btnDeselectAll.Add_Click({
         foreach ($cb in $CheckboxControls.Values) {
             $cb.Checked = $false
@@ -694,6 +921,13 @@ $btnDeselectAll.Add_Click({
         Write-Log "Odznaczono wszystkie opcje w głównym oknie." -Color "Green"
     })
 $form.Controls.Add($btnDeselectAll)
+
+$btnSettings = New-Object Windows.Forms.Button
+$btnSettings.Text = "Ustawienia…"
+$btnSettings.Location = New-Object Drawing.Point(440, $y)
+$btnSettings.Size = New-Object Drawing.Size(130, 30)
+$btnSettings.Add_Click({ Show-ConfigEditor })
+$form.Controls.Add($btnSettings)
 $y += 40
 
 $progressBar = New-Object Windows.Forms.ProgressBar
