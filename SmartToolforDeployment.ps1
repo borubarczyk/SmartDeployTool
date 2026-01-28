@@ -103,6 +103,54 @@ function Write-Log {
     }
 }
 
+function Show-InputBox {
+    param(
+        [string]$Message,
+        [string]$Title,
+        [string]$DefaultText = ""
+    )
+    $inputForm = New-Object Windows.Forms.Form
+    $inputForm.Text = $Title
+    $inputForm.Size = New-Object Drawing.Size(350, 160)
+    $inputForm.StartPosition = "CenterScreen"
+    $inputForm.FormBorderStyle = 'FixedDialog'
+    $inputForm.MaximizeBox = $false
+    $inputForm.MinimizeBox = $false
+
+    $lbl = New-Object Windows.Forms.Label
+    $lbl.Location = New-Object Drawing.Point(10, 20)
+    $lbl.Size = New-Object Drawing.Size(320, 20)
+    $lbl.Text = $Message
+    $inputForm.Controls.Add($lbl)
+
+    $tb = New-Object Windows.Forms.TextBox
+    $tb.Location = New-Object Drawing.Point(10, 50)
+    $tb.Size = New-Object Drawing.Size(315, 20)
+    $tb.Text = $DefaultText
+    $inputForm.Controls.Add($tb)
+
+    $btnOk = New-Object Windows.Forms.Button
+    $btnOk.Text = "OK"
+    $btnOk.DialogResult = [Windows.Forms.DialogResult]::OK
+    $btnOk.Location = New-Object Drawing.Point(165, 90)
+    $inputForm.Controls.Add($btnOk)
+
+    $btnCancel = New-Object Windows.Forms.Button
+    $btnCancel.Text = "Cancel"
+    $btnCancel.DialogResult = [Windows.Forms.DialogResult]::Cancel
+    $btnCancel.Location = New-Object Drawing.Point(250, 90)
+    $inputForm.Controls.Add($btnCancel)
+
+    $inputForm.AcceptButton = $btnOk
+    $inputForm.CancelButton = $btnCancel
+    $inputForm.Add_Shown({ $inputForm.Activate(); $tb.Focus() })
+
+    if ($inputForm.ShowDialog() -eq [Windows.Forms.DialogResult]::OK) {
+        return $tb.Text
+    }
+    return $null
+}
+
 function Install-SelectedApps {
     if (-not (Test-Path $configPath)) {
         Write-Log "Brak pliku config.json" -Color "Red"
@@ -118,7 +166,7 @@ function Install-SelectedApps {
         $fileName = $app.FileName
         $silentArgs = $app.SilentArgs
         $fullPath = if ($sourcePath -like "http*") {
-            "$sourcePath$fileName"
+            if ($sourcePath.EndsWith("/")) { "$sourcePath$fileName" } else { "$sourcePath/$fileName" }
         }
         else {
             Join-Path $sourcePath $fileName
@@ -147,8 +195,8 @@ function Install-SelectedApps {
             Write-Log "Instalacja $appName..."
 
             if ($fileName -like "*.msi") {
-                $args = "/i `"$localPath`" $silentArgs"
-                Start-Process "msiexec.exe" -ArgumentList $args -Wait -NoNewWindow
+                $msiArgs = "/i `"$localPath`" $silentArgs"
+                Start-Process "msiexec.exe" -ArgumentList $msiArgs -Wait -NoNewWindow
             }
             else {
                 Start-Process $localPath -ArgumentList $silentArgs -Wait -NoNewWindow
@@ -236,7 +284,7 @@ function Install-TeamViewer {
         }
 
         if ($sourcePath -like "http*") {
-            $DownloadPathOrUrl = "$sourcePath$fileName"
+            $DownloadPathOrUrl = if ($sourcePath.EndsWith("/")) { "$sourcePath$fileName" } else { "$sourcePath/$fileName" }
             Write-Log "Pobieranie TeamViewer z $DownloadPathOrUrl..." -Color "Blue"
             Invoke-WebRequest -Uri $DownloadPathOrUrl -OutFile $localPath -UseBasicParsing -ErrorAction Stop
             Write-Log "Pobrano TeamViewer do: $localPath" -Color "Green"
@@ -291,7 +339,8 @@ function Install-AV {
 
         if ($source -eq "web") {
             $avPath = Join-Path $env:TEMP $fileName
-            Write-Log "Pobieranie antywirusa z $sourcePath$fileName..."
+            $url = if ($sourcePath.EndsWith("/")) { "$sourcePath$fileName" } else { "$sourcePath/$fileName" }
+            Write-Log "Pobieranie antywirusa z $url..."
 
             $cred = $null
             if ($avConfig.Credentials.Username -and $avConfig.Credentials.Password) {
@@ -300,10 +349,10 @@ function Install-AV {
             }
 
             if ($cred) {
-                Invoke-WebRequest -Uri ($sourcePath + $fileName) -OutFile $avPath -UseBasicParsing -Credential $cred
+                Invoke-WebRequest -Uri $url -OutFile $avPath -UseBasicParsing -Credential $cred
             }
             else {
-                Invoke-WebRequest -Uri ($sourcePath + $fileName) -OutFile $avPath -UseBasicParsing
+                Invoke-WebRequest -Uri $url -OutFile $avPath -UseBasicParsing
             }
         }
         else {
@@ -316,7 +365,15 @@ function Install-AV {
         }
 
         Write-Log "Instalacja antywirusa z $avPath..."
-        Start-Process -FilePath $avPath -Wait
+
+        $procArgs = if ($avConfig.SilentArgs) { $avConfig.SilentArgs } elseif ($avConfig.Arguments) { $avConfig.Arguments }
+
+        if ($procArgs) {
+             Start-Process -FilePath $avPath -ArgumentList $procArgs -Wait
+        }
+        else {
+             Start-Process -FilePath $avPath -Wait
+        }
         Write-Log "Instalacja antywirusa zakończona"
     }
     catch {
@@ -400,12 +457,22 @@ function Join-Domain {
 }
 
 function Set-NewComputerName {
-    Read-Host "Podaj nową nazwę komputera (domyślnie 'PC-SERIAL_NUMBER'): " -OutVariable NewName
-    if ([string]::IsNullOrWhiteSpace($NewName)) {
-        $NewName = "PC-$((Get-WmiObject -Class Win32_BIOS).SerialNumber)"
+    $defaultName = "PC-$((Get-WmiObject -Class Win32_BIOS).SerialNumber)"
+    $NewName = Show-InputBox -Message "Podaj nową nazwę komputera:" -Title "Zmiana nazwy komputera" -DefaultText $defaultName
+
+    if (-not [string]::IsNullOrWhiteSpace($NewName)) {
+        try {
+            Rename-Computer -NewName $NewName -Force -ErrorAction Stop
+            Write-Log "Zmieniono nazwę komputera na '$NewName'." -Color "Green"
+            Write-Log "Wymagane ponowne uruchomienie." -Color "Yellow"
+        }
+        catch {
+            Write-Log "Błąd zmiany nazwy komputera: $_" -Color "Red"
+        }
     }
-    Rename-Computer -NewName $NewName -Force
-    Write-Log "Zmieniono nazwę komputera na '$NewName'." -Color "Green"
+    else {
+        Write-Log "Anulowano zmianę nazwy komputera." -Color "Yellow"
+    }
 }
 
 function Set-RegistryDword {
@@ -641,6 +708,8 @@ function Start-Deployment {
     if ($CheckboxControls["JoinDomain"].Checked) { Join-Domain }
     $progressBar.Value = 70
 
+    if ($CheckboxControls["ChangeComputerName"].Checked) { Set-NewComputerName }
+
     if ($CheckboxControls["InstallApplications"].Checked -and $SelectedApps.Count -gt 0) {
         Install-SelectedApps
     }
@@ -648,9 +717,6 @@ function Start-Deployment {
         Write-Log "Instalacja aplikacji pominięta." 
     }
     $progressBar.Value = 85
-
-    if ($CheckboxControls["JoinIntune"].Checked) { Join-Intune }
-    $progressBar.Value = 90
 
     if ($CheckboxControls["ChangeSystemSettings"].Checked) { Set-SystemTweaks }
     if ($CheckboxControls["RunWindowsUpdate"].Checked) { 
