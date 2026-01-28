@@ -151,7 +151,7 @@
       "FileName": "Szafir_Instalator.msi",
       "SilentArgs": "/quiet"
     },
-    "Szafir_CloudSingner": {
+    "Szafir_CloudSigner": {
       "Enabled": true,
       "FileName": "SzafirCloudSignerSetup.msi",
       "SilentArgs": "/S"
