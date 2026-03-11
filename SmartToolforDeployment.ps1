@@ -7,6 +7,8 @@ Add-Type -AssemblyName System.Drawing
 
 
 $configPath = ".\config.json"
+$script:ValidationWarnings = New-Object System.Collections.Generic.List[string]
+$script:ValidationErrors   = New-Object System.Collections.Generic.List[string]
 $SelectedApps = @{}
 $CheckboxControls = @{}
 $checkboxOptions = [ordered]@{
@@ -94,13 +96,117 @@ function Write-Log {
         [switch]$IsError
     )
     $timestamp = Get-Date -Format "HH:mm:ss"
-    $rtbLog.SelectionColor = $Color
-    $rtbLog.AppendText("[$timestamp] $Text`r`n")
-    $rtbLog.ScrollToCaret()
-    Add-Content -Path "C:\deploy-log.txt" -Value "[$timestamp] $Text"
-    if ($IsError) {
-        Add-Content -Path "C:\deploy-errors.txt" -Value "[$timestamp] $Text"
+    try {
+        if ($null -ne $rtbLog -and $rtbLog -is [System.Windows.Forms.RichTextBox]) {
+            $rtbLog.SelectionColor = $Color
+            $rtbLog.AppendText("[$timestamp] $Text`r`n")
+            $rtbLog.ScrollToCaret()
+        }
+    } catch { }
+    try {
+        Add-Content -Path "C:\deploy-log.txt" -Value "[$timestamp] $Text" -ErrorAction SilentlyContinue
+        if ($IsError) {
+            Add-Content -Path "C:\deploy-errors.txt" -Value "[$timestamp] $Text" -ErrorAction SilentlyContinue
+        }
+    } catch { }
+    if ($IsError) { Write-Error $Text } else { Write-Host $Text }
+}
+
+function Test-UrlValid {
+    param([Parameter(Mandatory)][string]$Url)
+    try {
+        $uri = $null
+        if ([System.Uri]::TryCreate($Url, [System.UriKind]::Absolute, [ref]$uri)) {
+            return ($uri.Scheme -in @('http','https'))
+        }
+        return $false
+    } catch { return $false }
+}
+
+function Validate-BeforeRun {
+    $errors = New-Object System.Collections.Generic.List[string]
+    $warnings = New-Object System.Collections.Generic.List[string]
+
+    try { $config = Get-Content $configPath -Raw | ConvertFrom-Json } catch { $config = $null }
+    if ($null -eq $config) { $errors.Add("Brak lub niepoprawny config.json.") | Out-Null }
+
+    if ($errors.Count -eq 0) {
+        $source = $config.DefaultInstallSource
+        $sourcePath = $config.InstallSourcePaths.$source
+
+        switch ($source) {
+            'network' {
+                if ([string]::IsNullOrWhiteSpace($sourcePath)) { $errors.Add("Brak sciezki sieciowej (InstallSourcePaths.network).") | Out-Null }
+                elseif ($sourcePath -notmatch '^\\\\') { $errors.Add("Sciezka sieciowa musi byc UNC (np. \\serwer\\udzial\\).") | Out-Null }
+                elseif (-not (Test-Path -LiteralPath $sourcePath)) { $errors.Add("Nie znaleziono zasobu sieciowego: $sourcePath") | Out-Null }
+            }
+            'web' {
+                if (-not (Test-UrlValid -Url $sourcePath)) { $errors.Add("Niepoprawny URL zrodla web: $sourcePath") | Out-Null }
+            }
+            default { $errors.Add("DefaultInstallSource musi byc 'network' lub 'web'.") | Out-Null }
+        }
+
+        if ($CheckboxControls.ContainsKey('InstallApplications') -and $CheckboxControls['InstallApplications'].Checked) {
+            if ($SelectedApps.Count -eq 0) {
+                $errors.Add("Brak wybranych aplikacji do instalacji.") | Out-Null
+            } else {
+                foreach ($appName in $SelectedApps.Keys) {
+                    $app = $config.Programs.$appName
+                    if ($null -eq $app) { $errors.Add("Brak konfiguracji dla aplikacji '$appName'.") | Out-Null; continue }
+                    if ([string]::IsNullOrWhiteSpace($app.FileName)) { $errors.Add("Brak 'FileName' dla '$appName'.") | Out-Null; continue }
+                    if ($source -eq 'network') {
+                        $full = Join-Path $sourcePath $app.FileName
+                        if (-not (Test-Path -LiteralPath $full)) { $errors.Add("Nie znaleziono pliku dla '$appName': $full") | Out-Null }
+                    } elseif ($source -eq 'web') {
+                        $url = if ($sourcePath[-1] -eq '/') { "$sourcePath$($app.FileName)" } else { "$sourcePath/$($app.FileName)" }
+                        if (-not (Test-UrlValid -Url $url)) { $errors.Add("Niepoprawny URL dla '$appName': $url") | Out-Null }
+                    }
+                }
+            }
+        }
+
+        if ($CheckboxControls.ContainsKey('InstallTeamViewer') -and $CheckboxControls['InstallTeamViewer'].Checked) {
+            if (-not $config.TeamViewer -or [string]::IsNullOrWhiteSpace($config.TeamViewer.FileName)) {
+                $errors.Add("TeamViewer nie ma poprawnie ustawionego FileName w config.json.") | Out-Null
+            } elseif ($source -eq 'network') {
+                $tvPath = Join-Path $sourcePath $config.TeamViewer.FileName
+                if (-not (Test-Path -LiteralPath $tvPath)) { $errors.Add("Nie znaleziono instalatora TeamViewer: $tvPath") | Out-Null }
+            } elseif ($source -eq 'web') {
+                $tvUrl = if ($sourcePath[-1] -eq '/') { "$sourcePath$($config.TeamViewer.FileName)" } else { "$sourcePath/$($config.TeamViewer.FileName)" }
+                if (-not (Test-UrlValid -Url $tvUrl)) { $errors.Add("Niepoprawny URL TeamViewer: $tvUrl") | Out-Null }
+            }
+        }
+
+        if ($CheckboxControls.ContainsKey('InstallAV') -and $CheckboxControls['InstallAV'].Checked) {
+            if (-not $config.AntyVirus -or [string]::IsNullOrWhiteSpace($config.AntyVirus.FileName)) { $errors.Add("Brak konfiguracji antywirusa lub FileName.") | Out-Null }
+        }
+
+        if ($CheckboxControls.ContainsKey('ImportWiFiProfile') -and $CheckboxControls['ImportWiFiProfile'].Checked) {
+            $wifi = [string]$config.WiFiProfile.FileName
+            if ([string]::IsNullOrWhiteSpace($wifi) -or -not (Test-Path -LiteralPath $wifi)) { $errors.Add("Brak pliku profilu Wi-Fi: $wifi") | Out-Null }
+        }
+
+        if ($CheckboxControls.ContainsKey('CreateLocalAdmin') -and $CheckboxControls['CreateLocalAdmin'].Checked) {
+            if ([string]::IsNullOrWhiteSpace([string]$config.LocalAdmin.Username)) { $errors.Add("Brak LocalAdmin.Username w config.json.") | Out-Null }
+        }
+
+        if ($CheckboxControls.ContainsKey('JoinDomain') -and $CheckboxControls['JoinDomain'].Checked) {
+            if (-not $config.DomainJoin -or [string]::IsNullOrWhiteSpace([string]$config.DomainJoin.DomainName)) { $errors.Add("Brak DomainJoin.DomainName w config.json.") | Out-Null }
+            if ([string]::IsNullOrWhiteSpace([string]$config.DomainJoin.Username)) { $errors.Add("Brak DomainJoin.Username w config.json.") | Out-Null }
+        }
     }
+
+    foreach ($e in $errors) { Write-Log $e -Color 'Red' -IsError }
+    foreach ($w in $warnings) { Write-Log $w -Color 'Yellow' }
+
+    if ($errors.Count -gt 0) {
+        [System.Windows.Forms.MessageBox]::Show(("Wykryto bledy walidacji:`r`n- " + ($errors -join "`r`n- ")), "Walidacja", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+        return $false
+    }
+    if ($warnings.Count -gt 0) {
+        [System.Windows.Forms.MessageBox]::Show(("Uwaga:`r`n- " + ($warnings -join "`r`n- ")), "Walidacja", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+    }
+    return $true
 }
 
 function Install-SelectedApps {
@@ -620,6 +726,13 @@ function Start-Deployment {
     $btnStart.BackColor = "Yellow"
     $progressBar.Value = 0
 
+    if (-not (Validate-BeforeRun)) {
+        Write-Log "Walidacja nie powiodla sie. Przerywam." -Color "Red" -IsError
+        $btnStart.BackColor = "Red"
+        $btnStart.Enabled = $true
+        return
+    }
+
     if ($CheckboxControls["DisableHibernation"].Checked) { Disable-Hibernation }
     $progressBar.Value = 10
 
@@ -649,7 +762,7 @@ function Start-Deployment {
     }
     $progressBar.Value = 85
 
-    if ($CheckboxControls["JoinIntune"].Checked) { Join-Intune }
+    if ($CheckboxControls.ContainsKey("JoinIntune") -and $CheckboxControls["JoinIntune"].Checked) { Join-Intune }
     $progressBar.Value = 90
 
     if ($CheckboxControls["ChangeSystemSettings"].Checked) { Set-SystemTweaks }
