@@ -1,9 +1,80 @@
 ﻿#Requires -RunAsAdministrator
+
+# ------------------------------------------
+# Funkcja pokazująca okienko powitalne
+# ------------------------------------------
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-
 [System.Windows.Forms.Application]::EnableVisualStyles()
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+
+
+# ---------- Utworzenie formularza ----------
+$form = New-Object System.Windows.Forms.Form
+$form.Text       = 'Potwierdzenie'
+$form.Size       = New-Object System.Drawing.Size(420,200)
+$form.StartPosition = 'CenterScreen'
+$form.FormBorderStyle = 'FixedDialog'
+$form.MaximizeBox = $false
+$form.MinimizeBox = $false
+
+# ---------- Treść ----------
+$lbl = New-Object System.Windows.Forms.Label
+$lbl.AutoSize   = $true
+$lbl.Text       = '
+Celem niniejszego skryptu jest wsparcie przy szybkiej i skutecznej konfiguracji komputera.  
+Skrypt nie zastępuje decyzji ani uwag inżynierów IT.
+Czy chcesz kontynuować?'
+$lbl.Location   = New-Object System.Drawing.Point(20,20)
+$form.Controls.Add($lbl)
+
+# ---------- Przyciski ----------
+$okBtn = New-Object System.Windows.Forms.Button
+$okBtn.Text      = 'OK'
+$okBtn.Enabled   = $false          # początkowo wyłączone
+$okBtn.Location  = New-Object System.Drawing.Point(80, 80)
+$okBtn.Size      = New-Object System.Drawing.Size(80,30)
+$form.Controls.Add($okBtn)
+
+$cancelBtn = New-Object System.Windows.Forms.Button
+$cancelBtn.Text    = 'Cancel'
+$cancelBtn.Enabled = $false
+$cancelBtn.Location = New-Object System.Drawing.Point(220, 80)
+$cancelBtn.Size     = New-Object System.Drawing.Size(80,30)
+$form.Controls.Add($cancelBtn)
+
+# ---------- Timer 5‑s ----------
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 5000   # milisekundy
+
+$timer.Add_Tick({
+    # Po 5s włącz przyciski
+    $okBtn.Enabled = $true
+    $cancelBtn.Enabled = $true
+    $timer.Stop()
+})
+$timer.Start()
+
+# ---------- Reakcje przycisków ----------
+$okBtn.Add_Click({
+    $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.Close()
+})
+
+$cancelBtn.Add_Click({
+    $form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $form.Close()
+})
+
+# ---------- Pokaz formularza ----------
+$result = $form.ShowDialog()
+
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+    Write-Host "Użytkownik potwierdził."
+} else {
+    Write-Host "Użytkownik odrzucił."
+}
 
 
 $configPath = ".\config.json"
