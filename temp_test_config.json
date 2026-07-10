@@ -1,0 +1,9 @@
+{
+  "Programs": {
+    "ZlaAplikacja": {
+      "Enabled": true,
+      "FileName": ""
+    }
+  },
+  "DefaultInstallSource": "winget"
+}

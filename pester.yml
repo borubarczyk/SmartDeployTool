@@ -1,0 +1,26 @@
+name: Pester Unit Tests
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  test:
+    name: Run PowerShell Tests
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Pester tests
+        shell: powershell
+        run: |
+          # Znajdujemy i uruchamiamy wszystkie pliki testowe w repozytorium
+          $config = [PesterConfiguration]::Default
+          $config.Run.Path = @(Get-ChildItem -Path . -Filter "*.Tests.ps1" -Recurse | Select-Object -ExpandProperty FullName)
+          $config.Run.Exit = $true # Zwróci kod błędu dla GitHuba w przypadku oblanych testów
+          
+          Invoke-Pester -Configuration $config

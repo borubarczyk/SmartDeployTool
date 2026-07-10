@@ -1,0 +1,303 @@
+[23:19:35] Odznaczono wszystkie opcje w g³ównym oknie.
+[23:33:42] Wybrano aplikacje: PowerToys, Firefox, PowerShell_7, AdobeReader, Slack, Szafir_KIR, 7zip, FortiClient, Java, Szafir_CloudSingner, Chrome, LibreOffice, Zoom, FoxitReader
+[23:33:48] Wy³¹czanie hibernacji...
+[23:33:48] Hibernacja wy³¹czona.
+[23:34:07] ? B³¹d tworzenia konta: Cannot convert 'System.Object[]' to the type 'Microsoft.PowerShell.Commands.LocalGroup' required by parameter 'Group'. Okreœlona metoda nie jest obs³ugiwana.
+[23:34:30] ? B³¹d do³¹czania do domeny: Parameter set cannot be resolved using the specified named parameters.
+[23:34:30] Pobieranie PowerToys z https://apps.ebkk.pl/Data/PowerToysSetup.exe...
+[23:35:03] Instalacja PowerToys...
+[23:37:16] PowerToys zainstalowany.
+[23:37:16] Pobieranie Firefox z https://apps.ebkk.pl/Data/FirefoxSetup.exe...
+[23:37:19] Instalacja Firefox...
+[23:38:15] Firefox zainstalowany.
+[23:38:15] Pobieranie PowerShell_7 z https://apps.ebkk.pl/Data/PowerShell.msi...
+[23:38:31] Instalacja PowerShell_7...
+[23:39:03] PowerShell_7 zainstalowany.
+[23:39:03] Pobieranie AdobeReader z https://apps.ebkk.pl/Data/AdbeRdr.exe...
+[23:39:04] Instalacja AdobeReader...
+[00:04:32] AdobeReader zainstalowany.
+[00:04:33] Pobieranie Slack z https://apps.ebkk.pl/Data/SlackSetup.exe...
+[00:04:54] Instalacja Slack...
+[00:04:58] Slack zainstalowany.
+[00:04:58] Pobieranie Szafir_KIR z https://apps.ebkk.pl/Data/Szafir_Instalator.msi...
+[00:05:39] Instalacja Szafir_KIR...
+[00:14:28] Szafir_KIR zainstalowany.
+[00:14:28] Pobieranie 7zip z https://apps.ebkk.pl/Data/7z.exe...
+[00:14:29] Instalacja 7zip...
+[00:14:30] 7zip zainstalowany.
+[00:14:30] Pobieranie FortiClient z https://apps.ebkk.pl/Data/FortiClientSetup.exe...
+[00:14:31] Instalacja FortiClient...
+[00:31:29] FortiClient zainstalowany.
+[00:31:29] Pobieranie Java z https://apps.ebkk.pl/Data/jre-8u361-windows-x64.exe...
+[00:31:29] ? B³¹d przy Java: Nie mo¿na rozpoznaæ nazwy zdalnej: 'apps.ebkk.pl'
+[00:31:29] Pobieranie Szafir_CloudSingner z https://apps.ebkk.pl/Data/SzafirCloudSignerSetup.msi...
+[00:31:29] ? B³¹d przy Szafir_CloudSingner: Nie mo¿na rozpoznaæ nazwy zdalnej: 'apps.ebkk.pl'
+[00:31:29] Pobieranie Chrome z https://apps.ebkk.pl/Data/ChromeSetup.exe...
+[00:31:29] ? B³¹d przy Chrome: Nie mo¿na rozpoznaæ nazwy zdalnej: 'apps.ebkk.pl'
+[00:31:29] Pobieranie LibreOffice z https://apps.ebkk.pl/Data/LibreOffice.msi...
+[00:31:29] ? B³¹d przy LibreOffice: Nie mo¿na rozpoznaæ nazwy zdalnej: 'apps.ebkk.pl'
+[00:31:29] Pobieranie Zoom z https://apps.ebkk.pl/Data/ZoomInstaller.exe...
+[00:31:30] ? B³¹d przy Zoom: Nie mo¿na rozpoznaæ nazwy zdalnej: 'apps.ebkk.pl'
+[00:31:30] Pobieranie FoxitReader z https://apps.ebkk.pl/Data/FoxitReader.exe...
+[00:31:30] ? B³¹d przy FoxitReader: Nie mo¿na rozpoznaæ nazwy zdalnej: 'apps.ebkk.pl'
+[00:31:30] Zastosowanie zmian: rejestr, Delivery Optimization, inne...
+[00:31:32] Zmiany systemowe zastosowane.
+[00:31:32] Uruchamianie Windows Update...
+[00:31:32] Uruchamianie Windows Update...
+[00:31:32] ? Konfiguracja zakoñczona.
+[00:37:39] Wybrano aplikacje: Szafir_KIR, AdobeReader, FortiClient, Szafir_CloudSingner
+[00:37:40] Pobieranie Szafir_KIR z https://apps.ebkk.pl/Data/Szafir_Instalator.msi...
+[00:37:40] ? B³¹d przy Szafir_KIR: Nie mo¿na rozpoznaæ nazwy zdalnej: 'apps.ebkk.pl'
+[00:37:40] Pobieranie AdobeReader z https://apps.ebkk.pl/Data/AdbeRdr.exe...
+[00:37:40] ? B³¹d przy AdobeReader: Nie mo¿na rozpoznaæ nazwy zdalnej: 'apps.ebkk.pl'
+[00:37:40] Pobieranie FortiClient z https://apps.ebkk.pl/Data/FortiClientSetup.exe...
+[00:37:40] ? B³¹d przy FortiClient: Nie mo¿na rozpoznaæ nazwy zdalnej: 'apps.ebkk.pl'
+[00:37:40] Pobieranie Szafir_CloudSingner z https://apps.ebkk.pl/Data/SzafirCloudSignerSetup.msi...
+[00:37:40] ? B³¹d przy Szafir_CloudSingner: Nie mo¿na rozpoznaæ nazwy zdalnej: 'apps.ebkk.pl'
+[00:37:40] ? Konfiguracja zakoñczona.
+[00:41:05] Pobieranie Szafir_KIR z https://apps.ebkk.pl/Data/Szafir_Instalator.msi...
+[00:41:05] ? B³¹d przy Szafir_KIR: Nie mo¿na rozpoznaæ nazwy zdalnej: 'apps.ebkk.pl'
+[00:41:05] Pobieranie AdobeReader z https://apps.ebkk.pl/Data/AdbeRdr.exe...
+[00:41:05] ? B³¹d przy AdobeReader: Nie mo¿na rozpoznaæ nazwy zdalnej: 'apps.ebkk.pl'
+[00:41:05] Pobieranie FortiClient z https://apps.ebkk.pl/Data/FortiClientSetup.exe...
+[00:41:05] ? B³¹d przy FortiClient: Nie mo¿na rozpoznaæ nazwy zdalnej: 'apps.ebkk.pl'
+[00:41:05] Pobieranie Szafir_CloudSingner z https://apps.ebkk.pl/Data/SzafirCloudSignerSetup.msi...
+[00:41:05] ? B³¹d przy Szafir_CloudSingner: Nie mo¿na rozpoznaæ nazwy zdalnej: 'apps.ebkk.pl'
+[00:41:05] ? Konfiguracja zakoñczona.
+[00:41:44] Pobieranie Szafir_KIR z https://apps.ebkk.pl/Data/Szafir_Instalator.msi...
+[00:42:26] Instalacja Szafir_KIR...
+[00:43:13] Szafir_KIR zainstalowany.
+[00:43:13] Pobieranie AdobeReader z https://apps.ebkk.pl/Data/AdbeRdr.exe...
+[00:43:13] Instalacja AdobeReader...
+[00:54:06] AdobeReader zainstalowany.
+[00:54:06] Pobieranie FortiClient z https://apps.ebkk.pl/Data/FortiClientSetup.exe...
+[00:54:08] Instalacja FortiClient...
+[00:55:18] FortiClient zainstalowany.
+[00:55:18] Pobieranie Szafir_CloudSingner z https://apps.ebkk.pl/Data/SzafirCloudSignerSetup.msi...
+[00:55:18] ? B³¹d przy Szafir_CloudSingner: 
+
+
+
+404 - File or directory not found.
+
+
+
+
+
+Server Error
+
+ 
+  404 - File or directory not found.
+  The resource you are looking for might have been removed, had its name changed, or is temporarily unavailable.
+ 
+
+
+
+
+[00:55:18] ? Konfiguracja zakoñczona.
+[07:13:31] Odznaczono wszystkie opcje w g³ównym oknie.
+[07:13:44] U¿ytkownik 'Lizard' ju¿ istnieje  pomijam.
+[07:13:44] Instalacja aplikacji pominiêta.
+[07:13:44] ? Konfiguracja zakoñczona.
+[11:57:53] Odznaczono wszystkie opcje w g³ównym oknie.
+[11:58:06] Utworzono lokalne konto 'Homies' w grupie 'Administratorzy'.
+[11:58:06] Instalacja aplikacji pominiêta.
+[11:58:06] ? Konfiguracja zakoñczona.
+[12:00:20] Utworzono lokalne konto 'Homies' w grupie 'Administratorzy'.
+[12:00:20] Instalacja aplikacji pominiêta.
+[12:00:20] ? Konfiguracja zakoñczona.
+[12:06:40] Odznaczono wszystkie opcje w g³ównym oknie.
+[12:06:46] U¿ytkownik 'Homies' ju¿ istnieje  pomijam.
+[12:06:46] Instalacja aplikacji pominiêta.
+[12:06:46] ? Konfiguracja zakoñczona.
+[12:07:32] ? Nie podano has³a dla konta Home_admin.
+[12:07:32] Instalacja aplikacji pominiêta.
+[12:07:32] ? Konfiguracja zakoñczona.
+[12:09:13] Odznaczono wszystkie opcje w g³ównym oknie.
+[12:09:20] Utworzono lokalne konto 'Home_admin' w grupie 'Administratorzy'.
+[12:09:20] Instalacja aplikacji pominiêta.
+[12:09:21] ? Konfiguracja zakoñczona.
+[12:12:27] Odznaczono wszystkie opcje w g³ównym oknie.
+[12:12:39] ? B³¹d do³¹czania do domeny: Parameter set cannot be resolved using the specified named parameters.
+[12:12:39] Instalacja aplikacji pominiêta.
+[12:12:39] ? Konfiguracja zakoñczona.
+[12:15:59] Odznaczono wszystkie opcje w g³ównym oknie.
+[12:16:01] Do³¹czanie do domeny...
+[12:16:09] ? B³¹d do³¹czania do domeny: Parameter set cannot be resolved using the specified named parameters.
+[12:16:09] Instalacja aplikacji pominiêta.
+[12:16:09] ? Konfiguracja zakoñczona.
+[12:18:53] Odznaczono wszystkie opcje w g³ównym oknie.
+[12:18:55] Do³¹czanie do domeny...
+[12:19:05] ? B³¹d do³¹czania do domeny: Parameter set cannot be resolved using the specified named parameters.
+[12:19:05] Instalacja aplikacji pominiêta.
+[12:19:05] ? Konfiguracja zakoñczona.
+[12:21:56] Odznaczono wszystkie opcje w g³ównym oknie.
+[12:21:58] Do³¹czanie do domeny... home.local
+[12:22:02] ? B³¹d do³¹czania do domeny: Parameter set cannot be resolved using the specified named parameters.
+[12:22:02] Instalacja aplikacji pominiêta.
+[12:22:02] ? Konfiguracja zakoñczona.
+[12:23:49] Odznaczono wszystkie opcje w g³ównym oknie.
+[12:23:51] Do³¹czanie do domeny... home.local
+[12:24:01] ? B³¹d do³¹czania do domeny: Parameter set cannot be resolved using the specified named parameters.
+[12:24:01] Instalacja aplikacji pominiêta.
+[12:24:01] ? Konfiguracja zakoñczona.
+[12:25:40] Odznaczono wszystkie opcje w g³ównym oknie.
+[12:25:41] Do³¹czanie do domeny... home.local
+[12:25:46] ? B³¹d do³¹czania do domeny: Parameter set cannot be resolved using the specified named parameters.
+[12:25:47] Instalacja aplikacji pominiêta.
+[12:25:47] ? Konfiguracja zakoñczona.
+[12:26:23] Odznaczono wszystkie opcje w g³ównym oknie.
+[12:26:24] Do³¹czanie do domeny... home.local
+[12:26:30] ? B³¹d do³¹czania do domeny: Parameter set cannot be resolved using the specified named parameters.
+[12:26:30] Instalacja aplikacji pominiêta.
+[12:26:30] ? Konfiguracja zakoñczona.
+[12:34:19] Odznaczono wszystkie opcje w g³ównym oknie.
+[12:34:20] Do³¹czanie do domeny... home.local
+[12:34:25] ? B³¹d do³¹czania do domeny: Parameter set cannot be resolved using the specified named parameters.
+[12:34:25] Instalacja aplikacji pominiêta.
+[12:34:26] ? Konfiguracja zakoñczona.
+[12:39:54] Odznaczono wszystkie opcje w g³ównym oknie.
+[12:39:56] Do³¹czanie do domeny... home.local
+[12:40:07] ? B³¹d do³¹czania do domeny: Parameter set cannot be resolved using the specified named parameters.
+[12:40:07] Instalacja aplikacji pominiêta.
+[12:40:07] ? Konfiguracja zakoñczona.
+[12:43:12] Odznaczono wszystkie opcje w g³ównym oknie.
+[12:43:14] ?? Pobieranie has³a dla ad\administrator...
+[12:43:23] ?? Do³¹czanie do domeny home.local...
+[12:43:27] ? Do³¹czono do domeny home.local
+[12:43:27] Instalacja aplikacji pominiêta.
+[12:43:27] ? Konfiguracja zakoñczona.
+[12:51:33] Odznaczono wszystkie opcje w g³ównym oknie.
+[12:51:41] ?? Do³¹czanie do domeny home.local jako ad\administrator...
+[12:51:48] ? B³¹d do³¹czania do domeny: Computer 'TEST-8285085038' was successfully joined to the new domain 'home.local', but renaming it to 'DEKSTOP-44' failed with the following error message: Us³uga katalogowa jest zajêta.
+[12:51:48] Instalacja aplikacji pominiêta.
+[12:51:48] ? Konfiguracja zakoñczona.
+[13:42:36] Wybrano aplikacje: VLC, Firefox, 7zip, Chrome
+[13:47:37] Wybrano aplikacje: Chrome, VLC, Firefox, Notepad++, 7zip
+[13:47:39] Pobieranie Chrome z https://apps.ebkk.pl/Data/ChromeSetup.exe...
+[13:47:40] Instalacja Chrome...
+[13:48:42] Chrome zainstalowany.
+[13:48:42] Pobieranie VLC z https://apps.ebkk.pl/Data/vlc.exe...
+[13:48:47] Instalacja VLC...
+[13:48:49] VLC zainstalowany.
+[13:48:49] Pobieranie Firefox z https://apps.ebkk.pl/Data/FirefoxSetup.exe...
+[13:48:50] Instalacja Firefox...
+[13:51:18] Firefox zainstalowany.
+[13:51:18] Pobieranie Notepad++ z https://apps.ebkk.pl/Data/npp.exe...
+[13:51:20] Instalacja Notepad++...
+[13:51:22] Notepad++ zainstalowany.
+[13:51:22] Pobieranie 7zip z https://apps.ebkk.pl/Data/7z.exe...
+[13:51:23] Instalacja 7zip...
+[13:51:24] 7zip zainstalowany.
+[13:51:24] ? Konfiguracja zakoñczona.
+[11:09:28] Odznaczono wszystkie opcje w g³ównym oknie.
+[11:09:40] Wybrano aplikacje: Szafir_KIR
+[11:09:42] Pobieranie Szafir_KIR z https://apps.ebkk.pl/Data/Szafir_Instalator.msi...
+[11:10:06] Instalacja Szafir_KIR...
+[11:11:00] Szafir_KIR zainstalowany.
+[11:11:00] ? Konfiguracja zakoñczona.
+[11:50:17] Odznaczono wszystkie opcje w g³ównym oknie.
+[11:50:27] Wybrano aplikacje: Szafir_KIR
+[11:50:29] Pobieranie Szafir_KIR z https://apps.ebkk.pl/Data/Szafir_Instalator.msi...
+[11:50:52] Instalacja Szafir_KIR...
+[12:00:35] Szafir_KIR zainstalowany.
+[12:00:35] ? Konfiguracja zakoñczona.
+[12:00:48] Pobieranie Szafir_KIR z https://apps.ebkk.pl/Data/Szafir_Instalator.msi...
+[12:01:11] Instalacja Szafir_KIR...
+[12:16:50] Szafir_KIR zainstalowany.
+[12:16:50] ? Konfiguracja zakoñczona.
+[13:00:22] Odznaczono wszystkie opcje w g³ównym oknie.
+[13:00:28] Wybrano aplikacje: Szafir_KIR
+[13:00:31] Pobieranie Szafir_KIR z https://apps.ebkk.pl/Data/Szafir_Instalator.msi...
+[13:00:55] Instalacja Szafir_KIR...
+[13:01:56] Szafir_KIR zainstalowany.
+[13:01:56] ? Konfiguracja zakoñczona.
+[13:39:11] Odznaczono wszystkie opcje w g³ównym oknie.
+[13:39:18] Wybrano aplikacje: Szafir_KIR
+[13:39:53] Pobieranie Szafir_KIR z https://apps.ebkk.pl/Data/Szafir_Instalator.msi...
+[13:40:18] Instalacja Szafir_KIR...
+[13:40:42] Szafir_KIR zainstalowany.
+[13:40:42] ? Konfiguracja zakoñczona.
+[13:40:55] Pobieranie Szafir_KIR z https://apps.ebkk.pl/Data/Szafir_Instalator.msi...
+[13:41:18] Instalacja Szafir_KIR...
+[13:43:36] Szafir_KIR zainstalowany.
+[13:43:36] ? Konfiguracja zakoñczona.
+[13:43:43] Pobieranie Szafir_KIR z https://apps.ebkk.pl/Data/Szafir_Instalator.msi...
+[13:44:04] Instalacja Szafir_KIR...
+[13:44:14] Szafir_KIR zainstalowany.
+[13:44:14] ? Konfiguracja zakoñczona.
+[13:44:35] Pobieranie Szafir_KIR z https://apps.ebkk.pl/Data/Szafir_Instalator.msi...
+[13:44:58] Instalacja Szafir_KIR...
+[13:47:17] Szafir_KIR zainstalowany.
+[13:47:17] ? Konfiguracja zakoñczona.
+[00:40:48] ZaÅ‚adowano domyÅ›lnie zaznaczone aplikacje (21): PowerToys, DoubleCommander, Revit_2024, Szafir_CloudSingner, Notepad++, Firefox, Java, PowerShell_7, AdobeReader, Slack, LanSweeper_Agent, 7zip, MailStoreClient, FortiClient, Autodesk_2024, iManageAgentService, Szafir_KIR, IManageWorkDesktopforWindows, Chrome, LibreOffice, FoxitReader
+[00:42:42] Zapisano zmiany do config.json
+[00:42:44] ZaÅ‚adowano domyÅ›lnie zaznaczone aplikacje (21): PowerToys, DoubleCommander, Revit_2024, Szafir_CloudSingner, Notepad++, Firefox, PowerShell_7, iManageAgentService, AdobeReader, Slack, LanSweeper_Agent, 7zip, MailStoreClient, FortiClient, Autodesk_2024, Java, Szafir_KIR, IManageWorkDesktopforWindows, Chrome, LibreOffice, FoxitReader
+[00:43:11] Wybrano aplikacje: PowerToys, MailStoreClient, Revit_2024, IManageWorkDesktopforWindows, Notepad++, Firefox, Szafir_KIR, iManageAgentService, AdobeReader, Slack, LibreOffice, LanSweeper_Agent, DropBox, 7zip, PowerShell_7, Java, Szafir_CloudSingner, DoubleCommander, Chrome, VLC, FortiClient, FoxitReader
+[00:43:47] Rozpoczynam usuwanie preinstalowanego Bloatware...
+[00:44:13] ZakoÅ„czono usuwanie Bloatware.
+[00:44:29] Utworzono lokalne konto 'adm_local' w grupie 'Administratorzy'.
+[00:44:29] Pobieranie PowerToys
+[00:44:30] BÅ‚Ä…d przy PowerToys: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie MailStoreClient
+[00:44:30] BÅ‚Ä…d przy MailStoreClient: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie Revit_2024
+[00:44:30] BÅ‚Ä…d przy Revit_2024: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie IManageWorkDesktopforWindows
+[00:44:30] BÅ‚Ä…d przy IManageWorkDesktopforWindows: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie Notepad++
+[00:44:30] BÅ‚Ä…d przy Notepad++: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie Firefox
+[00:44:30] BÅ‚Ä…d przy Firefox: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie Szafir_KIR
+[00:44:30] BÅ‚Ä…d przy Szafir_KIR: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie iManageAgentService
+[00:44:30] BÅ‚Ä…d przy iManageAgentService: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie AdobeReader
+[00:44:30] BÅ‚Ä…d przy AdobeReader: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie Slack
+[00:44:30] BÅ‚Ä…d przy Slack: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie LibreOffice
+[00:44:30] BÅ‚Ä…d przy LibreOffice: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie LanSweeper_Agent
+[00:44:30] BÅ‚Ä…d przy LanSweeper_Agent: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie DropBox
+[00:44:30] BÅ‚Ä…d przy DropBox: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie 7zip
+[00:44:30] BÅ‚Ä…d przy 7zip: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie PowerShell_7
+[00:44:30] BÅ‚Ä…d przy PowerShell_7: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie Java
+[00:44:30] BÅ‚Ä…d przy Java: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie Szafir_CloudSingner
+[00:44:30] BÅ‚Ä…d przy Szafir_CloudSingner: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie DoubleCommander
+[00:44:30] BÅ‚Ä…d przy DoubleCommander: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie Chrome
+[00:44:30] BÅ‚Ä…d przy Chrome: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie VLC
+[00:44:30] BÅ‚Ä…d przy VLC: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie FortiClient
+[00:44:30] BÅ‚Ä…d przy FortiClient: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:30] Pobieranie FoxitReader
+[00:44:31] BÅ‚Ä…d przy FoxitReader: The term 'Do-WpfEvents' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[00:44:31] Zastosowanie ustawieÅ„ systemowych...
+[00:44:31] WyÅ‚Ä…czanie Delivery Optimization...
+[00:44:31] Utworzono wartoÅ›Ä‡ DODownloadMode w HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization
+[00:44:31] WÅ‚Ä…czanie klasycznego menu Start (Win10)...
+[00:44:31] Utworzono wartoÅ›Ä‡ Start_ShowClassicMode w HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced
+[00:44:31] WyÅ‚Ä…czanie telemetryki...
+[00:44:31] Utworzono wartoÅ›Ä‡ AllowTelemetry w HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection
+[00:44:31] WyÅ‚Ä…czanie Cortany...
+[00:44:31] Utworzono wartoÅ›Ä‡ AllowCortana w HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search
+[00:44:31] WyÅ‚Ä…czanie szybkiego uruchamiania...
+[00:44:31] Zmieniono wartoÅ›Ä‡ HiberbootEnabled w HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power
+[00:44:31] WyÅ‚Ä…czanie News and Interests...
+[00:44:31] Utworzono wartoÅ›Ä‡ AllowNewsAndInterests w HKLM:\SOFTWARE\Policies\Microsoft\Dsh
+[00:44:31] Zmiany systemowe zastosowane.
+[00:44:31] Wprowadzanie niestandardowych kluczy rejestru...
+[00:44:36] Utworzono nowÄ… Å›cieÅ¼kÄ™: HKLM:\dupa
+[00:44:38] Ustawiono klucz: HKLM:\dupa\a = d [String]
+[00:44:38] Uruchamianie Windows Update...
+[00:44:38] Uruchamianie Windows Update...
+[00:44:39] Konfiguracja zakoÅ„czona.
