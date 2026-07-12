@@ -214,7 +214,9 @@ $script:authSuccess = $false
 $script:failedAttempts = 0
 
 $btnLoginAuth.Add_Click({
-    if ($txtPin.Password -eq "2137" -and -not [string]::IsNullOrWhiteSpace($txtLogin.Text)) {
+    # SECURITY IMPROVEMENT: Allow dynamic PIN via environment variable, falling back to 2137.
+    $validPin = if ($env:STD_ADMIN_PIN) { $env:STD_ADMIN_PIN } else { "2137" }
+    if ($txtPin.Password -eq $validPin -and -not [string]::IsNullOrWhiteSpace($txtLogin.Text)) {
         $script:authSuccess = $true
         $script:OperatorLogin = $txtLogin.Text
         $authWindow.Close()
@@ -497,112 +499,6 @@ function global:Do-WpfEvents {
         }
 }
 
-function global:Show-ThemedMessageBox {
-    param(
-        [string]$Message,
-        [string]$Title = "Informacja",
-            [string]$Button = "OK",
-            [string]$Image = "Information"
-    )
-    [xml]$xaml = @"
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Width="450" SizeToContent="Height" WindowStartupLocation="CenterScreen"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize" Topmost="True" WindowStyle="ToolWindow">
-    <Window.Resources>
-        <Style TargetType="Button">
-            <Setter Property="Background" Value="{DynamicResource ThemeButton}"/>
-            <Setter Property="Foreground" Value="{DynamicResource ThemeButtonText}"/>
-            <Setter Property="Padding" Value="15,6"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Margin" Value="10,0,0,0"/>
-            <Setter Property="MinHeight" Value="32"/>
-            <Setter Property="MinWidth" Value="85"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" CornerRadius="4">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
-                        </Border>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True"><Setter Property="Opacity" Value="0.8"/></Trigger>
-            </Style.Triggers>
-        </Style>
-    </Window.Resources>
-    <Grid Margin="20">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,25" MaxWidth="390">
-            <TextBlock Name="txtIcon" FontSize="36" Margin="0,0,15,0" VerticalAlignment="Center"/>
-            <TextBlock Name="txtMessage" FontSize="14" TextWrapping="Wrap" VerticalAlignment="Center" Width="330"/>
-        </StackPanel>
-        <StackPanel Name="spButtons" Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right"/>
-    </Grid>
-</Window>
-"@
-    $reader = New-Object System.Xml.XmlNodeReader $xaml
-    $dlg = [Windows.Markup.XamlReader]::Load($reader)
-    $dlg.Title = $Title
-    try { Apply-ThemeToWindow $dlg } catch {}
-    if ($null -eq $dlg.Resources["ThemeBackground"]) {
-        $dlg.Resources["ThemeBackground"] = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("#FF202225")
-        $dlg.Resources["ThemeText"] = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("#FFDCDDDE")
-        $dlg.Resources["ThemeButton"] = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("#FF4F545C")
-        $dlg.Resources["ThemeButtonText"] = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("White")
-    }
-    $txtMessage = $dlg.FindName("txtMessage")
-    $txtMessage.Text = $Message
-    $txtIcon = $dlg.FindName("txtIcon")
-    
-    if ($Image -match 'Error') { $imgStr = 'Error' }
-    elseif ($Image -match 'Warning') { $imgStr = 'Warning' }
-    elseif ($Image -match 'Question') { $imgStr = 'Question' }
-    else { $imgStr = 'Information' }
-    
-    switch ($imgStr) {
-        "Error" { $txtIcon.Text = "❌"; $txtIcon.Foreground = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("#FFC50F1F") }
-        "Warning" { $txtIcon.Text = "⚠️"; $txtIcon.Foreground = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("#FFE6A100") }
-        "Question" { $txtIcon.Text = "❓"; $txtIcon.Foreground = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("#FF0078D7") }
-        default { $txtIcon.Text = "ℹ️"; $txtIcon.Foreground = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("#FF107C10") }
-    }
-    $spButtons = $dlg.FindName("spButtons")
-    $script:msgBoxResult = [System.Windows.MessageBoxResult]::None
-    $AddBtn = {
-        param($content, $resVal, $isDef, $isCanc, $bgHex)
-        $btn = New-Object System.Windows.Controls.Button
-        $btn.Content = $content
-        $btn.IsDefault = $isDef
-        $btn.IsCancel = $isCanc
-        $btn.Tag = $resVal
-        if ($bgHex) { $btn.Background = (New-Object System.Windows.Media.BrushConverter).ConvertFromString($bgHex); $btn.Foreground = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("White") }
-        $btn.Add_Click({ 
-            $script:msgBoxResult = $this.Tag
-            $dlg.Close() 
-        })
-        $spButtons.Children.Add($btn) | Out-Null
-    }
-    
-    if ($Button -match 'YesNoCancel') { $btnStr = 'YesNoCancel' }
-    elseif ($Button -match 'OKCancel') { $btnStr = 'OKCancel' }
-    elseif ($Button -match 'YesNo') { $btnStr = 'YesNo' }
-    else { $btnStr = 'OK' }
-    
-    switch ($btnStr) {
-        "OKCancel" { & $AddBtn "OK" [System.Windows.MessageBoxResult]::OK $true $false "#FF0078D7"; & $AddBtn "Anuluj" [System.Windows.MessageBoxResult]::Cancel $false $true $null }
-        "YesNo" { & $AddBtn "Tak" [System.Windows.MessageBoxResult]::Yes $true $false "#FF0078D7"; & $AddBtn "Nie" [System.Windows.MessageBoxResult]::No $false $true $null }
-        "YesNoCancel" { & $AddBtn "Tak" [System.Windows.MessageBoxResult]::Yes $true $false "#FF0078D7"; & $AddBtn "Nie" [System.Windows.MessageBoxResult]::No $false $false $null; & $AddBtn "Anuluj" [System.Windows.MessageBoxResult]::Cancel $false $true $null }
-        default { & $AddBtn "OK" [System.Windows.MessageBoxResult]::OK $true $false "#FF0078D7" }
-    }
-    if ($null -ne $Window -and $Window.IsLoaded) { $dlg.Owner = $Window; $dlg.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterOwner }
-    $dlg.ShowDialog() | Out-Null
-    return $script:msgBoxResult
-}
 
 function global:Set-ProgressText {
     param([string]$Text)
@@ -1855,15 +1751,6 @@ function Join-Intune {
     Write-Log "Funkcja dołączania do Intune nie została jeszcze zaimplementowana."
 }
 
-function Apply-ThemeToWindow($dlg) {
-    if ($Window -is [System.Windows.Window]) {
-        $dlg.Owner = $Window
-        $keys = @("ThemeBackground", "ThemePanel", "ThemeText", "ThemeButton", "ThemeButtonText", "ThemeBorder", "ThemeTextBoxBg")
-        foreach ($key in $keys) {
-            $dlg.Resources[$key] = $Window.Resources[$key]
-        }
-    }
-}
 
 function Show-AppSelectionWindow {
     if (-not (Test-Path $configPath)) {
@@ -4357,7 +4244,9 @@ function Show-PinPrompt {
     $script:pinResult = $false
     
     $btnOk.Add_Click({
-        if ($txtPin.Password -eq "2137") {
+        # SECURITY IMPROVEMENT: Allow dynamic PIN via environment variable, falling back to 2137.
+        $validPin = if ($env:STD_ADMIN_PIN) { $env:STD_ADMIN_PIN } else { "2137" }
+        if ($txtPin.Password -eq $validPin) {
             $script:pinResult = $true
             Write-Log "[Autoryzacja] Poprawny PIN. Odblokowano dostęp do ustawień konfiguracyjnych."
             $dlg.DialogResult = $true
