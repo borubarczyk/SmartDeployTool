@@ -3,9 +3,9 @@
 echo "[Pre-commit] Generowanie zanonimizowanego pliku config.example.json..."
 
 # Uruchamiamy narzędzie PowerShell (ścieżka względem głównego folderu repozytorium)
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "SmartDeployTool/Create-ConfigExample.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "Create-ConfigExample.ps1"
 
 # Dodajemy świeżo wygenerowany plik do aktualnego commita, by upewnić się, że wyślemy jego najnowszą wersję
-if [ -f "SmartDeployTool/config.example.json" ]; then
-    git add "SmartDeployTool/config.example.json"
+if [ -f "config.example.json" ]; then
+    git add "config.example.json"
 fi
