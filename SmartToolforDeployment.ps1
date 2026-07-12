@@ -665,7 +665,7 @@ function Wait-ForNetwork {
         $validIp = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notmatch "^169\.254\." -and $_.IPAddress -ne "127.0.0.1" }
         
         if ($isAvailable -and $validIp) {
-            Write-Log "Wykryto połączenie z siecią ($($validIp[0].IPAddress))."
+            Write-Log "Wykryto połączenie z siecią ($(@($validIp)[0].IPAddress))."
             break
         }
 
@@ -5271,9 +5271,20 @@ $Window.Add_Closed({
     }
 })
 
+$script:healthCheckClient = $null
+try {
+    Add-Type -AssemblyName System.Net.Http
+    $script:healthCheckClient = New-Object System.Net.Http.HttpClient
+    $script:healthCheckClient.Timeout = [TimeSpan]::FromMilliseconds(1500)
+    $script:healthCheckClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+} catch {}
+
 $script:networkCheckTimer = New-Object System.Windows.Threading.DispatcherTimer
 $script:networkCheckTimer.Interval = [TimeSpan]::FromSeconds(3)
 $script:lastNetworkError = $null
+$script:healthCheckTask = $null
+$script:lastWebUrl = $null
+
 $script:networkCheckTimer.Add_Tick({
     if (-not $btnStart.IsEnabled) { return } # Wstrzymaj sprawdzanie podczas trwającego wdrożenia
 
@@ -5281,48 +5292,54 @@ $script:networkCheckTimer.Add_Tick({
     $validIp = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notmatch "^169\.254\." -and $_.IPAddress -ne "127.0.0.1" }
     
     if ($isNet -and $validIp) {
-        $ipStr = $validIp[0].IPAddress
+        $ipStr = @($validIp)[0].IPAddress
         $statusText = "Sieć: $ipStr"
         $statusColor = "#FF107C10"
 
         try {
             $cfg = Get-Config
-            if ($cfg.DefaultInstallSource -eq 'web' -and -not [string]::IsNullOrWhiteSpace($cfg.InstallSourcePaths.web)) {
+            if ($cfg.DefaultInstallSource -eq 'web' -and -not [string]::IsNullOrWhiteSpace($cfg.InstallSourcePaths.web) -and $null -ne $script:healthCheckClient) {
                 $url = $cfg.InstallSourcePaths.web
-                $req = [System.Net.WebRequest]::Create($url)
-                $req.Timeout = 1500
-                $req.Method = "HEAD"
-                $req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                try {
-                    $res = $req.GetResponse()
-                    $statusText = "Sieć: $ipStr | Web: OK"
-                    $res.Close()
-                    if ($script:lastNetworkError) {
-                        Write-Log "[Status Sieci] Połączenie ze źródłem Web przywrócone."
-                        $script:lastNetworkError = $null
-                    }
-                } catch {
-                    $webResp = $null
-                    if ($_.Exception -is [System.Net.WebException]) { $webResp = $_.Exception.Response }
-                    elseif ($_.Exception.InnerException -is [System.Net.WebException]) { $webResp = $_.Exception.InnerException.Response }
 
-                    if ($null -ne $webResp) {
-                        $statusCode = [int]$webResp.StatusCode
-                        $statusText = "Sieć: $ipStr | Web: OK ($statusCode)"
-                        $statusColor = "#FF107C10"
-                        $webResp.Close()
-                        if ($script:lastNetworkError) {
-                            Write-Log "[Status Sieci] Źródło Web odpowiedziało statusem $statusCode."
-                            $script:lastNetworkError = $null
+                # Uruchom nowe zapytanie, jeśli poprzednie się zakończyło lub jeśli to nowy URL, lub jeśli nie ma jeszcze żadnego
+                if ($null -eq $script:healthCheckTask -or $script:healthCheckTask.IsCompleted -or $script:lastWebUrl -ne $url) {
+
+                    # Odbierz wynik z poprzedniego sprawdzenia, jeśli jest gotowy
+                    if ($null -ne $script:healthCheckTask -and $script:healthCheckTask.IsCompleted) {
+                        if ($script:healthCheckTask.Status -eq 'RanToCompletion') {
+                            $res = $script:healthCheckTask.Result
+                            $statusText = "Sieć: $ipStr | Web: OK"
+                            if ($script:lastNetworkError) {
+                                Write-Log "[Status Sieci] Połączenie ze źródłem Web przywrócone."
+                                $script:lastNetworkError = $null
+                            }
+                            # Close the response to free up connections
+                            if ($res) { $res.Dispose() }
+                        } else {
+                            # Jeśli wystąpił błąd (Faulted lub Canceled)
+                            $statusText = "Sieć: $ipStr | Web: Brak odp."
+                            $statusColor = "#FFE6A100"
+                            $errMsg = if ($null -ne $script:healthCheckTask.Exception) { $script:healthCheckTask.Exception.InnerException.Message } else { "Błąd komunikacji/Timeout" }
+                            if ($script:lastNetworkError -ne $errMsg) {
+                                Write-Log "[Status Sieci] Błąd weryfikacji źródła Web ($($script:lastWebUrl)): $errMsg" -IsError
+                                $script:lastNetworkError = $errMsg
+                            }
                         }
-                    } else {
+                    }
+
+                    # Zainicjuj nowe asynchroniczne żądanie
+                    $script:lastWebUrl = $url
+                    $reqMsg = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Head, $url)
+                    $script:healthCheckTask = $script:healthCheckClient.SendAsync($reqMsg)
+                } else {
+                    # Jeśli zapytanie jeszcze trwa (pending), pokazujemy ostatni znany status
+                    # Zabezpieczenie przed nadpisywaniem UI dopóki nie dostaniemy wyniku, użyjmy 'Oczekuje' lub zostawmy ostatni status
+                    if ($script:lastNetworkError) {
                         $statusText = "Sieć: $ipStr | Web: Brak odp."
                         $statusColor = "#FFE6A100"
-                        $errMsg = $_.Exception.Message
-                        if ($script:lastNetworkError -ne $errMsg) {
-                            Write-Log "[Status Sieci] Błąd weryfikacji źródła Web ($url): $errMsg" -IsError
-                            $script:lastNetworkError = $errMsg
-                        }
+                    } else {
+                        $statusText = "Sieć: $ipStr | Web: OK"
+                        $statusColor = "#FF107C10"
                     }
                 }
             }
