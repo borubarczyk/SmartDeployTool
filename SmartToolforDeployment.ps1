@@ -1770,7 +1770,9 @@ function Clear-DeploymentCheckpoint {
 
 # ---------- Aktualizacja narzędzia ----------
 # Oczekiwany format pliku wersji (std_version.json) publikowanego pod AutoUpdate.VersionCheckPath:
-# { "Version": "3.2.0", "FileName": "SmartToolforDeployment.ps1", "Notes": "Opis zmian..." }
+# { "Version": "3.2.0", "FileName": "SmartToolforDeployment.ps1", "Notes": "Opis zmian...", "Sha256": "<suma SHA-256 pliku>" }
+# Pole Sha256 jest opcjonalne, ale zalecane: sumę liczy się poleceniem
+#   (Get-FileHash .\SmartToolforDeployment.ps1 -Algorithm SHA256).Hash
 # Aktualizuje plik .ps1 wskazywany przez $PSCommandPath. Jeśli w praktyce uruchamiany jest
 # skompilowany SmartToolforDeployment_v3.exe, ten mechanizm NIE podmienia tego pliku exe -
 # potrzebny byłby analogiczny, osobny mechanizm dla binarki.
@@ -1816,7 +1818,8 @@ function Test-ForAppUpdate {
         $remoteFileName = [string]$remote.FileName
         if ([string]::IsNullOrWhiteSpace($remoteFileName)) { throw "Brak nazwy pliku (FileName) w informacji o wersji." }
         $downloadSource = if ($isWeb) { "$($basePath.TrimEnd('/'))/$remoteFileName" } else { Join-Path $basePath $remoteFileName }
-        $tempNewFile = Join-Path $env:TEMP $remoteFileName
+        # Split-Path -Leaf: nazwa z pliku na serwerze nie może wskazać innego katalogu (np. "..\..\x.ps1").
+        $tempNewFile = Join-Path $env:TEMP (Split-Path $remoteFileName -Leaf)
 
         Write-Log "Pobieranie wersji $($remote.Version)..."
         if ($isWeb) {
@@ -1825,13 +1828,41 @@ function Test-ForAppUpdate {
             Copy-Item -LiteralPath $downloadSource -Destination $tempNewFile -Force -ErrorAction Stop
         }
 
+        # Pobrany plik zastąpi narzędzie uruchamiane jako administrator, więc zanim go podmienimy:
+        # 1) sprawdzamy sumę SHA-256 z std_version.json (jeśli została podana),
+        $expectedHash = ([string]$remote.Sha256).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($expectedHash)) {
+            $actualHash = (Get-FileHash -LiteralPath $tempNewFile -Algorithm SHA256).Hash
+            if ($actualHash -ne $expectedHash) {
+                Remove-Item -LiteralPath $tempNewFile -Force -ErrorAction SilentlyContinue
+                throw "Suma kontrolna pobranego pliku się nie zgadza (oczekiwano $expectedHash, jest $actualHash). Aktualizacja przerwana."
+            }
+            Write-Log "Suma kontrolna SHA-256 pobranej wersji jest zgodna."
+        } else {
+            Write-Log "Uwaga: std_version.json nie zawiera pola Sha256 - pobrany plik nie został zweryfikowany sumą kontrolną." -IsError
+        }
+        # 2) sprawdzamy, czy to w ogóle poprawny skrypt PowerShell (np. zamiast strony błędu HTML
+        #    albo uciętego pliku) - inaczej po podmianie narzędzie przestałoby się uruchamiać.
+        if ($tempNewFile -like "*.ps1") {
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($tempNewFile, [ref]$null, [ref]$parseErrors) | Out-Null
+            if ($parseErrors.Count -gt 0) {
+                Remove-Item -LiteralPath $tempNewFile -Force -ErrorAction SilentlyContinue
+                throw "Pobrany plik zawiera błędy składni PowerShell ($($parseErrors.Count)), np.: $($parseErrors[0].Message). Aktualizacja przerwana."
+            }
+        }
+
         $currentFile = $PSCommandPath
         if ([string]::IsNullOrWhiteSpace($currentFile)) { throw "Nie udało się ustalić ścieżki bieżącego pliku (`$PSCommandPath) do podmiany." }
 
         # Uruchamiamy odrębny, krótkotrwały proces PowerShell, który poczeka aż bieżący proces się
         # zamknie, podmieni plik i uruchomi narzędzie ponownie - nie da się nadpisać pliku, który
         # jest w danym momencie wykonywany przez BIEŻĄCY proces.
-        $updaterScript = "Start-Sleep -Seconds 2; Copy-Item -LiteralPath '$tempNewFile' -Destination '$currentFile' -Force; Start-Process powershell.exe -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File `"$currentFile`"'"
+        # Apostrof w ścieżce (np. C:\Users\O'Brien\...) zamknąłby napis w pojedynczych cudzysłowach
+        # i zepsuł polecenie - w PowerShell apostrof wewnątrz '...' zapisuje się jako ''.
+        $tempQ = $tempNewFile.Replace("'", "''")
+        $currentQ = $currentFile.Replace("'", "''")
+        $updaterScript = "Start-Sleep -Seconds 2; Copy-Item -LiteralPath '$tempQ' -Destination '$currentQ' -Force; Start-Process powershell.exe -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File `"$currentQ`"'"
         Start-Process powershell.exe -ArgumentList @("-NoProfile", "-WindowStyle", "Hidden", "-Command", $updaterScript) -WindowStyle Hidden
 
         Write-Log "Aktualizacja pobrana. Zamykanie aplikacji w celu dokończenia instalacji wersji $($remote.Version)..."
