@@ -1913,34 +1913,52 @@ function Invoke-PostInstallScripts {
         $source = $config.DefaultInstallSource
         $sourcePath = $config.InstallSourcePaths.$source
 
-        foreach ($script in $config.PostInstallScripts) {
+        # Zmienna pętli nazywała się wcześniej $script - to poprawna, ale myląca nazwa, bo łatwo ją
+        # pomylić z zakresem $script: (np. $script:isCancelled w tej samej pętli).
+        foreach ($scriptEntry in $config.PostInstallScripts) {
             if ($script:isCancelled) { break }
-            Write-Log "Wykonywanie skryptu: $script..."
-            $scriptToRun = $script
+            Write-Log "Wykonywanie skryptu: $scriptEntry..."
+            $scriptToRun = $scriptEntry
             $localPath = ""
+            $isRemote = ($source -eq 'web' -or $scriptEntry -match "^https?://")
+            $scriptUrl = if ($scriptEntry -match "^https?://") { $scriptEntry } elseif ($isRemote) { Join-InstallSource -BasePath $sourcePath -FileName $scriptEntry } else { $null }
+            if (-not $isRemote -and $source -eq 'network') { $scriptToRun = Join-Path $sourcePath $scriptEntry }
 
-            if ($source -eq 'web' -or $script -match "^https?://") {
-                $scriptUrl = if ($script -match "^https?://") { $script } else { if ($sourcePath -match "/$") { "$sourcePath$script" } else { "$sourcePath/$script" } }
-                $localPath = Join-Path $env:TEMP (Split-Path $scriptUrl -Leaf)
-                Invoke-DownloadFile -Uri $scriptUrl -OutFile $localPath
-                $scriptToRun = $localPath
-            } elseif ($source -eq 'network') {
-                $scriptToRun = Join-Path $sourcePath $script
+            if ($script:DryRun) {
+                $what = if ($isRemote) { "pobrano by $scriptUrl i uruchomiono" } else { "uruchomiono by $scriptToRun" }
+                Write-Log "[DRY-RUN] Skrypt poinstalacyjny: $what."
+                continue
             }
 
-            if (Test-Path $scriptToRun) {
-                if ($scriptToRun -match "\.ps1$") {
-                    Start-ProcessWithEvents -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptToRun`"" | Out-Null
-                } elseif ($scriptToRun -match "\.(bat|cmd)$") {
-                    Start-ProcessWithEvents -FilePath "cmd.exe" -ArgumentList "/c `"$scriptToRun`"" | Out-Null
-                } else {
-                    Start-ProcessWithEvents -FilePath $scriptToRun -ArgumentList "" | Out-Null
+            try {
+                if ($isRemote) {
+                    $localPath = Join-Path $env:TEMP (Split-Path $scriptUrl -Leaf)
+                    Invoke-DownloadFile -Uri $scriptUrl -OutFile $localPath
+                    $scriptToRun = $localPath
                 }
-                Write-Log "Zakończono wykonywanie skryptu: $script"
-            } else {
-                Write-Log "Nie znaleziono pliku skryptu: $scriptToRun" -IsError
+
+                if (Test-Path $scriptToRun) {
+                    if ($scriptToRun -match "\.ps1$") {
+                        $exitCode = Start-ProcessWithEvents -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptToRun`""
+                    } elseif ($scriptToRun -match "\.(bat|cmd)$") {
+                        $exitCode = Start-ProcessWithEvents -FilePath "cmd.exe" -ArgumentList "/c `"$scriptToRun`""
+                    } else {
+                        $exitCode = Start-ProcessWithEvents -FilePath $scriptToRun
+                    }
+                    if ($exitCode -eq 0) {
+                        Write-Log "Zakończono wykonywanie skryptu: $scriptEntry"
+                    } else {
+                        Write-Log "Skrypt $scriptEntry zakończył się kodem $exitCode." -IsError
+                    }
+                } else {
+                    Write-Log "Nie znaleziono pliku skryptu: $scriptToRun" -IsError
+                }
+            } catch {
+                # Błąd jednego skryptu (np. nieudane pobranie) nie przerywa kolejnych.
+                Write-Log "Błąd skryptu poinstalacyjnego $($scriptEntry): $_" -IsError
+            } finally {
+                if ($localPath -and (Test-Path $localPath)) { Remove-Item $localPath -Force -ErrorAction SilentlyContinue }
             }
-            if ($localPath -and (Test-Path $localPath)) { Remove-Item $localPath -Force -ErrorAction SilentlyContinue }
         }
     } catch {
         Write-Log "Błąd podczas wykonywania skryptów poinstalacyjnych: $_" -IsError
@@ -1953,6 +1971,10 @@ function Export-HardwareAuditTask {
         $exportDir = "C:\Audit\"
         if ($null -ne $config.HardwareAudit -and -not [string]::IsNullOrWhiteSpace($config.HardwareAudit.ExportPath)) { 
             $exportDir = [System.Environment]::ExpandEnvironmentVariables($config.HardwareAudit.ExportPath)
+        }
+        if ($script:DryRun) {
+            Write-Log "[DRY-RUN] Wyeksportowano by audyt sprzętowy do katalogu: $exportDir"
+            return
         }
         if (-not (Test-Path $exportDir)) { New-Item -ItemType Directory -Path $exportDir -Force | Out-Null }
         $auditData = Get-HardwareAudit -AsHtml
@@ -2002,6 +2024,16 @@ function Enable-BitLockerEncryption {
     } catch { Write-Log "Wystąpił błąd podczas aktywacji BitLockera: $_" -IsError }
 }
 
+# Tworzy klucz rejestru tylko, gdy jeszcze nie istnieje. "New-Item -Force" na ISTNIEJĄCYM kluczu
+# rejestru tworzy go od nowa i kasuje wszystkie jego wartości (np. inne polityki ustawione przez
+# GPO w tym samym kluczu), dlatego najpierw sprawdzamy Test-Path. W trybie Dry-Run nic nie robi -
+# samą zmianę zaloguje Set-RegistryDword.
+function New-RegistryKeyIfMissing {
+    param([string]$Path)
+    if ($script:DryRun) { return }
+    if (-not (Test-Path -LiteralPath $Path)) { New-Item -Path $Path -Force | Out-Null }
+}
+
 function Set-SystemTweaks {
     try {
         if (-not (Test-Path $configPath)) {
@@ -2014,7 +2046,7 @@ function Set-SystemTweaks {
 
         if ($settings.DisableDeliveryOptimization) {
             Write-Log "Wyłączanie Delivery Optimization..."
-            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" -Force | Out-Null
+            New-RegistryKeyIfMissing -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization"
             Set-RegistryDword -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" -Name "DODownloadMode" -Value 0
         }
 
@@ -2025,13 +2057,13 @@ function Set-SystemTweaks {
 
         if ($settings.DisableTelemetry) {
             Write-Log "Wyłączanie telemetryki..."
-            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Force | Out-Null
+            New-RegistryKeyIfMissing -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"
             Set-RegistryDword -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value 0
         }
 
         if ($settings.DisableCortana) {
             Write-Log "Wyłączanie Cortany..."
-            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Force | Out-Null
+            New-RegistryKeyIfMissing -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search"
             Set-RegistryDword -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCortana" -Value 0
         }
 
@@ -2042,7 +2074,7 @@ function Set-SystemTweaks {
 
         if ($settings.DisableNewsAndInterests) {
             Write-Log "Wyłączanie News and Interests..."
-            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" -Force | Out-Null
+            New-RegistryKeyIfMissing -Path "HKLM:\SOFTWARE\Policies\Microsoft\Dsh"
             Set-RegistryDword -Path "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" -Name "AllowNewsAndInterests" -Value 0
         }
 
@@ -2058,11 +2090,15 @@ function Set-SystemTweaks {
                         Write-Log "Pominięto wpis rejestru (brak Path lub Name)."
                         continue
                     }
+                    $propType = if ([string]::IsNullOrWhiteSpace($reg.PropertyType)) { "String" } else { $reg.PropertyType }
+                    if ($script:DryRun) {
+                        Write-Log "[DRY-RUN] Ustawiono by klucz: $($reg.Path)\$($reg.Name) = $($reg.Value) [$propType]"
+                        continue
+                    }
                     if (-not (Test-Path $reg.Path)) {
                         New-Item -Path $reg.Path -Force | Out-Null
                         Write-Log "Utworzono nową ścieżkę: $($reg.Path)"
                     }
-                    $propType = if ([string]::IsNullOrWhiteSpace($reg.PropertyType)) { "String" } else { $reg.PropertyType }
                     Set-ItemProperty -Path $reg.Path -Name $reg.Name -Value $reg.Value -Type $propType -Force
                     Write-Log "Ustawiono klucz: $($reg.Path)\$($reg.Name) = $($reg.Value) [$propType]"
                 }
@@ -2079,6 +2115,10 @@ function Set-SystemTweaks {
 
 function Start-WindowsUpdate {
     try {
+        if ($script:DryRun) {
+            Write-Log "[DRY-RUN] Otwarto by panel Windows Update."
+            return
+        }
         Write-Log "Uruchamianie Windows Update..."
         Start-Process "control.exe" -ArgumentList "/name Microsoft.WindowsUpdate"
     }
@@ -2095,6 +2135,11 @@ function Uninstall-Microsoft365Apps {
             "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
         )
         $OfficeUninstallStrings = (Get-ItemProperty $regPaths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match "(?i)Microsoft 365|Microsoft Office|OneNote" } | Select-Object -ExpandProperty UninstallString)
+        if ($script:DryRun) {
+            foreach ($UninstallString in @($OfficeUninstallStrings)) { Write-Log "[DRY-RUN] Uruchomiono by deinstalator: $UninstallString DisplayLevel=False" }
+            Write-Log "[DRY-RUN] Usunięto by pakiety Appx: MicrosoftOfficeHub, OneNote, Microsoft.Office.Desktop."
+            return
+        }
         if ($OfficeUninstallStrings) {
             ForEach ($UninstallString in $OfficeUninstallStrings) {
                 if ($script:isCancelled) { break }
@@ -2133,6 +2178,10 @@ function Uninstall-Microsoft365Apps {
 
 function Uninstall-OneDrive {
     Write-Log "Rozpoczynam odinstalowywanie OneDrive..."
+    if ($script:DryRun) {
+        Write-Log "[DRY-RUN] Zamknięto by proces OneDrive i uruchomiono OneDriveSetup.exe /uninstall."
+        return
+    }
     try {
         Get-Process -Name "OneDrive" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
@@ -2519,7 +2568,11 @@ function Start-Deployment {
                 $notifyIcon.ShowBalloonTip(5000, "Instalacja zakończona", "Wszystkie zadania zostały pomyślnie wykonane. Możesz przywrócić okno.", [System.Windows.Forms.ToolTipIcon]::Info)
             }
     
-            if ($CheckboxControls.ContainsKey("AutoReboot") -and $CheckboxControls["AutoReboot"].IsChecked -eq $true) {
+            if ($CheckboxControls.ContainsKey("AutoReboot") -and $CheckboxControls["AutoReboot"].IsChecked -eq $true -and $script:DryRun) {
+                # Wcześniej Dry-Run naprawdę restartował komputer (Restart-Computer -Force).
+                Write-Log "[DRY-RUN] Uruchomiono by ponownie komputer (AutoReboot)."
+                Show-ThemedMessageBox -Message "Symulacja (Dry-Run) zakończona. W prawdziwym wdrożeniu komputer zostałby teraz uruchomiony ponownie." -Title "Zakończono" -Button "OK" -Image "Information" | Out-Null
+            } elseif ($CheckboxControls.ContainsKey("AutoReboot") -and $CheckboxControls["AutoReboot"].IsChecked -eq $true) {
                 Show-ThemedMessageBox -Message "Konfiguracja zakończona! Komputer uruchomi się ponownie po zamknięciu tego okna." -Title "Zakończono" -Button "OK" -Image "Information" | Out-Null
                 Write-Log "Wymuszono ponowne uruchomienie systemu..."
                 Restart-Computer -Force
