@@ -5,6 +5,7 @@ on:
     branches: [ "main", "master" ]
   pull_request:
     branches: [ "main", "master" ]
+  workflow_dispatch: # pozwala uruchomić testy ręcznie z zakładki Actions
 
 jobs:
   test:

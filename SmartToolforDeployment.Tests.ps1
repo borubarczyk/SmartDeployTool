@@ -1,4 +1,7 @@
-#Requires -Module Pester
+﻿#Requires -Module Pester
+# UWAGA: ten plik MUSI być zapisany jako UTF-8 z BOM (tak jak SmartToolforDeployment.ps1). Windows
+# PowerShell 5.1 czyta pliki bez BOM w stronie kodowej ANSI, więc polskie znaki w oczekiwanych
+# tekstach (np. "Mało wolnego miejsca") nie pasowałyby do komunikatów ze skryptu.
 
 BeforeAll {
     # Ustawiamy flagę, która zapobiegnie uruchomieniu GUI z głównego pliku
@@ -338,6 +341,96 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             Clear-DeploymentCheckpoint
             Test-StepDone "JakisKrok" | Should -Be $false
             Assert-MockCalled Remove-Item -Times 1
+        }
+    }
+
+    Context "Łączenie źródła instalacji (Join-InstallSource)" {
+        It "Dokleja '/' między adresem URL a nazwą pliku, gdy go brakuje" {
+            Join-InstallSource -BasePath "https://apps.firma.pl/Data" -FileName "chrome.exe" | Should -Be "https://apps.firma.pl/Data/chrome.exe"
+        }
+
+        It "Nie dubluje '/', gdy adres URL już się nim kończy" {
+            Join-InstallSource -BasePath "https://apps.firma.pl/Data/" -FileName "chrome.exe" | Should -Be "https://apps.firma.pl/Data/chrome.exe"
+        }
+
+        It "Dla ścieżki UNC używa Join-Path" {
+            Join-InstallSource -BasePath "\\SERWER\Instalki" -FileName "7z.exe" | Should -Be "\\SERWER\Instalki\7z.exe"
+        }
+    }
+
+    Context "Ocena kodu wyjścia instalatora (Test-InstallerExitCode, Write-InstallResult)" {
+        It "Uznaje 0, 1641 i 3010 za sukces" {
+            Test-InstallerExitCode -ExitCode 0 | Should -Be $true
+            Test-InstallerExitCode -ExitCode 1641 | Should -Be $true
+            Test-InstallerExitCode -ExitCode 3010 | Should -Be $true
+        }
+
+        It "Uznaje inne kody i brak kodu za błąd" {
+            Test-InstallerExitCode -ExitCode 1603 | Should -Be $false
+            Test-InstallerExitCode -ExitCode $null | Should -Be $false
+        }
+
+        It "Kod winget 'pakiet już zainstalowany' jest sukcesem tylko z przełącznikiem -Winget" {
+            Test-InstallerExitCode -ExitCode -1978335135 -Winget | Should -Be $true
+            Test-InstallerExitCode -ExitCode -1978335135 | Should -Be $false
+        }
+
+        It "Write-InstallResult loguje błąd z kodem wyjścia zamiast 'zainstalowany'" {
+            Mock Write-Log {}
+            Write-InstallResult -Name "Chrome" -ExitCode 1603 | Should -Be $false
+            Should -Invoke Write-Log -ParameterFilter { $IsError -and $Text -match "kod wyjścia: 1603" } -Times 1
+            Should -Invoke Write-Log -ParameterFilter { $Text -match "zainstalowany\." } -Times 0 -Exactly
+        }
+    }
+
+    Context "Uruchamianie procesów (Start-ProcessWithEvents)" {
+        It "Nie przekazuje pustego -ArgumentList do Start-Process (PS 5.1 go odrzuca)" {
+            Mock Start-Process { return [PSCustomObject]@{ HasExited = $true; ExitCode = 0; Id = 1 } }
+            Mock Do-WpfEvents {}
+            Start-ProcessWithEvents -FilePath "setup.exe" -ArgumentList "" | Should -Be 0
+            Should -Invoke Start-Process -ParameterFilter { $null -eq $ArgumentList } -Times 1
+        }
+
+        It "Przekazuje argumenty, gdy nie są puste, i zwraca kod wyjścia procesu" {
+            Mock Start-Process { return [PSCustomObject]@{ HasExited = $true; ExitCode = 1603; Id = 1 } }
+            Mock Do-WpfEvents {}
+            Start-ProcessWithEvents -FilePath "msiexec.exe" -ArgumentList "/i app.msi /qn" | Should -Be 1603
+            Should -Invoke Start-Process -ParameterFilter { $ArgumentList -eq "/i app.msi /qn" } -Times 1
+        }
+    }
+
+    Context "Nazwa komputera (Get-DefaultComputerName, Test-ComputerNameValid)" {
+        It "Buduje nazwę PC-NumerSeryjny bez niedozwolonych znaków i przycina do 15 znaków" {
+            Get-DefaultComputerName -SerialNumber "5CG1234XYZ" | Should -Be "PC-5CG1234XYZ"
+            Get-DefaultComputerName -SerialNumber "To Be Filled By O.E.M." | Should -Be "PC-ToBeFilledBy"
+            Get-DefaultComputerName -SerialNumber "" | Should -Be "PC-NOSERIAL"
+        }
+
+        It "Akceptuje poprawną nazwę" {
+            Test-ComputerNameValid -Name "PC-01" | Should -BeNullOrEmpty
+        }
+
+        It "Odrzuca nazwy za długie, z niedozwolonymi znakami, z samych cyfr i zaczynające się myślnikiem" {
+            Test-ComputerNameValid -Name "KOMPUTER-KSIEGOWOSC" | Should -Match "15 znaków"
+            Test-ComputerNameValid -Name "PC_01" | Should -Match "Dozwolone"
+            Test-ComputerNameValid -Name "123456" | Should -Match "cyfr"
+            Test-ComputerNameValid -Name "-PC" | Should -Match "myślnikiem"
+            Test-ComputerNameValid -Name "" | Should -Match "pusta"
+        }
+    }
+
+    Context "Zapis ustawień (Set-ConfigValue, Get-ConfigSection)" {
+        It "Dodaje brakujące pole do obiektu z ConvertFrom-Json zamiast rzucać wyjątek" {
+            $cfg = '{ "InstallSourcePaths": { "web": "https://x/" } }' | ConvertFrom-Json
+            { Set-ConfigValue $cfg.InstallSourcePaths 'network' '\\srv\share\' } | Should -Not -Throw
+            $cfg.InstallSourcePaths.network | Should -Be '\\srv\share\'
+            $cfg.InstallSourcePaths.web | Should -Be 'https://x/'
+        }
+
+        It "Tworzy brakującą sekcję i pozwala ustawić w niej pole" {
+            $cfg = '{ "DefaultInstallSource": "web" }' | ConvertFrom-Json
+            Set-ConfigValue (Get-ConfigSection $cfg 'DomainJoin') 'DomainName' 'firma.local'
+            $cfg.DomainJoin.DomainName | Should -Be 'firma.local'
         }
     }
 }

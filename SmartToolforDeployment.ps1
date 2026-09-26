@@ -161,11 +161,16 @@ function global:Show-ThemedMessageBox {
     elseif ($Button -match 'YesNo') { $btnStr = 'YesNo' }
     else { $btnStr = 'OK' }
     
+    # UWAGA: wartości enum MUSZĄ być w nawiasach. Przy wywołaniu polecenia (& $AddBtn ...) PowerShell
+    # działa w "trybie argumentów", w którym [System.Windows.MessageBoxResult]::Yes bez nawiasów NIE
+    # jest wyliczane, tylko przekazywane jako zwykły napis "[System.Windows.MessageBoxResult]::Yes".
+    # Porównanie takiego napisu z enumem (-eq [System.Windows.MessageBoxResult]::Yes) zawsze dawało
+    # $false, więc każde "Tak" działało jak "Nie". Nawias wymusza wyliczenie wyrażenia.
     switch ($btnStr) {
-        "OKCancel" { & $AddBtn "OK" [System.Windows.MessageBoxResult]::OK $true $false "#FF0078D7"; & $AddBtn "Anuluj" [System.Windows.MessageBoxResult]::Cancel $false $true $null }
-        "YesNo" { & $AddBtn "Tak" [System.Windows.MessageBoxResult]::Yes $true $false "#FF0078D7"; & $AddBtn "Nie" [System.Windows.MessageBoxResult]::No $false $true $null }
-        "YesNoCancel" { & $AddBtn "Tak" [System.Windows.MessageBoxResult]::Yes $true $false "#FF0078D7"; & $AddBtn "Nie" [System.Windows.MessageBoxResult]::No $false $false $null; & $AddBtn "Anuluj" [System.Windows.MessageBoxResult]::Cancel $false $true $null }
-        default { & $AddBtn "OK" [System.Windows.MessageBoxResult]::OK $true $false "#FF0078D7" }
+        "OKCancel" { & $AddBtn "OK" ([System.Windows.MessageBoxResult]::OK) $true $false "#FF0078D7"; & $AddBtn "Anuluj" ([System.Windows.MessageBoxResult]::Cancel) $false $true $null }
+        "YesNo" { & $AddBtn "Tak" ([System.Windows.MessageBoxResult]::Yes) $true $false "#FF0078D7"; & $AddBtn "Nie" ([System.Windows.MessageBoxResult]::No) $false $true $null }
+        "YesNoCancel" { & $AddBtn "Tak" ([System.Windows.MessageBoxResult]::Yes) $true $false "#FF0078D7"; & $AddBtn "Nie" ([System.Windows.MessageBoxResult]::No) $false $false $null; & $AddBtn "Anuluj" ([System.Windows.MessageBoxResult]::Cancel) $false $true $null }
+        default { & $AddBtn "OK" ([System.Windows.MessageBoxResult]::OK) $true $false "#FF0078D7" }
     }
     if ($null -ne $Window -and $Window.IsLoaded) { $dlg.Owner = $Window; $dlg.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterOwner }
     $dlg.ShowDialog() | Out-Null
@@ -253,11 +258,11 @@ $btnLoginAuth.Add_Click({
     } else {
         $script:failedAttempts++
         if ($script:failedAttempts -ge 3) {
-            Show-ThemedMessageBox -Message "Przekroczono limit błędnych prób (3). Aplikacja zostanie zamknięta." -Title "Blokada" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+            Show-ThemedMessageBox -Message "Przekroczono limit błędnych prób (3). Aplikacja zostanie zamknięta." -Title "Blokada" -Button "OK" -Image "Error" | Out-Null
             $authWindow.Close()
         } else {
             $pozostalo = 3 - $script:failedAttempts
-            Show-ThemedMessageBox -Message "Nieprawidłowy login lub PIN.`nPozostało prób: $pozostalo" -Title "Błąd autoryzacji" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+            Show-ThemedMessageBox -Message "Nieprawidłowy login lub PIN.`nPozostało prób: $pozostalo" -Title "Błąd autoryzacji" -Button "OK" -Image "Error" | Out-Null
             $txtPin.Clear()
         }
     }
@@ -269,15 +274,24 @@ $authWindow.Add_KeyDown({
     }
 })
 
-$authWindow.ShowDialog() | Out-Null
+# W testach Pester (skrypt jest wczytywany przez dot-sourcing) okna logowania i powitania NIE mogą
+# się pokazać - ShowDialog() czekałby w nieskończoność na kliknięcie, a brak logowania kończył się
+# "exit", który zamykał cały proces Invoke-Pester.
+if ($null -eq $global:PesterTesting) {
+    $authWindow.ShowDialog() | Out-Null
 
-if (-not $script:authSuccess) {
-    exit
+    if (-not $script:authSuccess) {
+        exit
+    }
+
+    # Zapisz login od razu do logów po pomyślnej autoryzacji - w tym samym formacie co Write-Log
+    # (data, poziom, kontekst), żeby przeglądarka logów pokazała datę i kontekst tego wpisu.
+    $authLogLine = "[$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))] [INFO] [Użytkownik] Zalogowano operatora narzędzia STD: $($script:OperatorLogin)"
+    Add-Content -Path "C:\deploy-log.txt" -Value $authLogLine -Encoding UTF8 -ErrorAction SilentlyContinue
+} else {
+    $script:authSuccess = $true
+    $script:OperatorLogin = "Pester"
 }
-
-# Zapisz login od razu do logów po pomyślnej autoryzacji
-$authLogLine = "[$((Get-Date).ToString('HH:mm:ss'))] Zalogowano operatora narzędzia STD: $($script:OperatorLogin)"
-Add-Content -Path "C:\deploy-log.txt" -Value $authLogLine -Encoding UTF8 -ErrorAction SilentlyContinue
 
 
 # ---------- Utworzenie formularza (WPF) ----------
@@ -394,10 +408,14 @@ $btnCancel.Add_Click({
     $welcomeWindow.Close()
 })
 
-$result = $welcomeWindow.ShowDialog()
+if ($null -eq $global:PesterTesting) {
+    $result = $welcomeWindow.ShowDialog()
 
-if ($result -ne $true) {
-    exit
+    if ($result -ne $true) {
+        exit
+    }
+} else {
+    $timer.Stop()
 }
 
 $ScriptDir = $PSScriptRoot
@@ -762,22 +780,34 @@ function Start-ProcessWithEvents {
         return 0
     }
     try {
-        $proc = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru -NoNewWindow -ErrorAction Stop
+        # -ArgumentList przekazujemy tylko, gdy nie jest pusty: w Windows PowerShell 5.1 parametr ma
+        # [ValidateNotNullOrEmpty], więc -ArgumentList "" (np. antywirus bez argumentów) kończył się
+        # błędem "Cannot validate argument on parameter 'ArgumentList'".
+        $startParams = @{ FilePath = $FilePath; PassThru = $true; NoNewWindow = $true; ErrorAction = 'Stop' }
+        if (-not [string]::IsNullOrWhiteSpace($ArgumentList)) { $startParams.ArgumentList = $ArgumentList }
+        $proc = Start-Process @startParams
         if ($null -ne $proc) {
+            # Odczyt Handle zaraz po starcie "przypina" uchwyt procesu - bez tego w PS 5.1 ExitCode
+            # po zakończeniu procesu bywa pusty ($null).
+            $null = $proc.Handle
             while (-not $proc.HasExited) {
                 Do-WpfEvents
                 if ($script:isCancelled) {
                     try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+                    # Czekamy chwilę na faktyczne zakończenie, inaczej odczyt ExitCode rzuca wyjątek.
+                    try { $proc.WaitForExit(3000) | Out-Null } catch {}
                     Write-Log "Proces przerwany." -IsError
                     break
                 }
                 Start-Sleep -Milliseconds 100
             }
-            return $proc.ExitCode
+            if ($proc.HasExited) { return $proc.ExitCode }
+            return $null
         }
     } catch {
         Write-Log "Błąd uruchamiania procesu: $_" -IsError
     }
+    return $null
 }
 
 function Start-UninstallProcessWithCancel {
@@ -787,11 +817,16 @@ function Start-UninstallProcessWithCancel {
         [string]$LogContext
     )
     try {
-        $proc = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru -WindowStyle Hidden -ErrorAction Stop
+        $startParams = @{ FilePath = $FilePath; PassThru = $true; WindowStyle = 'Hidden'; ErrorAction = 'Stop' }
+        if (-not [string]::IsNullOrWhiteSpace($ArgumentList)) { $startParams.ArgumentList = $ArgumentList }
+        $proc = Start-Process @startParams
     } catch {
         Write-Log "Błąd uruchamiania deinstalatora ($LogContext): $_" -IsError
         return -1
     }
+    # Bez tego odczytu ExitCode procesu uruchomionego z -WindowStyle Hidden w PS 5.1 często jest
+    # pusty, a wtedy poprawna deinstalacja była pokazywana jako "BŁĄD (kod: -1)".
+    try { $null = $proc.Handle } catch {}
     $script:uninstProc = $proc
     while (-not $proc.HasExited) {
         Do-WpfEvents
@@ -870,7 +905,9 @@ function Invoke-DownloadFile {
             if ($script:isCancelled) {
                 $webClient.CancelAsync()
                 Write-Log "Pobieranie przerwane." -IsError
-                break
+                # Rzucamy wyjątek, żeby wywołujący NIE uruchomił niepełnego pliku instalatora
+                # (wcześniej funkcja po prostu wracała i kod szedł dalej, jakby pobieranie się udało).
+                throw "Pobieranie przerwane przez użytkownika."
             }
             Start-Sleep -Milliseconds 50
         }
@@ -894,6 +931,49 @@ function Test-UrlValid {
         }
         return $false
     } catch { return $false }
+}
+
+# Łączy źródło instalacji (URL albo ścieżka UNC/lokalna) z nazwą pliku. Dla URL pilnuje dokładnie
+# jednego "/" między częściami (wcześniej "https://x/Data" + "a.exe" dawało "https://x/Dataa.exe"),
+# dla ścieżek plikowych używa Join-Path.
+function Join-InstallSource {
+    param([string]$BasePath, [string]$FileName)
+    if ($BasePath -match '^https?://') {
+        return "$($BasePath.TrimEnd('/'))/$($FileName.TrimStart('/'))"
+    }
+    return (Join-Path $BasePath $FileName)
+}
+
+# Kody wyjścia instalatorów uznawane za sukces:
+#   0    - sukces
+#   1641 - sukces, instalator MSI sam zainicjował restart
+#   3010 - sukces, wymagany restart (MSI)
+# Dla winget dodatkowo: 0x8A15002B (brak nowszej wersji) i 0x8A150061 (pakiet już zainstalowany).
+$script:InstallerSuccessExitCodes = @(0, 1641, 3010)
+$script:WingetAlreadyInstalledExitCodes = @(-1978335189, -1978335135)
+
+function Test-InstallerExitCode {
+    param($ExitCode, [switch]$Winget)
+    if ($null -eq $ExitCode) { return $false }
+    if ($script:InstallerSuccessExitCodes -contains [int]$ExitCode) { return $true }
+    if ($Winget -and $script:WingetAlreadyInstalledExitCodes -contains [int]$ExitCode) { return $true }
+    return $false
+}
+
+# Loguje wynik instalacji na podstawie kodu wyjścia (wcześniej "zainstalowany" było pisane zawsze,
+# nawet gdy instalator zwrócił błąd). Zwraca $true przy sukcesie.
+function Write-InstallResult {
+    param([string]$Name, $ExitCode, [switch]$Winget)
+    if (Test-InstallerExitCode -ExitCode $ExitCode -Winget:$Winget) {
+        $suffix = ""
+        if ([int]$ExitCode -in 1641, 3010) { $suffix = " Wymagany restart komputera." }
+        elseif ($Winget -and $script:WingetAlreadyInstalledExitCodes -contains [int]$ExitCode) { $suffix = " Był już zainstalowany wcześniej." }
+        Write-Log "$Name zainstalowany.$suffix"
+        return $true
+    }
+    $codeText = if ($null -eq $ExitCode) { "brak - proces nie wystartował lub został przerwany" } else { "$ExitCode" }
+    Write-Log "Instalator $Name zakończył się błędem (kod wyjścia: $codeText)." -IsError
+    return $false
 }
 
 function Test-BeforeRun {
@@ -954,6 +1034,11 @@ function Test-BeforeRun {
                 foreach ($appName in $SelectedApps.Keys) {
                     $app = $config.Programs.$appName
                     if ($null -eq $app) { $errors.Add("Brak konfiguracji dla aplikacji '$appName'.") | Out-Null; continue }
+                    # Własny adres URL programu (DownloadUrl) nadpisuje globalne źródło - wtedy sprawdzamy tylko ten adres.
+                    if (-not [string]::IsNullOrWhiteSpace([string]$app.DownloadUrl)) {
+                        if (-not (Test-UrlValid -Url ([string]$app.DownloadUrl))) { $errors.Add("Niepoprawny własny URL (DownloadUrl) dla '$appName': $($app.DownloadUrl)") | Out-Null }
+                        continue
+                    }
                     if ([string]::IsNullOrWhiteSpace($app.FileName)) { $errors.Add("Brak 'FileName' dla '$appName'.") | Out-Null; continue }
                     if ($source -eq 'network') {
                         $full = Join-Path $sourcePath $app.FileName
@@ -986,7 +1071,8 @@ function Test-BeforeRun {
             $wifiProfiles = $config.WiFiProfile.FileName
             if ($null -ne $wifiProfiles) {
                 foreach ($wifi in @($wifiProfiles)) {
-                    if ([string]::IsNullOrWhiteSpace($wifi) -or -not (Test-Path -LiteralPath $wifi)) { $errors.Add("Brak pliku profilu Wi-Fi: $wifi") | Out-Null }
+                    $wifiPath = Resolve-ConfigFilePath -Path $wifi
+                    if ([string]::IsNullOrWhiteSpace($wifi) -or -not (Test-Path -LiteralPath $wifiPath)) { $errors.Add("Brak pliku profilu Wi-Fi: $wifiPath") | Out-Null }
                 }
             } else { $errors.Add("Brak konfiguracji WiFiProfile.FileName.") | Out-Null }
         }
@@ -1005,11 +1091,11 @@ function Test-BeforeRun {
     foreach ($w in $warnings) { Write-Log $w }
 
     if ($errors.Count -gt 0) {
-        Show-ThemedMessageBox -Message ("Wykryto bledy walidacji:`r`n- " + ($errors -join "`r`n- ")) -Title "Walidacja" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+        Show-ThemedMessageBox -Message ("Wykryto bledy walidacji:`r`n- " + ($errors -join "`r`n- ")) -Title "Walidacja" -Button "OK" -Image "Error" | Out-Null
         return $false
     }
     if ($warnings.Count -gt 0) {
-        Show-ThemedMessageBox -Message ("Uwaga:`r`n- " + ($warnings -join "`r`n- ")) -Title "Walidacja" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+        Show-ThemedMessageBox -Message ("Uwaga:`r`n- " + ($warnings -join "`r`n- ")) -Title "Walidacja" -Button "OK" -Image "Warning" | Out-Null
     }
     return $true
 }
@@ -1032,27 +1118,36 @@ function Install-SelectedApps {
         Set-ProgressText "Instalacja aplikacji $currentAppIdx/$($totalApps): $appName..."
         
         $app = $config.Programs.${appName}
-        $fileName = $app.FileName
-        $silentArgs = $app.SilentArgs
+        $fileName = [string]$app.FileName
+        $silentArgs = [string]$app.SilentArgs
+        $downloadUrl = [string]$app.DownloadUrl
         $localPath = $null
 
         try {
-                if ($source -eq 'winget') {
-                    Write-Log "Instalacja $appName (Winget)..."
-                    $cmdArgs = "install --id `"$fileName`" -e --silent --accept-package-agreements --accept-source-agreements $silentArgs"
-                    Start-ProcessWithEvents -FilePath "winget.exe" -ArgumentList $cmdArgs | Out-Null
-                    Write-Log "$appName zainstalowany (Winget)."
+            # Własny adres URL programu (pole "Zawsze pobieraj z niestandardowego adresu URL" w edytorze)
+            # ma pierwszeństwo przed globalnym źródłem. Wcześniej był zapisywany, ale nigdy nieużywany.
+            $appSource = if (-not [string]::IsNullOrWhiteSpace($downloadUrl)) { 'url' } else { $source }
+
+            if ($appSource -eq 'winget') {
+                $cmdArgs = "install --id `"$fileName`" -e --silent --accept-package-agreements --accept-source-agreements $silentArgs"
+                if ($script:DryRun) {
+                    Write-Log "[DRY-RUN] Zainstalowano by $appName przez Winget: winget $cmdArgs"
                 } else {
-                    $fullPath = if ($sourcePath -like "http*") {
-                        "$sourcePath$fileName"
-                    }
-                    else {
-                        Join-Path $sourcePath $fileName
-                    }
+                    Write-Log "Instalacja $appName (Winget)..."
+                    $exitCode = Start-ProcessWithEvents -FilePath "winget.exe" -ArgumentList $cmdArgs
+                    Write-InstallResult -Name $appName -ExitCode $exitCode -Winget | Out-Null
+                }
+            } else {
+                $fullPath = if ($appSource -eq 'url') { $downloadUrl } else { Join-InstallSource -BasePath $sourcePath -FileName $fileName }
+                # Nazwa pliku lokalnego: z FileName, a gdy jest pusty (sam DownloadUrl) - z końcówki adresu URL.
+                $localName = if (-not [string]::IsNullOrWhiteSpace($fileName)) { Split-Path $fileName -Leaf } else { [System.IO.Path]::GetFileName(([uri]$downloadUrl).AbsolutePath) }
 
-                    $localPath = "$env:TEMP\$fileName"
-
-                    Write-Log "Pobieranie $appName"
+                if ($script:DryRun) {
+                    # W trybie testowym nic nie pobieramy - wcześniej Dry-Run ściągał wszystkie instalatory.
+                    Write-Log "[DRY-RUN] Pobrano by $appName z $fullPath i uruchomiono instalator $localName (argumenty: $silentArgs)."
+                } else {
+                    $localPath = Join-Path $env:TEMP $localName
+                    Write-Log "Pobieranie $appName z $fullPath..."
 
                     $cred = $null
                     if ($config.WebAuth.Username -and $config.WebAuth.Password) {
@@ -1063,16 +1158,13 @@ function Install-SelectedApps {
                     Invoke-DownloadFile -Uri $fullPath -OutFile $localPath -Credential $cred
 
                     Write-Log "Instalacja $appName..."
-
-                    if ($fileName -like "*.msi") {
-                        $cmdArgs = "/i `"$localPath`" $silentArgs"
-                        Start-ProcessWithEvents -FilePath "msiexec.exe" -ArgumentList $cmdArgs | Out-Null
+                    if ($localName -like "*.msi") {
+                        $exitCode = Start-ProcessWithEvents -FilePath "msiexec.exe" -ArgumentList "/i `"$localPath`" $silentArgs"
+                    } else {
+                        $exitCode = Start-ProcessWithEvents -FilePath $localPath -ArgumentList $silentArgs
                     }
-                    else {
-                        Start-ProcessWithEvents -FilePath $localPath -ArgumentList $silentArgs | Out-Null
-                    }
-
-                    Write-Log "$appName zainstalowany."
+                    Write-InstallResult -Name $appName -ExitCode $exitCode | Out-Null
+                }
             }
         }
         catch {
@@ -1122,6 +1214,10 @@ function Resume-Hibernation {
 }
 
 function Install-TeamViewer {
+    # Ścieżka pliku pobranego przez nas do %TEMP%. TYLKO ten plik wolno usunąć w bloku finally.
+    # Wcześniej używana była jedna zmienna $localPath, która przy źródle "network" wskazywała
+    # instalator na udziale (\\serwer\...\TeamViewer_Host.msi) - i finally kasował go z serwera.
+    $downloadedFile = $null
     try {
         if (-not (Test-Path $configPath)) {
             Write-Log "Brak pliku config.json" -IsError
@@ -1133,7 +1229,6 @@ function Install-TeamViewer {
         $sourcePath = $config.InstallSourcePaths.$source
         $msiArgs = $config.TeamViewer.Arguments
         $fileName = $config.TeamViewer.FileName
-        $localPath = "$env:TEMP\$fileName"
 
         $regPaths = @(
             "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
@@ -1143,6 +1238,7 @@ function Install-TeamViewer {
 
         $isInstalled = $false
         $uninstallString = $null
+        $isQuietUninstall = $false
 
         foreach ($path in $regPaths) {
             $items = Get-ItemProperty -Path $path -ErrorAction SilentlyContinue
@@ -1150,6 +1246,7 @@ function Install-TeamViewer {
                 if ($item.DisplayName -like "*TeamViewer*") {
                     $isInstalled = $true
                     $uninstallString = $item.QuietUninstallString
+                    $isQuietUninstall = [bool]$uninstallString
                     if (-not $uninstallString) { $uninstallString = $item.UninstallString }
 
                     Write-Log "Znaleziono wpis TeamViewer: $($item.DisplayName)"
@@ -1159,16 +1256,34 @@ function Install-TeamViewer {
             if ($isInstalled) { break }
         }
 
+        if ($script:DryRun) {
+            if ($isInstalled) { Write-Log "[DRY-RUN] Zamknięto by procesy TeamViewer i odinstalowano go poleceniem: $uninstallString" }
+            Write-Log "[DRY-RUN] Zainstalowano by TeamViewer ze źródła '$source' (plik/ID: $fileName, argumenty: $msiArgs)."
+            return
+        }
 
         if ($isInstalled) {
             Write-Log "TeamViewer już zainstalowany, odinstalowuję..."
             if ($uninstallString) {
-                $uninstallCommand = ($uninstallString -replace "/I", "/X") + " /qn"
+                $uninstallCommand = $uninstallString
+                if ($uninstallString -match '(?i)msiexec') {
+                    # Zamieniamy tylko przełącznik instalacji "/I{GUID}" na deinstalację "/X{GUID}".
+                    # Stare -replace "/I" podmieniało KAŻDE "/i" (bez rozróżniania wielkości liter).
+                    $uninstallCommand = $uninstallString -replace '(?i)/I(?=\{)', '/X'
+                    if ($uninstallCommand -notmatch '(?i)/qn') { $uninstallCommand += " /qn /norestart" }
+                } elseif (-not $isQuietUninstall) {
+                    # Deinstalator TeamViewera w wersji .exe (NSIS) ma tryb cichy "/S" - "/qn" to przełącznik msiexec.
+                    $uninstallCommand += " /S"
+                }
                 Get-Process -Name "*TeamViewer*" -ErrorAction SilentlyContinue | Stop-Process -Force
                 Start-Sleep -Seconds 5
                 Write-Log "Uruchamiam odinstalowanie: $uninstallCommand"
-                Start-ProcessWithEvents -FilePath "cmd.exe" -ArgumentList "/c $uninstallCommand" | Out-Null
-                Write-Log "TeamViewer odinstalowany."
+                $uninstallExit = Start-ProcessWithEvents -FilePath "cmd.exe" -ArgumentList "/c $uninstallCommand"
+                if (Test-InstallerExitCode -ExitCode $uninstallExit) {
+                    Write-Log "TeamViewer odinstalowany."
+                } else {
+                    Write-Log "Deinstalacja TeamViewer zwróciła kod $uninstallExit - próbuję mimo to zainstalować ponownie." -IsError
+                }
             }
             else {
                 Write-Log "Nie znaleziono polecenia odinstalowania TeamViewer." -IsError
@@ -1177,7 +1292,7 @@ function Install-TeamViewer {
         }
         else {
             Write-Log "TeamViewer nie jest zainstalowany, przechodzę do instalacji."
-        if ( (Show-ThemedMessageBox -Message "Nie wykryto instalacji TeamViewer. Czy chcesz kontynuować instalację? (Jeśli istnieje proces TeamViewera zostanie on ubity)" -Title "Potwierdzenie" -Button [System.Windows.MessageBoxButton]::YesNo -Image [System.Windows.MessageBoxImage]::Question) -ne [System.Windows.MessageBoxResult]::Yes ) {
+        if ( (Show-ThemedMessageBox -Message "Nie wykryto instalacji TeamViewer. Czy chcesz kontynuować instalację? (Jeśli istnieje proces TeamViewera zostanie on ubity)" -Title "Potwierdzenie" -Button "YesNo" -Image "Question") -ne [System.Windows.MessageBoxResult]::Yes ) {
                 Write-Log "Instalacja anulowana przez użytkownika." -IsError
                 return
             }
@@ -1186,33 +1301,36 @@ function Install-TeamViewer {
 
         if ($source -eq 'winget') {
             Write-Log "Instalacja TeamViewer przez Winget..."
-            Start-ProcessWithEvents -FilePath "winget.exe" -ArgumentList "install --id `"$fileName`" -e --silent --accept-package-agreements --accept-source-agreements $msiArgs" | Out-Null
-            Write-Log "TeamViewer zainstalowany (Winget)."
+            $exitCode = Start-ProcessWithEvents -FilePath "winget.exe" -ArgumentList "install --id `"$fileName`" -e --silent --accept-package-agreements --accept-source-agreements $msiArgs"
+            Write-InstallResult -Name "TeamViewer" -ExitCode $exitCode -Winget | Out-Null
         } else {
-            if ($sourcePath -like "http*") {
-                $DownloadPathOrUrl = "$sourcePath$fileName"
-                Write-Log "Pobieranie TeamViewer z $DownloadPathOrUrl..."
-                Invoke-DownloadFile -Uri $DownloadPathOrUrl -OutFile $localPath
-                Write-Log "Pobrano TeamViewer do: $localPath"
+            $sourceFile = Join-InstallSource -BasePath $sourcePath -FileName $fileName
+            if ($sourceFile -match '^https?://') {
+                $downloadedFile = Join-Path $env:TEMP (Split-Path $fileName -Leaf)
+                Write-Log "Pobieranie TeamViewer z $sourceFile..."
+                Invoke-DownloadFile -Uri $sourceFile -OutFile $downloadedFile
+                Write-Log "Pobrano TeamViewer do: $downloadedFile"
+                $installerPath = $downloadedFile
             }
             else {
-                $localPath = Join-Path $sourcePath $fileName
-                Write-Log "Instalacja TeamViewer z lokalnej ścieżki: $localPath"
+                # Instalujemy bezpośrednio z udziału/ścieżki lokalnej - tego pliku NIE usuwamy.
+                $installerPath = $sourceFile
+                Write-Log "Instalacja TeamViewer ze ścieżki: $installerPath"
             }
 
             Write-Log "Instalacja TeamViewer..."
             Write-Log "Używam argumentów MSI: $msiArgs"
-            Start-ProcessWithEvents -FilePath "msiexec.exe" -ArgumentList "/i `"$localPath`" $msiArgs" | Out-Null
-            Write-Log "TeamViewer zainstalowany."
+            $exitCode = Start-ProcessWithEvents -FilePath "msiexec.exe" -ArgumentList "/i `"$installerPath`" $msiArgs"
+            Write-InstallResult -Name "TeamViewer" -ExitCode $exitCode | Out-Null
         }
     }
     catch {
         Write-Log "Błąd podczas instalacji TeamViewer: $_" -IsError
     }
     finally {
-        if (Test-Path $localPath) {
-            Remove-Item -Path $localPath -Force -ErrorAction SilentlyContinue
-            Write-Log "Usunięto plik instalacyjny TeamViewer: $localPath"
+        if (-not [string]::IsNullOrWhiteSpace($downloadedFile) -and (Test-Path -LiteralPath $downloadedFile)) {
+            Remove-Item -LiteralPath $downloadedFile -Force -ErrorAction SilentlyContinue
+            Write-Log "Usunięto pobrany plik instalacyjny TeamViewer: $downloadedFile"
         }
     }
 }
@@ -1244,17 +1362,25 @@ function Install-AV {
             return
         }
 
+        if ($script:DryRun) {
+            Write-Log "[DRY-RUN] Zainstalowano by antywirusa ze źródła '$source' (plik/ID: $fileName, ścieżka: $sourcePath)."
+            return
+        }
+
         if ($source -eq 'winget') {
             Write-Log "Instalacja antywirusa przez Winget..."
-            Start-ProcessWithEvents -FilePath "winget.exe" -ArgumentList "install --id `"$fileName`" -e --silent --accept-package-agreements --accept-source-agreements" | Out-Null
-            Write-Log "Antywirus zainstalowany (Winget)."
+            $exitCode = Start-ProcessWithEvents -FilePath "winget.exe" -ArgumentList "install --id `"$fileName`" -e --silent --accept-package-agreements --accept-source-agreements"
+            Write-InstallResult -Name "Antywirus" -ExitCode $exitCode -Winget | Out-Null
             return
         }
 
         if ($source -eq "web") {
-            # Używamy krótkiej nazwy docelowej, aby uniknąć problemów z długimi nazwami plików (MAX_PATH)
-            $avPath = Join-Path $env:TEMP "setup_av_temp.exe"
-            $avUrl = if ($sourcePath -match "/$") { "$sourcePath$fileName" } else { "$sourcePath/$fileName" }
+            # Używamy krótkiej nazwy docelowej, aby uniknąć problemów z długimi nazwami plików (MAX_PATH),
+            # ale zachowujemy rozszerzenie oryginału (wcześniej nawet .msi było zapisywane jako .exe).
+            $avExtension = [System.IO.Path]::GetExtension($fileName)
+            if ([string]::IsNullOrWhiteSpace($avExtension)) { $avExtension = ".exe" }
+            $avPath = Join-Path $env:TEMP "setup_av_temp$avExtension"
+            $avUrl = Join-InstallSource -BasePath $sourcePath -FileName $fileName
             Write-Log "Pobieranie antywirusa z $avUrl..."
 
             $cred = $null
@@ -1275,8 +1401,12 @@ function Install-AV {
         }
 
         Write-Log "Instalacja antywirusa z $avPath..."
-        Start-ProcessWithEvents -FilePath $avPath -ArgumentList "" | Out-Null
-        Write-Log "Instalacja antywirusa zakończona"
+        if ($avPath -like "*.msi") {
+            $exitCode = Start-ProcessWithEvents -FilePath "msiexec.exe" -ArgumentList "/i `"$avPath`""
+        } else {
+            $exitCode = Start-ProcessWithEvents -FilePath $avPath
+        }
+        Write-InstallResult -Name "Antywirus" -ExitCode $exitCode | Out-Null
     }
     catch {
         Write-Log "Błąd podczas instalacji antywirusa: $_" -IsError
@@ -1289,6 +1419,14 @@ function Install-AV {
     }
 }
 
+# Pliki z config.json (np. "WiFiProfile.xml") podane bez pełnej ścieżki szukamy obok skryptu, a nie
+# w bieżącym katalogu procesu - po uruchomieniu "jako administrator" jest nim zwykle C:\Windows\System32.
+function Resolve-ConfigFilePath {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path) -or [System.IO.Path]::IsPathRooted($Path)) { return $Path }
+    return (Join-Path $ScriptDir $Path)
+}
+
 function Import-WiFiProfile {
     if (-not (Test-Path $configPath)) {
         Write-Log "Brak pliku config.json" -IsError
@@ -1296,13 +1434,22 @@ function Import-WiFiProfile {
     }
     $config = Get-Content $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $wifiProfiles = $config.WiFiProfile.FileName
-    
+
     if ($null -ne $wifiProfiles) {
-        foreach ($wifiProfile in @($wifiProfiles)) {
-            if (Test-Path $wifiProfile) {
+        foreach ($wifiEntry in @($wifiProfiles)) {
+            $wifiProfile = Resolve-ConfigFilePath -Path $wifiEntry
+            if (-not [string]::IsNullOrWhiteSpace($wifiProfile) -and (Test-Path -LiteralPath $wifiProfile)) {
+                if ($script:DryRun) {
+                    Write-Log "[DRY-RUN] Zaimportowano by profil Wi-Fi z pliku: $wifiProfile"
+                    continue
+                }
                 Write-Log "Import profilu Wi-Fi z pliku: $wifiProfile..."
-                Start-ProcessWithEvents -FilePath "netsh" -ArgumentList "wlan add profile filename=`"$wifiProfile`"" | Out-Null
-                Write-Log "Profil Wi-Fi '$wifiProfile' zaimportowany."
+                $exitCode = Start-ProcessWithEvents -FilePath "netsh" -ArgumentList "wlan add profile filename=`"$wifiProfile`""
+                if ($exitCode -eq 0) {
+                    Write-Log "Profil Wi-Fi '$wifiProfile' zaimportowany."
+                } else {
+                    Write-Log "Nie udało się zaimportować profilu Wi-Fi '$wifiProfile' (netsh, kod: $exitCode)." -IsError
+                }
             }
             else {
                 Write-Log "Brak pliku profilu Wi-Fi: $wifiProfile" -IsError
@@ -1311,6 +1458,117 @@ function Import-WiFiProfile {
     } else {
         Write-Log "Brak definicji profili Wi-Fi w konfiguracji." -IsError
     }
+}
+
+# Proste, ostylowane okno do wpisania tekstu albo hasła. Zastępuje Read-Host, który w aplikacji
+# okienkowej pyta w oknie konsoli (zwykle schowanym pod GUI albo niewidocznym w wersji .exe) -
+# interfejs wyglądał wtedy na zawieszony.
+# -Validate: scriptblock dostający wpisaną wartość; zwraca tekst błędu albo $null, gdy jest OK.
+# Zwraca: string, SecureString (z -Password) albo $null po anulowaniu.
+function Show-InputDialog {
+    param(
+        [string]$Title,
+        [string]$Message,
+        [string]$DefaultText = "",
+        [switch]$Password,
+        [scriptblock]$Validate
+    )
+    [xml]$xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        Width="420" SizeToContent="Height" WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize" Topmost="True" WindowStyle="ToolWindow">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource ThemeButton}"/>
+            <Setter Property="Foreground" Value="{DynamicResource ThemeButtonText}"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True"><Setter Property="Opacity" Value="0.8"/></Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="{DynamicResource ThemeTextBoxBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+            <Setter Property="Padding" Value="5,2"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="PasswordBox">
+            <Setter Property="Background" Value="{DynamicResource ThemeTextBoxBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+            <Setter Property="Padding" Value="5,2"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+    </Window.Resources>
+    <StackPanel Margin="20">
+        <TextBlock Name="txtMessage" TextWrapping="Wrap" FontSize="13" Margin="0,0,0,10"/>
+        <TextBox Name="txtInput" Margin="0,0,0,10"/>
+        <PasswordBox Name="pwdInput" Margin="0,0,0,10" Visibility="Collapsed"/>
+        <TextBlock Name="lblConfirm" Text="Powtórz hasło:" Margin="0,0,0,5" Visibility="Collapsed"/>
+        <PasswordBox Name="pwdConfirm" Margin="0,0,0,10" Visibility="Collapsed"/>
+        <TextBlock Name="txtError" Foreground="#FFC50F1F" TextWrapping="Wrap" Margin="0,0,0,10" Visibility="Collapsed"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Name="btnOk" Content="OK" Width="90" Height="32" Margin="0,0,10,0" Background="#FF0E639C" Foreground="White" IsDefault="True"/>
+            <Button Name="btnCancel" Content="Anuluj" Width="90" Height="32" IsCancel="True"/>
+        </StackPanel>
+    </StackPanel>
+</Window>
+"@
+    $reader = New-Object System.Xml.XmlNodeReader $xaml
+    $dlg = [Windows.Markup.XamlReader]::Load($reader)
+    Apply-ThemeToWindow $dlg
+    # Tytuł i treść ustawiamy po wczytaniu XAML, a nie przez wklejenie do XAML - znak & albo "
+    # w tekście nie zepsuje wtedy XML-a.
+    $dlg.Title = $Title
+    $dlg.FindName("txtMessage").Text = $Message
+    $txtInput = $dlg.FindName("txtInput")
+    $pwdInput = $dlg.FindName("pwdInput")
+    $pwdConfirm = $dlg.FindName("pwdConfirm")
+    $txtError = $dlg.FindName("txtError")
+
+    if ($Password) {
+        $txtInput.Visibility = [System.Windows.Visibility]::Collapsed
+        $pwdInput.Visibility = [System.Windows.Visibility]::Visible
+        $pwdConfirm.Visibility = [System.Windows.Visibility]::Visible
+        $dlg.FindName("lblConfirm").Visibility = [System.Windows.Visibility]::Visible
+    } else {
+        $txtInput.Text = $DefaultText
+    }
+
+    $script:inputDialogResult = $null
+    $dlg.FindName("btnOk").Add_Click({
+        $value = if ($Password) { $pwdInput.Password } else { $txtInput.Text.Trim() }
+        $err = $null
+        if ($Password -and $pwdInput.Password -ne $pwdConfirm.Password) { $err = "Hasła nie są identyczne." }
+        elseif ($Validate) { $err = & $Validate $value }
+        if ($err) {
+            $txtError.Text = $err
+            $txtError.Visibility = [System.Windows.Visibility]::Visible
+            return
+        }
+        $script:inputDialogResult = if ($Password) { $pwdInput.SecurePassword } else { $value }
+        $dlg.DialogResult = $true
+        $dlg.Close()
+    })
+    $dlg.FindName("btnCancel").Add_Click({ $dlg.DialogResult = $false; $dlg.Close() })
+    $dlg.Add_Loaded({ if ($Password) { $pwdInput.Focus() | Out-Null } else { $txtInput.Focus() | Out-Null; $txtInput.SelectAll() } })
+
+    if ($dlg.ShowDialog() -eq $true) { return $script:inputDialogResult }
+    return $null
 }
 
 function New-LocalAdmin {
@@ -1325,20 +1583,22 @@ function New-LocalAdmin {
             Write-Log "[DRY-RUN] Utworzono by lokalne konto administratora: '$username'."
             return
         }
-        $PasswordSecure = Read-Host "Wprowadź hasło dla konta $username" -AsSecureString
-        if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
-            if ($null -ne $PasswordSecure -and $PasswordSecure.Length -ge 8) {
-                New-LocalUser -Name $username -Password $PasswordSecure -PasswordNeverExpires -AccountNeverExpires
-                Add-LocalGroupMember -SID S-1-5-32-544 -Member $username
-                Write-Log "Utworzono lokalne konto '$username' w grupie 'Administratorzy'."
-            }
-            else {
-                Write-Log "Nie podano hasła dla konta $username lub hasło jest zbyt krótkie." -IsError
-            }
+        # Najpierw sprawdzamy, czy konto istnieje - wcześniej hasło było wpisywane niepotrzebnie.
+        if (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) {
+            Write-Log "Pominięto tworzenie konta: użytkownik '$username' już istnieje."
+            return
         }
-        else {
-            Write-Log "Użytkownik '$username' już istnieje  pomijam." -IsError
+        $PasswordSecure = Show-InputDialog -Title "Konto lokalnego administratora" -Message "Podaj hasło dla nowego konta '$username' (co najmniej 8 znaków):" -Password -Validate {
+            param($value)
+            if ($value.Length -lt 8) { "Hasło musi mieć co najmniej 8 znaków." }
         }
+        if ($null -eq $PasswordSecure) {
+            Write-Log "Pominięto tworzenie konta '$username' - anulowano wpisywanie hasła."
+            return
+        }
+        New-LocalUser -Name $username -Password $PasswordSecure -PasswordNeverExpires -AccountNeverExpires -ErrorAction Stop | Out-Null
+        Add-LocalGroupMember -SID S-1-5-32-544 -Member $username -ErrorAction Stop
+        Write-Log "Utworzono lokalne konto '$username' w grupie 'Administratorzy'."
     }
     catch {
         Write-Log "Błąd tworzenia konta: $_" -IsError
@@ -1382,18 +1642,55 @@ function Join-Domain {
     }
 }
 
+# Domyślna nazwa komputera "PC-<numer seryjny>" przycięta do zasad nazw NetBIOS: tylko litery
+# łacińskie, cyfry i myślnik, maksymalnie 15 znaków. Numer seryjny potrafi zawierać spacje, kropki
+# albo być dłuższy (np. "To Be Filled By O.E.M.") i wtedy Rename-Computer odrzucał nazwę.
+function Get-DefaultComputerName {
+    param([string]$SerialNumber = [string](Get-CimInstance -ClassName Win32_BIOS -ErrorAction SilentlyContinue).SerialNumber)
+    $clean = $SerialNumber -replace '[^A-Za-z0-9-]', ''
+    if ([string]::IsNullOrWhiteSpace($clean)) { $clean = "NOSERIAL" }
+    $name = "PC-$clean"
+    if ($name.Length -gt 15) { $name = $name.Substring(0, 15) }
+    return $name.TrimEnd('-')
+}
+
+# Zwraca opis błędu, gdy nazwa komputera jest niepoprawna, albo $null, gdy jest OK.
+function Test-ComputerNameValid {
+    param([string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return "Nazwa nie może być pusta." }
+    if ($Name.Length -gt 15) { return "Nazwa może mieć maksymalnie 15 znaków (ograniczenie NetBIOS)." }
+    if ($Name -notmatch '^[A-Za-z0-9-]+$') { return "Dozwolone są tylko litery bez polskich znaków, cyfry i myślnik." }
+    if ($Name -match '^\d+$') { return "Nazwa nie może składać się wyłącznie z cyfr." }
+    if ($Name.StartsWith('-') -or $Name.EndsWith('-')) { return "Nazwa nie może zaczynać się ani kończyć myślnikiem." }
+    return $null
+}
+
 function Set-NewComputerName {
+    $defaultName = Get-DefaultComputerName
     if ($script:DryRun) {
-        $previewName = "PC-$((Get-CimInstance -ClassName Win32_BIOS -ErrorAction SilentlyContinue).SerialNumber)"
-        Write-Log "[DRY-RUN] Zmieniono by nazwę komputera (domyślnie '$previewName')."
+        Write-Log "[DRY-RUN] Zmieniono by nazwę komputera (domyślnie '$defaultName')."
         return
     }
-    Read-Host "Podaj nową nazwę komputera (domyślnie 'PC-SERIAL_NUMBER'): " -OutVariable NewName
-    if ([string]::IsNullOrWhiteSpace($NewName)) {
-        $NewName = "PC-$((Get-CimInstance -ClassName Win32_BIOS).SerialNumber)"
+    try {
+        # Wcześniej: Read-Host -OutVariable NewName - OutVariable zapisuje wynik jako KOLEKCJĘ, a nie
+        # tekst, i w dodatku Read-Host pytał w oknie konsoli, a nie w GUI.
+        $newName = Show-InputDialog -Title "Zmiana nazwy komputera" -Message "Podaj nową nazwę komputera (maks. 15 znaków). Obecna nazwa: $env:COMPUTERNAME" -DefaultText $defaultName -Validate {
+            param($value)
+            Test-ComputerNameValid -Name $value
+        }
+        if ($null -eq $newName) {
+            Write-Log "Pominięto zmianę nazwy komputera (anulowano)."
+            return
+        }
+        if ($newName -eq $env:COMPUTERNAME) {
+            Write-Log "Pominięto zmianę nazwy - komputer już nazywa się '$newName'."
+            return
+        }
+        Rename-Computer -NewName $newName -Force -ErrorAction Stop
+        Write-Log "Zmieniono nazwę komputera na '$newName'. Zmiana zadziała po ponownym uruchomieniu."
+    } catch {
+        Write-Log "Błąd zmiany nazwy komputera: $_" -IsError
     }
-    Rename-Computer -NewName $NewName -Force
-    Write-Log "Zmieniono nazwę komputera na '$NewName'."
 }
 
 function Set-RegistryDword {
@@ -1491,7 +1788,9 @@ function Clear-DeploymentCheckpoint {
 
 # ---------- Aktualizacja narzędzia ----------
 # Oczekiwany format pliku wersji (std_version.json) publikowanego pod AutoUpdate.VersionCheckPath:
-# { "Version": "3.2.0", "FileName": "SmartToolforDeployment.ps1", "Notes": "Opis zmian..." }
+# { "Version": "3.2.0", "FileName": "SmartToolforDeployment.ps1", "Notes": "Opis zmian...", "Sha256": "<suma SHA-256 pliku>" }
+# Pole Sha256 jest opcjonalne, ale zalecane: sumę liczy się poleceniem
+#   (Get-FileHash .\SmartToolforDeployment.ps1 -Algorithm SHA256).Hash
 # Aktualizuje plik .ps1 wskazywany przez $PSCommandPath. Jeśli w praktyce uruchamiany jest
 # skompilowany SmartToolforDeployment_v3.exe, ten mechanizm NIE podmienia tego pliku exe -
 # potrzebny byłby analogiczny, osobny mechanizm dla binarki.
@@ -1537,7 +1836,8 @@ function Test-ForAppUpdate {
         $remoteFileName = [string]$remote.FileName
         if ([string]::IsNullOrWhiteSpace($remoteFileName)) { throw "Brak nazwy pliku (FileName) w informacji o wersji." }
         $downloadSource = if ($isWeb) { "$($basePath.TrimEnd('/'))/$remoteFileName" } else { Join-Path $basePath $remoteFileName }
-        $tempNewFile = Join-Path $env:TEMP $remoteFileName
+        # Split-Path -Leaf: nazwa z pliku na serwerze nie może wskazać innego katalogu (np. "..\..\x.ps1").
+        $tempNewFile = Join-Path $env:TEMP (Split-Path $remoteFileName -Leaf)
 
         Write-Log "Pobieranie wersji $($remote.Version)..."
         if ($isWeb) {
@@ -1546,13 +1846,41 @@ function Test-ForAppUpdate {
             Copy-Item -LiteralPath $downloadSource -Destination $tempNewFile -Force -ErrorAction Stop
         }
 
+        # Pobrany plik zastąpi narzędzie uruchamiane jako administrator, więc zanim go podmienimy:
+        # 1) sprawdzamy sumę SHA-256 z std_version.json (jeśli została podana),
+        $expectedHash = ([string]$remote.Sha256).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($expectedHash)) {
+            $actualHash = (Get-FileHash -LiteralPath $tempNewFile -Algorithm SHA256).Hash
+            if ($actualHash -ne $expectedHash) {
+                Remove-Item -LiteralPath $tempNewFile -Force -ErrorAction SilentlyContinue
+                throw "Suma kontrolna pobranego pliku się nie zgadza (oczekiwano $expectedHash, jest $actualHash). Aktualizacja przerwana."
+            }
+            Write-Log "Suma kontrolna SHA-256 pobranej wersji jest zgodna."
+        } else {
+            Write-Log "Uwaga: std_version.json nie zawiera pola Sha256 - pobrany plik nie został zweryfikowany sumą kontrolną." -IsError
+        }
+        # 2) sprawdzamy, czy to w ogóle poprawny skrypt PowerShell (np. zamiast strony błędu HTML
+        #    albo uciętego pliku) - inaczej po podmianie narzędzie przestałoby się uruchamiać.
+        if ($tempNewFile -like "*.ps1") {
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($tempNewFile, [ref]$null, [ref]$parseErrors) | Out-Null
+            if ($parseErrors.Count -gt 0) {
+                Remove-Item -LiteralPath $tempNewFile -Force -ErrorAction SilentlyContinue
+                throw "Pobrany plik zawiera błędy składni PowerShell ($($parseErrors.Count)), np.: $($parseErrors[0].Message). Aktualizacja przerwana."
+            }
+        }
+
         $currentFile = $PSCommandPath
         if ([string]::IsNullOrWhiteSpace($currentFile)) { throw "Nie udało się ustalić ścieżki bieżącego pliku (`$PSCommandPath) do podmiany." }
 
         # Uruchamiamy odrębny, krótkotrwały proces PowerShell, który poczeka aż bieżący proces się
         # zamknie, podmieni plik i uruchomi narzędzie ponownie - nie da się nadpisać pliku, który
         # jest w danym momencie wykonywany przez BIEŻĄCY proces.
-        $updaterScript = "Start-Sleep -Seconds 2; Copy-Item -LiteralPath '$tempNewFile' -Destination '$currentFile' -Force; Start-Process powershell.exe -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File `"$currentFile`"'"
+        # Apostrof w ścieżce (np. C:\Users\O'Brien\...) zamknąłby napis w pojedynczych cudzysłowach
+        # i zepsuł polecenie - w PowerShell apostrof wewnątrz '...' zapisuje się jako ''.
+        $tempQ = $tempNewFile.Replace("'", "''")
+        $currentQ = $currentFile.Replace("'", "''")
+        $updaterScript = "Start-Sleep -Seconds 2; Copy-Item -LiteralPath '$tempQ' -Destination '$currentQ' -Force; Start-Process powershell.exe -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File `"$currentQ`"'"
         Start-Process powershell.exe -ArgumentList @("-NoProfile", "-WindowStyle", "Hidden", "-Command", $updaterScript) -WindowStyle Hidden
 
         Write-Log "Aktualizacja pobrana. Zamykanie aplikacji w celu dokończenia instalacji wersji $($remote.Version)..."
@@ -1797,34 +2125,52 @@ function Invoke-PostInstallScripts {
         $source = $config.DefaultInstallSource
         $sourcePath = $config.InstallSourcePaths.$source
 
-        foreach ($script in $config.PostInstallScripts) {
+        # Zmienna pętli nazywała się wcześniej $script - to poprawna, ale myląca nazwa, bo łatwo ją
+        # pomylić z zakresem $script: (np. $script:isCancelled w tej samej pętli).
+        foreach ($scriptEntry in $config.PostInstallScripts) {
             if ($script:isCancelled) { break }
-            Write-Log "Wykonywanie skryptu: $script..."
-            $scriptToRun = $script
+            Write-Log "Wykonywanie skryptu: $scriptEntry..."
+            $scriptToRun = $scriptEntry
             $localPath = ""
+            $isRemote = ($source -eq 'web' -or $scriptEntry -match "^https?://")
+            $scriptUrl = if ($scriptEntry -match "^https?://") { $scriptEntry } elseif ($isRemote) { Join-InstallSource -BasePath $sourcePath -FileName $scriptEntry } else { $null }
+            if (-not $isRemote -and $source -eq 'network') { $scriptToRun = Join-Path $sourcePath $scriptEntry }
 
-            if ($source -eq 'web' -or $script -match "^https?://") {
-                $scriptUrl = if ($script -match "^https?://") { $script } else { if ($sourcePath -match "/$") { "$sourcePath$script" } else { "$sourcePath/$script" } }
-                $localPath = Join-Path $env:TEMP (Split-Path $scriptUrl -Leaf)
-                Invoke-DownloadFile -Uri $scriptUrl -OutFile $localPath
-                $scriptToRun = $localPath
-            } elseif ($source -eq 'network') {
-                $scriptToRun = Join-Path $sourcePath $script
+            if ($script:DryRun) {
+                $what = if ($isRemote) { "pobrano by $scriptUrl i uruchomiono" } else { "uruchomiono by $scriptToRun" }
+                Write-Log "[DRY-RUN] Skrypt poinstalacyjny: $what."
+                continue
             }
 
-            if (Test-Path $scriptToRun) {
-                if ($scriptToRun -match "\.ps1$") {
-                    Start-ProcessWithEvents -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptToRun`"" | Out-Null
-                } elseif ($scriptToRun -match "\.(bat|cmd)$") {
-                    Start-ProcessWithEvents -FilePath "cmd.exe" -ArgumentList "/c `"$scriptToRun`"" | Out-Null
-                } else {
-                    Start-ProcessWithEvents -FilePath $scriptToRun -ArgumentList "" | Out-Null
+            try {
+                if ($isRemote) {
+                    $localPath = Join-Path $env:TEMP (Split-Path $scriptUrl -Leaf)
+                    Invoke-DownloadFile -Uri $scriptUrl -OutFile $localPath
+                    $scriptToRun = $localPath
                 }
-                Write-Log "Zakończono wykonywanie skryptu: $script"
-            } else {
-                Write-Log "Nie znaleziono pliku skryptu: $scriptToRun" -IsError
+
+                if (Test-Path $scriptToRun) {
+                    if ($scriptToRun -match "\.ps1$") {
+                        $exitCode = Start-ProcessWithEvents -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptToRun`""
+                    } elseif ($scriptToRun -match "\.(bat|cmd)$") {
+                        $exitCode = Start-ProcessWithEvents -FilePath "cmd.exe" -ArgumentList "/c `"$scriptToRun`""
+                    } else {
+                        $exitCode = Start-ProcessWithEvents -FilePath $scriptToRun
+                    }
+                    if ($exitCode -eq 0) {
+                        Write-Log "Zakończono wykonywanie skryptu: $scriptEntry"
+                    } else {
+                        Write-Log "Skrypt $scriptEntry zakończył się kodem $exitCode." -IsError
+                    }
+                } else {
+                    Write-Log "Nie znaleziono pliku skryptu: $scriptToRun" -IsError
+                }
+            } catch {
+                # Błąd jednego skryptu (np. nieudane pobranie) nie przerywa kolejnych.
+                Write-Log "Błąd skryptu poinstalacyjnego $($scriptEntry): $_" -IsError
+            } finally {
+                if ($localPath -and (Test-Path $localPath)) { Remove-Item $localPath -Force -ErrorAction SilentlyContinue }
             }
-            if ($localPath -and (Test-Path $localPath)) { Remove-Item $localPath -Force -ErrorAction SilentlyContinue }
         }
     } catch {
         Write-Log "Błąd podczas wykonywania skryptów poinstalacyjnych: $_" -IsError
@@ -1837,6 +2183,10 @@ function Export-HardwareAuditTask {
         $exportDir = "C:\Audit\"
         if ($null -ne $config.HardwareAudit -and -not [string]::IsNullOrWhiteSpace($config.HardwareAudit.ExportPath)) { 
             $exportDir = [System.Environment]::ExpandEnvironmentVariables($config.HardwareAudit.ExportPath)
+        }
+        if ($script:DryRun) {
+            Write-Log "[DRY-RUN] Wyeksportowano by audyt sprzętowy do katalogu: $exportDir"
+            return
         }
         if (-not (Test-Path $exportDir)) { New-Item -ItemType Directory -Path $exportDir -Force | Out-Null }
         $auditData = Get-HardwareAudit -AsHtml
@@ -1855,35 +2205,75 @@ function Enable-BitLockerEncryption {
             Write-Log "Moduł TPM nie jest dostępny lub gotowy! Pominięto szyfrowanie." -IsError
             return
         }
-        $bl = Get-BitLockerVolume -MountPoint "C:" -ErrorAction SilentlyContinue
+        $bl = Get-BitLockerVolume -MountPoint "C:" -ErrorAction Stop
         if ($bl.VolumeStatus -eq "FullyEncrypted" -or $bl.VolumeStatus -eq "EncryptionInProgress") {
             Write-Log "Dysk C: jest już zaszyfrowany lub proces jest w toku."
+            return
+        }
+        if ($bl.VolumeStatus -ne "FullyDecrypted") {
+            # Np. EncryptionPaused / DecryptionInProgress - dysk jest częściowo zaszyfrowany, więc nie
+            # ruszamy automatycznie jego protektorów. To wymaga decyzji administratora.
+            Write-Log "Dysk C: jest w stanie '$($bl.VolumeStatus)' - pomijam automatyczne szyfrowanie, sprawdź stan ręcznie (manage-bde -status C:)." -IsError
             return
         }
         if ($script:DryRun) {
             Write-Log "[DRY-RUN] Zaszyfrowano by dysk C: (BitLocker XTS-AES 256) i wyeksportowano klucz odzyskiwania."
             return
         }
-        Write-Log "Generowanie klucza odzyskiwania..."
-        Add-BitLockerKeyProtector -MountPoint "C:" -TpmProtector -ErrorAction Stop | Out-Null
-        $recovery = Add-BitLockerKeyProtector -MountPoint "C:" -RecoveryPasswordProtector -ErrorAction Stop
-        $recPassword = ($recovery.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' }).RecoveryPassword
-        Write-Log "Rozpoczynanie szyfrowania dysku C: (XTS-AES 256)..."
-        Enable-BitLocker -MountPoint "C:" -EncryptionMethod XtsAes256 -UsedSpaceOnly -SkipHardwareTest -ErrorAction Stop | Out-Null
-        Write-Log "Szyfrowanie zostało zainicjowane pomyślnie."
-        
+
+        # 1. Ustalamy katalog na klucz odzyskiwania ZANIM cokolwiek zmienimy na dysku.
         $config = Get-Content $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $exportDir = "C:\Audit\"
-        if ($null -ne $config.HardwareAudit -and -not [string]::IsNullOrWhiteSpace($config.HardwareAudit.ExportPath)) { 
+        if ($null -ne $config.HardwareAudit -and -not [string]::IsNullOrWhiteSpace($config.HardwareAudit.ExportPath)) {
             $exportDir = [System.Environment]::ExpandEnvironmentVariables($config.HardwareAudit.ExportPath)
         }
-        if (-not (Test-Path $exportDir)) { New-Item -ItemType Directory -Path $exportDir -Force | Out-Null }
+        if ($exportDir -notmatch '^\\\\') {
+            Write-Log "Uwaga: klucz odzyskiwania zostanie zapisany lokalnie ($exportDir), czyli na szyfrowanym dysku. Zalecana jest ścieżka sieciowa (UNC) w HardwareAudit.ExportPath." -IsError
+        }
+        if (-not (Test-Path $exportDir)) { New-Item -ItemType Directory -Path $exportDir -Force -ErrorAction Stop | Out-Null }
+
+        # 2. Hasło odzyskiwania: używamy istniejącego (np. z wcześniejszej nieudanej próby), inaczej dodajemy nowe.
+        Write-Log "Generowanie klucza odzyskiwania..."
+        $recProtector = @($bl.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' }) | Select-Object -First 1
+        if ($null -eq $recProtector) {
+            Add-BitLockerKeyProtector -MountPoint "C:" -RecoveryPasswordProtector -ErrorAction Stop | Out-Null
+            $bl = Get-BitLockerVolume -MountPoint "C:" -ErrorAction Stop
+            $recProtector = @($bl.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' }) | Select-Object -First 1
+        }
+        $recPassword = $recProtector.RecoveryPassword
+        if ([string]::IsNullOrWhiteSpace($recPassword)) { throw "Nie udało się odczytać hasła odzyskiwania BitLocker." }
+
+        # 3. Zapis klucza PRZED włączeniem szyfrowania. Jeśli zapis się nie uda (-ErrorAction Stop),
+        #    szyfrowanie w ogóle nie wystartuje - nie zostaniemy z zaszyfrowanym dyskiem bez kopii klucza.
         $fileName = "BitLocker_Recovery_$($env:COMPUTERNAME)_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt"
         $fullPath = Join-Path $exportDir $fileName
-        $info = "Komputer: $($env:COMPUTERNAME)`r`nData: $(Get-Date)`r`nKlucz odzyskiwania: $recPassword"
-        $info | Out-File -FilePath $fullPath -Encoding UTF8 -Force
+        $info = "Komputer: $($env:COMPUTERNAME)`r`nData: $(Get-Date)`r`nID protektora: $($recProtector.KeyProtectorId)`r`nKlucz odzyskiwania: $recPassword"
+        $info | Out-File -FilePath $fullPath -Encoding UTF8 -Force -ErrorAction Stop
         Write-Log "Klucz odzyskiwania zapisano w: $fullPath"
+
+        # 4. Protektor TPM pozostawiony przez wcześniejszą wersję narzędzia (dodawała go, a potem
+        #    Enable-BitLocker padał) usuwamy - Enable-BitLocker -TpmProtector doda własny. Dysk jest
+        #    w stanie FullyDecrypted (sprawdzone wyżej), więc usunięcie protektora niczego nie odsłania.
+        foreach ($tpmProtector in @($bl.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'Tpm' })) {
+            Remove-BitLockerKeyProtector -MountPoint "C:" -KeyProtectorId $tpmProtector.KeyProtectorId -ErrorAction Stop | Out-Null
+        }
+
+        # 5. Enable-BitLocker MUSI dostać protektor (-TpmProtector, -RecoveryPasswordProtector itd.).
+        #    Wcześniej wywołanie bez niego zawsze kończyło się błędem "Parameter set cannot be resolved".
+        Write-Log "Rozpoczynanie szyfrowania dysku C: (XTS-AES 256)..."
+        Enable-BitLocker -MountPoint "C:" -EncryptionMethod XtsAes256 -UsedSpaceOnly -SkipHardwareTest -TpmProtector -ErrorAction Stop | Out-Null
+        Write-Log "Szyfrowanie zostało zainicjowane pomyślnie."
     } catch { Write-Log "Wystąpił błąd podczas aktywacji BitLockera: $_" -IsError }
+}
+
+# Tworzy klucz rejestru tylko, gdy jeszcze nie istnieje. "New-Item -Force" na ISTNIEJĄCYM kluczu
+# rejestru tworzy go od nowa i kasuje wszystkie jego wartości (np. inne polityki ustawione przez
+# GPO w tym samym kluczu), dlatego najpierw sprawdzamy Test-Path. W trybie Dry-Run nic nie robi -
+# samą zmianę zaloguje Set-RegistryDword.
+function New-RegistryKeyIfMissing {
+    param([string]$Path)
+    if ($script:DryRun) { return }
+    if (-not (Test-Path -LiteralPath $Path)) { New-Item -Path $Path -Force | Out-Null }
 }
 
 function Set-SystemTweaks {
@@ -1898,7 +2288,7 @@ function Set-SystemTweaks {
 
         if ($settings.DisableDeliveryOptimization) {
             Write-Log "Wyłączanie Delivery Optimization..."
-            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" -Force | Out-Null
+            New-RegistryKeyIfMissing -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization"
             Set-RegistryDword -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" -Name "DODownloadMode" -Value 0
         }
 
@@ -1909,13 +2299,13 @@ function Set-SystemTweaks {
 
         if ($settings.DisableTelemetry) {
             Write-Log "Wyłączanie telemetryki..."
-            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Force | Out-Null
+            New-RegistryKeyIfMissing -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"
             Set-RegistryDword -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value 0
         }
 
         if ($settings.DisableCortana) {
             Write-Log "Wyłączanie Cortany..."
-            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Force | Out-Null
+            New-RegistryKeyIfMissing -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search"
             Set-RegistryDword -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCortana" -Value 0
         }
 
@@ -1926,7 +2316,7 @@ function Set-SystemTweaks {
 
         if ($settings.DisableNewsAndInterests) {
             Write-Log "Wyłączanie News and Interests..."
-            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" -Force | Out-Null
+            New-RegistryKeyIfMissing -Path "HKLM:\SOFTWARE\Policies\Microsoft\Dsh"
             Set-RegistryDword -Path "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" -Name "AllowNewsAndInterests" -Value 0
         }
 
@@ -1942,11 +2332,15 @@ function Set-SystemTweaks {
                         Write-Log "Pominięto wpis rejestru (brak Path lub Name)."
                         continue
                     }
+                    $propType = if ([string]::IsNullOrWhiteSpace($reg.PropertyType)) { "String" } else { $reg.PropertyType }
+                    if ($script:DryRun) {
+                        Write-Log "[DRY-RUN] Ustawiono by klucz: $($reg.Path)\$($reg.Name) = $($reg.Value) [$propType]"
+                        continue
+                    }
                     if (-not (Test-Path $reg.Path)) {
                         New-Item -Path $reg.Path -Force | Out-Null
                         Write-Log "Utworzono nową ścieżkę: $($reg.Path)"
                     }
-                    $propType = if ([string]::IsNullOrWhiteSpace($reg.PropertyType)) { "String" } else { $reg.PropertyType }
                     Set-ItemProperty -Path $reg.Path -Name $reg.Name -Value $reg.Value -Type $propType -Force
                     Write-Log "Ustawiono klucz: $($reg.Path)\$($reg.Name) = $($reg.Value) [$propType]"
                 }
@@ -1963,6 +2357,10 @@ function Set-SystemTweaks {
 
 function Start-WindowsUpdate {
     try {
+        if ($script:DryRun) {
+            Write-Log "[DRY-RUN] Otwarto by panel Windows Update."
+            return
+        }
         Write-Log "Uruchamianie Windows Update..."
         Start-Process "control.exe" -ArgumentList "/name Microsoft.WindowsUpdate"
     }
@@ -1979,6 +2377,11 @@ function Uninstall-Microsoft365Apps {
             "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
         )
         $OfficeUninstallStrings = (Get-ItemProperty $regPaths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match "(?i)Microsoft 365|Microsoft Office|OneNote" } | Select-Object -ExpandProperty UninstallString)
+        if ($script:DryRun) {
+            foreach ($UninstallString in @($OfficeUninstallStrings)) { Write-Log "[DRY-RUN] Uruchomiono by deinstalator: $UninstallString DisplayLevel=False" }
+            Write-Log "[DRY-RUN] Usunięto by pakiety Appx: MicrosoftOfficeHub, OneNote, Microsoft.Office.Desktop."
+            return
+        }
         if ($OfficeUninstallStrings) {
             ForEach ($UninstallString in $OfficeUninstallStrings) {
                 if ($script:isCancelled) { break }
@@ -2017,6 +2420,10 @@ function Uninstall-Microsoft365Apps {
 
 function Uninstall-OneDrive {
     Write-Log "Rozpoczynam odinstalowywanie OneDrive..."
+    if ($script:DryRun) {
+        Write-Log "[DRY-RUN] Zamknięto by proces OneDrive i uruchomiono OneDriveSetup.exe /uninstall."
+        return
+    }
     try {
         Get-Process -Name "OneDrive" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
@@ -2043,7 +2450,7 @@ function Join-Intune {
 
 function Show-AppSelectionWindow {
     if (-not (Test-Path $configPath)) {
-        Write-Log "Brak pliku config.json" -Color "Red"
+        Write-Log "Brak pliku config.json" -IsError
         return
     }
 
@@ -2403,12 +2810,16 @@ function Start-Deployment {
                 $notifyIcon.ShowBalloonTip(5000, "Instalacja zakończona", "Wszystkie zadania zostały pomyślnie wykonane. Możesz przywrócić okno.", [System.Windows.Forms.ToolTipIcon]::Info)
             }
     
-            if ($CheckboxControls.ContainsKey("AutoReboot") -and $CheckboxControls["AutoReboot"].IsChecked -eq $true) {
-                Show-ThemedMessageBox -Message "Konfiguracja zakończona! Komputer uruchomi się ponownie po zamknięciu tego okna." -Title "Zakończono" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            if ($CheckboxControls.ContainsKey("AutoReboot") -and $CheckboxControls["AutoReboot"].IsChecked -eq $true -and $script:DryRun) {
+                # Wcześniej Dry-Run naprawdę restartował komputer (Restart-Computer -Force).
+                Write-Log "[DRY-RUN] Uruchomiono by ponownie komputer (AutoReboot)."
+                Show-ThemedMessageBox -Message "Symulacja (Dry-Run) zakończona. W prawdziwym wdrożeniu komputer zostałby teraz uruchomiony ponownie." -Title "Zakończono" -Button "OK" -Image "Information" | Out-Null
+            } elseif ($CheckboxControls.ContainsKey("AutoReboot") -and $CheckboxControls["AutoReboot"].IsChecked -eq $true) {
+                Show-ThemedMessageBox -Message "Konfiguracja zakończona! Komputer uruchomi się ponownie po zamknięciu tego okna." -Title "Zakończono" -Button "OK" -Image "Information" | Out-Null
                 Write-Log "Wymuszono ponowne uruchomienie systemu..."
                 Restart-Computer -Force
             } else {
-                Show-ThemedMessageBox -Message "Gotowe!" -Title "Zakończono" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+                Show-ThemedMessageBox -Message "Gotowe!" -Title "Zakończono" -Button "OK" -Image "Information" | Out-Null
             }
         }
     } catch {
@@ -2428,6 +2839,11 @@ function Start-Deployment {
         $btnPause.IsEnabled = $false
         $btnCancelDeploy.IsEnabled = $false
         $wasCancelled = $script:isCancelled
+        # Przy przerwaniu (return w środku try) krok "Przywracanie ustawień hibernacji" był pomijany,
+        # więc blokada usypiania zostawała włączona aż do zamknięcia aplikacji.
+        if ($wasCancelled -and $CheckboxControls.ContainsKey("SuspendHibernation") -and $CheckboxControls["SuspendHibernation"].IsChecked -eq $true) {
+            Resume-Hibernation
+        }
         $script:isPaused = $false
         $script:isCancelled = $false
         $script:DryRun = $false
@@ -2497,6 +2913,27 @@ function Get-Config {
         throw "Brak pliku config.json"
     }
     return (Get-Content $configPath -Raw -Encoding UTF8 | ConvertFrom-Json)
+}
+
+# Ustawia pole w obiekcie konfiguracji niezależnie od tego, czy już istnieje. Obiekt z ConvertFrom-Json
+# to PSCustomObject: przypisanie $obj.Pole = ... do NIEISTNIEJĄCEGO pola rzuca wyjątek "The property
+# 'Pole' cannot be found on this object", dlatego brakujące pole dodajemy przez Add-Member.
+function Set-ConfigValue {
+    param($Object, [string]$Name, $Value)
+    if ($Object -is [System.Collections.IDictionary]) { $Object[$Name] = $Value; return }
+    if ($null -ne $Object.PSObject.Properties[$Name]) { $Object.$Name = $Value }
+    else { $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value }
+}
+
+# Zwraca sekcję konfiguracji (np. DomainJoin), a gdy jej brakuje - tworzy pustą i dodaje do obiektu.
+function Get-ConfigSection {
+    param($Object, [string]$Name)
+    $section = if ($Object -is [System.Collections.IDictionary]) { $Object[$Name] } else { $Object.$Name }
+    if ($null -eq $section) {
+        $section = [PSCustomObject]@{}
+        Set-ConfigValue -Object $Object -Name $Name -Value $section
+    }
+    return $section
 }
 
 function Save-Config($config) {
@@ -3152,9 +3589,9 @@ function Show-LogWindow {
         if ($sfd.ShowDialog() -eq $true) {
             try {
                 $script:rawLogText | Set-Content -Path $sfd.FileName -Encoding UTF8
-                Show-ThemedMessageBox -Message "Zapisano logi do $($sfd.FileName)" -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+                Show-ThemedMessageBox -Message "Zapisano logi do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
             } catch {
-                Show-ThemedMessageBox -Message "Błąd podczas zapisywania: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+                Show-ThemedMessageBox -Message "Błąd podczas zapisywania: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             }
         }
     })
@@ -3163,7 +3600,7 @@ function Show-LogWindow {
         if (Test-Path "C:\deploy-log.txt") {
             Start-Process "notepad.exe" -ArgumentList "C:\deploy-log.txt"
         } else {
-            Show-ThemedMessageBox -Message "Plik C:\deploy-log.txt nie istnieje." -Title "Informacja" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            Show-ThemedMessageBox -Message "Plik C:\deploy-log.txt nie istnieje." -Title "Informacja" -Button "OK" -Image "Information" | Out-Null
         }
     })
 
@@ -3178,7 +3615,7 @@ function Show-LogWindow {
     $btnZipLogs.Add_Click({
         $logFiles = @("C:\deploy-log.txt", "C:\deploy-error-log.txt") | Where-Object { Test-Path $_ }
         if ($logFiles.Count -eq 0) {
-            Show-ThemedMessageBox -Message "Brak plików logów do spakowania." -Title "Informacja" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            Show-ThemedMessageBox -Message "Brak plików logów do spakowania." -Title "Informacja" -Button "OK" -Image "Information" | Out-Null
             return
         }
         
@@ -3188,9 +3625,9 @@ function Show-LogWindow {
         if ($sfd.ShowDialog() -eq $true) {
             try {
                 Compress-Archive -Path $logFiles -DestinationPath $sfd.FileName -Force
-                Show-ThemedMessageBox -Message "Spakowano logi do $($sfd.FileName)" -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+                Show-ThemedMessageBox -Message "Spakowano logi do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
             } catch {
-                Show-ThemedMessageBox -Message "Błąd podczas pakowania: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+                Show-ThemedMessageBox -Message "Błąd podczas pakowania: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             }
         }
     })
@@ -3296,7 +3733,7 @@ function Show-CustomInfoDialog {
     param($Title, $Message, [switch]$ShowCopy, [string]$HtmlData)
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Title="$Title" Width="450" SizeToContent="Height" WindowStartupLocation="CenterOwner"
+        Width="450" SizeToContent="Height" WindowStartupLocation="CenterOwner"
         Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize" Topmost="True">
     <Window.Resources>
         <Style TargetType="Button">
@@ -3338,6 +3775,9 @@ function Show-CustomInfoDialog {
     $reader = New-Object System.Xml.XmlNodeReader $xaml
     $dlg = [Windows.Markup.XamlReader]::Load($reader)
     Apply-ThemeToWindow $dlg
+    # Tytuł ustawiamy po wczytaniu XAML - wklejony wprost do XAML (Title="$Title") tekst ze znakiem
+    # & albo " psuł XML i okno w ogóle się nie otwierało.
+    $dlg.Title = $Title
     
     $txtMessage = $dlg.FindName("txtMessage")
     $txtMessage.Text = $Message
@@ -3347,7 +3787,7 @@ function Show-CustomInfoDialog {
         $btnCopy.Visibility = [System.Windows.Visibility]::Visible
         $btnCopy.Add_Click({
             Set-Clipboard -Value $Message
-            Show-ThemedMessageBox -Message "Skopiowano do schowka!" -Title "Informacja" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            Show-ThemedMessageBox -Message "Skopiowano do schowka!" -Title "Informacja" -Button "OK" -Image "Information" | Out-Null
         })
     }
     
@@ -3361,9 +3801,9 @@ function Show-CustomInfoDialog {
             if ($sfd.ShowDialog() -eq $true) {
                 try {
                     $HtmlData | Set-Content -Path $sfd.FileName -Encoding UTF8
-                    Show-ThemedMessageBox -Message "Zapisano raport do $($sfd.FileName)" -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+                    Show-ThemedMessageBox -Message "Zapisano raport do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
                 } catch {
-                    Show-ThemedMessageBox -Message "Błąd podczas zapisywania: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+                    Show-ThemedMessageBox -Message "Błąd podczas zapisywania: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
                 }
             }
         })
@@ -3673,7 +4113,7 @@ function Show-SystemInfoWindow {
 
     $renderApps = {
         $term = $txtSearch.Text
-        $filtered = if ([string]::IsNullOrWhiteSpace($term)) { $allApps } else { @($allApps | Where-Object { $_.DisplayName -like "*$term*" }) }
+        $filtered = if ([string]::IsNullOrWhiteSpace($term)) { $allApps } else { @($allApps | Where-Object { ([string]$_.DisplayName).IndexOf($term, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 }) }
 
         $sortProp = if ($script:SysInfoSortColumn -eq "Wersja") { "DisplayVersion" } else { "DisplayName" }
         $sorted = @($filtered | Sort-Object -Property @{Expression = $sortProp; Descending = (-not $script:SysInfoSortAscending)})
@@ -4020,7 +4460,7 @@ function Show-SoftwareUninstaller {
     $btnExportCSV.Add_Click({
         $itemsToExport = @($lvApps.Items)
         if ($itemsToExport.Count -eq 0) {
-            Show-ThemedMessageBox -Message "Brak programów do wyeksportowania na widocznej liście." -Title "Informacja" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            Show-ThemedMessageBox -Message "Brak programów do wyeksportowania na widocznej liście." -Title "Informacja" -Button "OK" -Image "Information" | Out-Null
             return
         }
         
@@ -4030,9 +4470,9 @@ function Show-SoftwareUninstaller {
         if ($sfd.ShowDialog() -eq $true) {
             try {
                 $itemsToExport | Select-Object DisplayName, DisplayVersion, InstallDate, Publisher | Export-Csv -Path $sfd.FileName -NoTypeInformation -Encoding UTF8 -Delimiter ";"
-                Show-ThemedMessageBox -Message "Wyeksportowano pomyślnie do $($sfd.FileName)" -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+                Show-ThemedMessageBox -Message "Wyeksportowano pomyślnie do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
             } catch {
-                Show-ThemedMessageBox -Message "Błąd eksportu: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+                Show-ThemedMessageBox -Message "Błąd eksportu: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             }
         }
     })
@@ -4040,7 +4480,7 @@ function Show-SoftwareUninstaller {
     $btnExportHTML.Add_Click({
         $itemsToExport = @($lvApps.Items)
         if ($itemsToExport.Count -eq 0) {
-            Show-ThemedMessageBox -Message "Brak programów do wyeksportowania na widocznej liście." -Title "Informacja" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            Show-ThemedMessageBox -Message "Brak programów do wyeksportowania na widocznej liście." -Title "Informacja" -Button "OK" -Image "Information" | Out-Null
             return
         }
         
@@ -4084,9 +4524,9 @@ function Show-SoftwareUninstaller {
 </html>
 "@
                 $html | Set-Content -Path $sfd.FileName -Encoding UTF8
-                Show-ThemedMessageBox -Message "Wyeksportowano pomyślnie do $($sfd.FileName)" -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+                Show-ThemedMessageBox -Message "Wyeksportowano pomyślnie do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
             } catch {
-                Show-ThemedMessageBox -Message "Błąd eksportu: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+                Show-ThemedMessageBox -Message "Błąd eksportu: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             }
         }
     })
@@ -4161,7 +4601,7 @@ function Show-SoftwareUninstaller {
             if (-not [string]::IsNullOrWhiteSpace($path) -and (Test-Path -LiteralPath $path)) {
                 Start-Process "explorer.exe" -ArgumentList "`"$path`""
             } else {
-            Show-ThemedMessageBox -Message "Nie udało się automatycznie ustalić ścieżki instalacji dla tego programu." -Title "Brak ścieżki" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+            Show-ThemedMessageBox -Message "Nie udało się automatycznie ustalić ścieżki instalacji dla tego programu." -Title "Brak ścieżki" -Button "OK" -Image "Warning" | Out-Null
             }
         }
     })
@@ -4176,16 +4616,16 @@ function Show-SoftwareUninstaller {
 
             if (-not [string]::IsNullOrWhiteSpace($cmd)) {
                 if ($cmd -match "(?i)msiexec") {
-                    $cmd = $cmd -replace "(?i)/I", "/X"
+                    $cmd = $cmd -replace '(?i)/I(?=\{)', '/X'
                 }
                 Write-Log "Uruchamianie interaktywnego deinstalatora dla $($app.DisplayName)..."
                 try {
                     Start-Process -FilePath "cmd.exe" -ArgumentList "/c $cmd"
                 } catch {
-                Show-ThemedMessageBox -Message "Błąd uruchamiania deinstalatora: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+                Show-ThemedMessageBox -Message "Błąd uruchamiania deinstalatora: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
                 }
             } else {
-            Show-ThemedMessageBox -Message "Brak ścieżki deinstalatora w rejestrze." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+            Show-ThemedMessageBox -Message "Brak ścieżki deinstalatora w rejestrze." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
             }
         }
     })
@@ -4198,12 +4638,12 @@ function Show-SoftwareUninstaller {
 
     $btnKill.Add_Click({
         if ($null -ne $script:uninstProc -and -not $script:uninstProc.HasExited) {
-            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz wymusić zamknięcie procesu deinstalatora?" -Title "Zabij proces" -Button [System.Windows.MessageBoxButton]::YesNo -Image [System.Windows.MessageBoxImage]::Warning) -eq [System.Windows.MessageBoxResult]::Yes) {
+            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz wymusić zamknięcie procesu deinstalatora?" -Title "Zabij proces" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
                 try {
                     Start-Process -FilePath "taskkill.exe" -ArgumentList "/PID $($script:uninstProc.Id) /T /F" -WindowStyle Hidden -Wait
                     Write-Log "Wymuszono zamknięcie procesu deinstalatora (drzewo procesów)." -Context "Użytkownik"
                 } catch {
-                    Show-ThemedMessageBox -Message "Błąd podczas zamykania procesu: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+                    Show-ThemedMessageBox -Message "Błąd podczas zamykania procesu: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
                 }
             }
         }
@@ -4226,7 +4666,7 @@ function Show-SoftwareUninstaller {
     $btnUninstall.Add_Click({
         $selectedApps = @($script:uninstAllApps | Where-Object { $_.IsChecked })
         if ($selectedApps.Count -eq 0) { 
-            Show-ThemedMessageBox -Message "Wybierz co najmniej jeden program z listy (zaznacz pole)." -Title "Informacja" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            Show-ThemedMessageBox -Message "Wybierz co najmniej jeden program z listy (zaznacz pole)." -Title "Informacja" -Button "OK" -Image "Information" | Out-Null
             return 
         }
 
@@ -4267,7 +4707,7 @@ function Show-SoftwareUninstaller {
                         $cmd = $app.UninstallString
                         if (-not [string]::IsNullOrWhiteSpace($cmd)) {
                             if ($cmd -match "(?i)msiexec") {
-                                $cmd = ($cmd -replace "(?i)/I", "/X") + " /qn /norestart"
+                                $cmd = ($cmd -replace '(?i)/I(?=\{)', '/X') + " /qn /norestart"
                             } elseif ($cmd -match 'OfficeClickToRun\.exe') {
                                 $isOfficeClickToRun = $true
                             } else {
@@ -4354,7 +4794,7 @@ function Show-SoftwareUninstaller {
                 }
                 Show-CustomInfoDialog -Title "Zakończono" -Message "Przetwarzanie deinstalacji zakończone.`n`nPoprawnie odinstalowane aplikacje zostały automatycznie usunięte z listy.`nJeśli instalator zwrócił błąd, aplikacja pozostała na liście oznaczona krzyżykiem (❌)."
             } catch {
-            Show-ThemedMessageBox -Message "Wystąpił błąd podczas uruchamiania deinstalatora:`n$($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+            Show-ThemedMessageBox -Message "Wystąpił błąd podczas uruchamiania deinstalatora:`n$($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             } finally {
                 $script:uninstProc = $null
                 $btnUninstall.IsEnabled = $true
@@ -4485,7 +4925,7 @@ function Show-ProgramEditDialog {
     
     $btnSave.Add_Click({
         if ([string]::IsNullOrWhiteSpace($txtName.Text)) {
-            Show-ThemedMessageBox -Message "Identyfikator nie może być pusty." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+            Show-ThemedMessageBox -Message "Identyfikator nie może być pusty." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
             return
         }
         $script:progEditResult = @{
@@ -4583,7 +5023,7 @@ function Show-ProgramsManager {
                 $config | Add-Member -NotePropertyName Programs -NotePropertyValue (New-Object PSObject) -Force
             }
             if ($config.Programs.PSObject.Properties.Name -contains $res.Name) {
-                Show-ThemedMessageBox -Message "Program o tym identyfikatorze już istnieje." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+                Show-ThemedMessageBox -Message "Program o tym identyfikatorze już istnieje." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
                 return
             }
             Add-Member -InputObject $config.Programs -NotePropertyName $res.Name -NotePropertyValue $res.Data -Force
@@ -4617,7 +5057,7 @@ function Show-ProgramsManager {
                     $config | Add-Member -NotePropertyName Programs -NotePropertyValue (New-Object PSObject) -Force
                 }
                 if ($config.Programs.PSObject.Properties.Name -contains $res.Name) {
-                Show-ThemedMessageBox -Message "Program o tym identyfikatorze już istnieje." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+                Show-ThemedMessageBox -Message "Program o tym identyfikatorze już istnieje." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
                     return
                 }
                 Add-Member -InputObject $config.Programs -NotePropertyName $res.Name -NotePropertyValue $res.Data -Force
@@ -4629,7 +5069,7 @@ function Show-ProgramsManager {
     $btnRemove.Add_Click({
         if ($lbPrograms.SelectedItem) {
             $pName = $lbPrograms.SelectedItem
-            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć program $pName?" -Title "Potwierdzenie" -Button [System.Windows.MessageBoxButton]::YesNo -Image [System.Windows.MessageBoxImage]::Warning) -eq [System.Windows.MessageBoxResult]::Yes) {
+            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć program $pName?" -Title "Potwierdzenie" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
                 $config.Programs.PSObject.Properties.Remove($pName)
                 & $RefreshList
             }
@@ -4817,11 +5257,11 @@ function Show-RegistryEditDialog {
     $btnSave.Add_Click({
         $subKey = $txtSubKey.Text.Trim() -replace '^[\\/]+', ''
         if ([string]::IsNullOrWhiteSpace($subKey) -or [string]::IsNullOrWhiteSpace($txtName.Text)) {
-            Show-ThemedMessageBox -Message "Ścieżka i nazwa nie mogą być puste." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+            Show-ThemedMessageBox -Message "Ścieżka i nazwa nie mogą być puste." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
             return
         }
         if ($subKey -match "^(?i)HK(LM|CU|CR|U|CC)") {
-            Show-ThemedMessageBox -Message "Wpisz tylko ścieżkę podrzędną (np. Software\MójKlucz). Główny klucz wybierasz z listy." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+            Show-ThemedMessageBox -Message "Wpisz tylko ścieżkę podrzędną (np. Software\MójKlucz). Główny klucz wybierasz z listy." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
             return
         }
         
@@ -4941,7 +5381,7 @@ function Show-RegistryManager {
     $btnRemove.Add_Click({
         $idx = $lbRegistry.SelectedIndex
         if ($idx -ge 0) {
-            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć ten wpis rejestru?" -Title "Potwierdzenie" -Button [System.Windows.MessageBoxButton]::YesNo -Image [System.Windows.MessageBoxImage]::Warning) -eq [System.Windows.MessageBoxResult]::Yes) {
+            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć ten wpis rejestru?" -Title "Potwierdzenie" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
                 $regList.RemoveAt($idx)
                 & $RefreshList
             }
@@ -5103,7 +5543,7 @@ function Show-ScriptEditDialog {
     
     $btnSave.Add_Click({
         if ([string]::IsNullOrWhiteSpace($txtPath.Text)) {
-            Show-ThemedMessageBox -Message "Ścieżka skryptu nie może być pusta." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+            Show-ThemedMessageBox -Message "Ścieżka skryptu nie może być pusta." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
             return
         }
         $script:scriptEditResult = $txtPath.Text.Trim()
@@ -5196,7 +5636,7 @@ function Show-PostInstallScriptsManager {
     $btnRemove.Add_Click({
         $idx = $lbScripts.SelectedIndex
         if ($idx -ge 0) {
-            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć ten skrypt z listy?" -Title "Potwierdzenie" -Button [System.Windows.MessageBoxButton]::YesNo -Image [System.Windows.MessageBoxImage]::Warning) -eq [System.Windows.MessageBoxResult]::Yes) {
+            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć ten skrypt z listy?" -Title "Potwierdzenie" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
                 $scriptList.RemoveAt($idx)
                 & $RefreshList
             }
@@ -5299,7 +5739,7 @@ function Show-ProfileEditDialog {
     
     $btnSave.Add_Click({
         if ([string]::IsNullOrWhiteSpace($txtName.Text)) {
-            Show-ThemedMessageBox -Message "Nazwa profilu nie może być pusta." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+            Show-ThemedMessageBox -Message "Nazwa profilu nie może być pusta." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
             return
         }
         $selectedApps = @()
@@ -5394,7 +5834,7 @@ function Show-ProfilesManager {
                 $config | Add-Member -NotePropertyName Profiles -NotePropertyValue (New-Object PSObject) -Force
             }
             if ($config.Profiles.PSObject.Properties.Name -contains $res.Name) {
-                Show-ThemedMessageBox -Message "Profil o tej nazwie już istnieje." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+                Show-ThemedMessageBox -Message "Profil o tej nazwie już istnieje." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
                 return
             }
             Add-Member -InputObject $config.Profiles -NotePropertyName $res.Name -NotePropertyValue $res.Apps -Force
@@ -5421,7 +5861,7 @@ function Show-ProfilesManager {
     $btnRemove.Add_Click({
         if ($lbProfiles.SelectedItem) {
             $pName = $lbProfiles.SelectedItem
-            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć profil '$pName'?" -Title "Potwierdzenie" -Button [System.Windows.MessageBoxButton]::YesNo -Image [System.Windows.MessageBoxImage]::Warning) -eq [System.Windows.MessageBoxResult]::Yes) {
+            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć profil '$pName'?" -Title "Potwierdzenie" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
                 $config.Profiles.PSObject.Properties.Remove($pName)
                 & $RefreshList
             }
@@ -5499,7 +5939,7 @@ function Show-PinPrompt {
             $dlg.Close()
         } else {
             Write-Log "[Autoryzacja] Błędny PIN przy próbie wejścia w ustawienia!" -IsError
-            Show-ThemedMessageBox -Message "Nieprawidłowy PIN." -Title "Błąd autoryzacji" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+            Show-ThemedMessageBox -Message "Nieprawidłowy PIN." -Title "Błąd autoryzacji" -Button "OK" -Image "Error" | Out-Null
             $txtPin.Clear()
         }
     })
@@ -5510,7 +5950,7 @@ function Show-PinPrompt {
 }
 
 function Show-ConfigEditor {
-    try { $config = Get-Config } catch { Write-Log $_ -Color Red; return }
+    try { $config = Get-Config } catch { Write-Log "Nie udało się wczytać config.json: $_" -IsError; return }
 
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -5889,9 +6329,9 @@ function Show-ConfigEditor {
         if ($sfd.ShowDialog() -eq $true) {
             try {
                 $config | ConvertTo-Json -Depth 10 | Set-Content -Path $sfd.FileName -Encoding UTF8
-                Show-ThemedMessageBox -Message "Eksport zakończony pomyślnie." -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+                Show-ThemedMessageBox -Message "Eksport zakończony pomyślnie." -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
             } catch {
-                Show-ThemedMessageBox -Message "Błąd eksportu: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+                Show-ThemedMessageBox -Message "Błąd eksportu: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             }
         }
     })
@@ -5907,10 +6347,10 @@ function Show-ConfigEditor {
                         $config | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
                     }
                     & $UpdateUIFields $config
-                    Show-ThemedMessageBox -Message "Konfiguracja została zaimportowana. Kliknij 'Zapisz', aby ją trwale zachować w aplikacji." -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+                    Show-ThemedMessageBox -Message "Konfiguracja została zaimportowana. Kliknij 'Zapisz', aby ją trwale zachować w aplikacji." -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
                 }
             } catch {
-                Show-ThemedMessageBox -Message "Błąd importu: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+                Show-ThemedMessageBox -Message "Błąd importu: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             }
         }
     })
@@ -5918,11 +6358,11 @@ function Show-ConfigEditor {
     $btnTestWeb.Add_Click({
         $url = $txtWeb.Text.Trim()
         if ([string]::IsNullOrWhiteSpace($url)) {
-            Show-ThemedMessageBox -Message "Proszę wpisać adres URL do przetestowania." -Title "Informacja" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            Show-ThemedMessageBox -Message "Proszę wpisać adres URL do przetestowania." -Title "Informacja" -Button "OK" -Image "Information" | Out-Null
             return
         }
         if (-not (Test-UrlValid -Url $url)) {
-            Show-ThemedMessageBox -Message "Niepoprawny format adresu URL. Pamiętaj o dodaniu http:// lub https://" -Title "Ostrzeżenie" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+            Show-ThemedMessageBox -Message "Niepoprawny format adresu URL. Pamiętaj o dodaniu http:// lub https://" -Title "Ostrzeżenie" -Button "OK" -Image "Warning" | Out-Null
             return
         }
         $dlg.Cursor = [System.Windows.Input.Cursors]::Wait
@@ -5930,11 +6370,11 @@ function Show-ConfigEditor {
             $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
             $statusMsg = if ($null -ne $response.StatusCode) { "$($response.StatusCode) $($response.StatusDescription)" } else { "OK" }
             Write-Log "[Ustawienia] Test połączenia z URL '$url' zakończony sukcesem: $statusMsg"
-            Show-ThemedMessageBox -Message "Host odpowiada poprawnie!`n`nKod statusu: $statusMsg" -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            Show-ThemedMessageBox -Message "Host odpowiada poprawnie!`n`nKod statusu: $statusMsg" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
         }
         catch {
             Write-Log "[Ustawienia] Test połączenia z URL '$url' zakończony błędem: $($_.Exception.Message)" -IsError
-            Show-ThemedMessageBox -Message "Host nie odpowiada lub wystąpił błąd komunikacji:`n`n$($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+            Show-ThemedMessageBox -Message "Host nie odpowiada lub wystąpił błąd komunikacji:`n`n$($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
         }
         finally {
             $dlg.Cursor = [System.Windows.Input.Cursors]::Arrow
@@ -5946,7 +6386,7 @@ function Show-ConfigEditor {
         try {
             $src = [string]$cmbSrc.SelectedItem
             if ([string]::IsNullOrWhiteSpace($src) -or ($src -notin @('network', 'web', 'winget'))) {
-                Show-ThemedMessageBox -Message "Wybierz poprawne źródło (network/web/winget)." -Title "Ostrzeżenie" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+                Show-ThemedMessageBox -Message "Wybierz poprawne źródło (network/web/winget)." -Title "Ostrzeżenie" -Button "OK" -Image "Warning" | Out-Null
                 return
             }
             $net = $txtNet.Text.Trim()
@@ -5959,67 +6399,67 @@ function Show-ConfigEditor {
             if ($web -and $web[-1] -ne '/') { $web += '/' }
             if ($cwd -and $cwd[-1] -ne '/') { $cwd += '/' }
             if ($net -and $net -notmatch '^\\\\') {
-                Show-ThemedMessageBox -Message "Ścieżka network musi być w formacie UNC (\\server\share\)." -Title "Ostrzeżenie" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+                Show-ThemedMessageBox -Message "Ścieżka network musi być w formacie UNC (\\server\share\)." -Title "Ostrzeżenie" -Button "OK" -Image "Warning" | Out-Null
                 return
             }
 
-            $config.DefaultInstallSource = $src
-            if (-not $config.InstallSourcePaths) { $config | Add-Member -NotePropertyName InstallSourcePaths -NotePropertyValue (@{}) -Force }
-            $config.InstallSourcePaths.network = $net
-            $config.InstallSourcePaths.web = $web
+            # Set-ConfigValue / Get-ConfigSection zamiast "$config.Sekcja.Pole = ...": przypisanie do pola,
+            # którego nie ma w obiekcie z ConvertFrom-Json, rzuca wyjątek i cały zapis się nie udawał
+            # (np. gdy w config.json była sekcja InstallSourcePaths tylko z "web", bez "network").
+            Set-ConfigValue $config 'DefaultInstallSource' $src
+            $paths = Get-ConfigSection $config 'InstallSourcePaths'
+            Set-ConfigValue $paths 'network' $net
+            Set-ConfigValue $paths 'web' $web
 
-            if (-not $config.CustomWebDataLocation) { $config | Add-Member -NotePropertyName CustomWebDataLocation -NotePropertyValue (@{}) -Force }
-            $config.CustomWebDataLocation.URL = $cwd
+            Set-ConfigValue (Get-ConfigSection $config 'CustomWebDataLocation') 'URL' $cwd
 
-            if (-not $config.DomainJoin) { $config | Add-Member -NotePropertyName DomainJoin -NotePropertyValue (@{}) -Force }
-            $config.DomainJoin.DomainName = $dom
-            $config.DomainJoin.Username = $domUser
+            $domainSection = Get-ConfigSection $config 'DomainJoin'
+            Set-ConfigValue $domainSection 'DomainName' $dom
+            Set-ConfigValue $domainSection 'Username' $domUser
 
-            if (-not $config.LocalAdmin) { $config | Add-Member -NotePropertyName LocalAdmin -NotePropertyValue (@{}) -Force }
-            $config.LocalAdmin.Username = $locUser
+            Set-ConfigValue (Get-ConfigSection $config 'LocalAdmin') 'Username' $locUser
 
-            if (-not $config.WebAuth) { $config | Add-Member -NotePropertyName WebAuth -NotePropertyValue (@{}) -Force }
-            $config.WebAuth.Username = $txtWebUser.Text.Trim()
-            $config.WebAuth.Password = $txtWebPass.Text.Trim()
+            $webAuth = Get-ConfigSection $config 'WebAuth'
+            Set-ConfigValue $webAuth 'Username' $txtWebUser.Text.Trim()
+            Set-ConfigValue $webAuth 'Password' $txtWebPass.Text.Trim()
 
-            if (-not $config.TeamViewer) { $config | Add-Member -NotePropertyName TeamViewer -NotePropertyValue (@{}) -Force }
-            $config.TeamViewer.FileName = $txtTvFile.Text.Trim()
-            $config.TeamViewer.Arguments = $txtTvArgs.Text.Trim()
+            $tv = Get-ConfigSection $config 'TeamViewer'
+            Set-ConfigValue $tv 'FileName' $txtTvFile.Text.Trim()
+            Set-ConfigValue $tv 'Arguments' $txtTvArgs.Text.Trim()
 
-            if (-not $config.AntyVirus) { $config | Add-Member -NotePropertyName AntyVirus -NotePropertyValue (@{}) -Force }
-            $config.AntyVirus.FileName = $txtAvFile.Text.Trim()
+            $av = Get-ConfigSection $config 'AntyVirus'
+            Set-ConfigValue $av 'FileName' $txtAvFile.Text.Trim()
             $avSrcVal = [string]$cmbAvSrc.SelectedItem
             if ([string]::IsNullOrWhiteSpace($avSrcVal)) { $avSrcVal = "network" }
-            $config.AntyVirus.DefaultInstallSource = $avSrcVal
+            Set-ConfigValue $av 'DefaultInstallSource' $avSrcVal
+            $avPaths = Get-ConfigSection $av 'InstallSourcePaths'
+            Set-ConfigValue $avPaths 'network' $txtAvNet.Text.Trim()
+            Set-ConfigValue $avPaths 'web' $txtAvWeb.Text.Trim()
+            $avCred = Get-ConfigSection $av 'Credentials'
+            Set-ConfigValue $avCred 'Username' $txtAvUser.Text.Trim()
+            Set-ConfigValue $avCred 'Password' $txtAvPass.Text.Trim()
 
-            if (-not $config.AntyVirus.InstallSourcePaths) { $config.AntyVirus | Add-Member -NotePropertyName InstallSourcePaths -NotePropertyValue (@{}) -Force }
-            $config.AntyVirus.InstallSourcePaths.network = $txtAvNet.Text.Trim()
-            $config.AntyVirus.InstallSourcePaths.web = $txtAvWeb.Text.Trim()
-
-            if (-not $config.AntyVirus.Credentials) { $config.AntyVirus | Add-Member -NotePropertyName Credentials -NotePropertyValue (@{}) -Force }
-            $config.AntyVirus.Credentials.Username = $txtAvUser.Text.Trim()
-            $config.AntyVirus.Credentials.Password = $txtAvPass.Text.Trim()
-
-            if (-not $config.WiFiProfile) { $config | Add-Member -NotePropertyName WiFiProfile -NotePropertyValue (@{}) -Force }
             $wifiStr = $txtWifiFile.Text.Trim()
-            if ($wifiStr -match ",") {
-                $config.WiFiProfile.FileName = @($wifiStr -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" })
-            } else { $config.WiFiProfile.FileName = $wifiStr }
+            $wifiValue = if ($wifiStr -match ",") { @($wifiStr -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }) } else { $wifiStr }
+            Set-ConfigValue (Get-ConfigSection $config 'WiFiProfile') 'FileName' $wifiValue
 
             Save-Config $config
-            Show-ThemedMessageBox -Message "Zapisano konfigurację." -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            Show-ThemedMessageBox -Message "Zapisano konfigurację." -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
             Get-AppSelection
             $dlg.Close()
         }
         catch {
-            Show-ThemedMessageBox -Message "Błąd zapisu: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+            Show-ThemedMessageBox -Message "Błąd zapisu: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
         }
     })
 
     $dlg.ShowDialog() | Out-Null
 }
 
-Ensure-Configuration
+# W testach nie tworzymy/nie sprawdzamy config.json interaktywnie (okno komunikatu zablokowałoby testy).
+if ($null -eq $global:PesterTesting) {
+    Ensure-Configuration
+}
 
 [xml]$mainXaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -6351,7 +6791,7 @@ $cmbProfiles.Add_SelectionChanged({
                     if ($null -ne $matchedKey) {
                         $script:SelectedApps[$matchedKey] = $true
                     } else {
-                        Write-Log "Nie znaleziono programu '$app' (profil '$profName') w konfiguracji." -Color "Yellow"
+                        Write-Log "Nie znaleziono programu '$app' (profil '$profName') w konfiguracji." -IsError
                     }
                 }
             }
@@ -6363,13 +6803,13 @@ $cmbProfiles.Add_SelectionChanged({
                 $CheckboxControls["InstallApplications"].IsChecked = ($count -gt 0)
                 $btnChooseApps.IsEnabled = ($count -gt 0)
             }
-            Write-Log "Zastosowano profil wdrożenia: $profName (Wybrano programów: $count)" -Color "Green"
+            Write-Log "Zastosowano profil wdrożenia: $profName (Wybrano programów: $count)" -Context "Użytkownik"
         } catch {
-            Write-Log "Błąd podczas ładowania profilu: $_" -Color "Red" -IsError
+            Write-Log "Błąd podczas ładowania profilu: $_" -IsError
         }
     } elseif ($cmbProfiles.SelectedIndex -eq 0) {
         # Gdy użytkownik celowo kliknie powrót na wybór niestandardowy - ładujemy domyślne z config.json
-        Write-Log "Przełączono na wybór niestandardowy - wczytywanie domyślnych aplikacji z pliku config." -Color "Blue"
+        Write-Log "Przełączono na wybór niestandardowy - wczytywanie domyślnych aplikacji z pliku config." -Context "Użytkownik"
         Get-AppSelection
     }
 })
@@ -6385,7 +6825,7 @@ $btnEditConfig.Add_Click({
         if (Test-Path $configPath) {
             Start-Process "notepad.exe" -ArgumentList "`"$configPath`""
         } else {
-            Show-ThemedMessageBox -Message "Plik config.json nie istnieje pod ścieżką: $configPath" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+            Show-ThemedMessageBox -Message "Plik config.json nie istnieje pod ścieżką: $configPath" -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
         }
     }
 })
@@ -6415,7 +6855,7 @@ $btnReloadConfig.Add_Click({
         Write-Log "Pomyślnie przeładowano plik config.json i zaktualizowano GUI."
     } catch {
         Write-Log "Błąd przeładowania config.json: $_" -IsError
-        Show-ThemedMessageBox -Message "Nie udało się przeładować config.json.`nSprawdź poprawność składni JSON w pliku." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+        Show-ThemedMessageBox -Message "Nie udało się przeładować config.json.`nSprawdź poprawność składni JSON w pliku." -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
     }
 })
 $btnLogs.Add_Click({ Show-LogWindow })
@@ -6446,7 +6886,7 @@ $btnPause.Add_Click({
 })
 
 $btnCancelDeploy.Add_Click({
-    if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz przerwać wdrożenie?" -Title "Przerwij" -Button [System.Windows.MessageBoxButton]::YesNo -Image [System.Windows.MessageBoxImage]::Warning) -eq [System.Windows.MessageBoxResult]::Yes) {
+    if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz przerwać wdrożenie?" -Title "Przerwij" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
         $script:isCancelled = $true
         $script:isPaused = $false
         Write-Log "Wdrożenie przerwane przez użytkownika!" -IsError -Context "Użytkownik"
