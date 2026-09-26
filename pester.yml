@@ -18,9 +18,16 @@ jobs:
       - name: Run Pester tests
         shell: powershell
         run: |
+          # Pester jest przypięty do konkretnej wersji 5.x - testy używają starszej,
+          # kompatybilnej z Pester 3/4/5 składni (Mock/Assert-MockCalled), której Pester 6
+          # już nie obsługuje. Bez przypięcia wersji runner może dociągnąć najnowszy Pester 6
+          # i wszystkie testy z Mock/Assert-MockCalled zaczną fałszywie padać.
+          Install-Module -Name Pester -RequiredVersion 5.6.1 -Force -SkipPublisherCheck -Scope CurrentUser
+          Import-Module Pester -RequiredVersion 5.6.1 -Force
+
           # Znajdujemy i uruchamiamy wszystkie pliki testowe w repozytorium
           $config = [PesterConfiguration]::Default
           $config.Run.Path = @(Get-ChildItem -Path . -Filter "*.Tests.ps1" -Recurse | Select-Object -ExpandProperty FullName)
           $config.Run.Exit = $true # Zwróci kod błędu dla GitHuba w przypadku oblanych testów
-          
+
           Invoke-Pester -Configuration $config

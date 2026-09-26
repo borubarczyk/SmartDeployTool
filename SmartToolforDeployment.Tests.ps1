@@ -32,22 +32,29 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             if (Test-Path $script:ErrorLogFilePath) { Remove-Item $script:ErrorLogFilePath -Force }
         }
 
-        It "Tworzy plik na dysku i dopisuje odpowiednio sformatowaną linijkę" {
+        It "Tworzy plik na dysku i dopisuje odpowiednio sformatowaną linijkę (data + godzina + poziom + kontekst)" {
             Write-Log -Text "To jest tylko test logowania"
-            
+
             $zawartosc = Get-Content $script:LogFilePath -Raw
             $zawartosc | Should -Match "To jest tylko test logowania"
-            $zawartosc | Should -Match "\[\d{2}:\d{2}:\d{2}\]"
+            $zawartosc | Should -Match "\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] \[INFO\] \[System\]"
             (Test-Path $script:ErrorLogFilePath) | Should -Be $false
         }
 
         It "Tworzy plik błędów gdy użyta jest flaga -IsError" {
             Write-Log -Text "To jest krytyczny błąd" -IsError
-            
+
             $zawartoscLog = Get-Content $script:LogFilePath -Raw
             $zawartoscErr = Get-Content $script:ErrorLogFilePath -Raw
-            $zawartoscLog | Should -Match "To jest krytyczny błąd"
-            $zawartoscErr | Should -Match "\[ERROR\] To jest krytyczny błąd"
+            $zawartoscLog | Should -Match "\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] \[ERROR\] \[System\] To jest krytyczny błąd"
+            $zawartoscErr | Should -Match "\[ERROR\] \[System\] To jest krytyczny błąd"
+        }
+
+        It "Uzywa jawnie podanego -Context zamiast domyslnego 'System'" {
+            Write-Log -Text "Krok wykonany automatycznie" -Context "Automat"
+
+            $zawartosc = Get-Content $script:LogFilePath -Raw
+            $zawartosc | Should -Match "\[Automat\] Krok wykonany automatycznie"
         }
 
         AfterEach {
@@ -150,8 +157,22 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             
             $script:isCancelled = $false
             Remove-Bloatware
-            
+
             Assert-MockCalled Remove-AppxPackage
+        }
+
+        It "Nie przerywa się (i nie rzuca dalej) w trybie Dry-Run, gdy Get-AppxPackage zawiedzie (np. brak modulu Appx na niektorych kompilacjach Windows)" {
+            Mock Get-AppxPackage { throw "Operation is not supported on this platform." }
+            Mock Write-Log {}
+            Mock Do-WpfEvents {}
+
+            $script:isCancelled = $false
+            $script:DryRun = $true
+            try {
+                { Remove-Bloatware } | Should -Not -Throw
+            } finally {
+                $script:DryRun = $false
+            }
         }
     }
 
@@ -191,40 +212,33 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
 
     Context "Walidacja przed wdrożeniem (Test-BeforeRun)" {
         It "Zwraca `$false, jeśli aplikacja przeznaczona do instalacji nie ma parametru FileName" {
-            $script:configPath = "$PSScriptRoot\temp_test_config.json"
-            $script:SelectedApps = @{ "ZlaAplikacja" = $true }
-            $script:CheckboxControls = @{ 'InstallApplications' = [PSCustomObject]@{ IsChecked = $true } }
-            
-            $tempConfig = @{ DefaultInstallSource = "winget"; Programs = @{ ZlaAplikacja = @{ Enabled = $true; FileName = "" } } } | ConvertTo-Json -Depth 5
-            Set-Content -Path $script:configPath -Value $tempConfig -Encoding UTF8
-
+            # UWAGA: CheckboxControls/SelectedApps przekazujemy jako PARAMETRY Test-BeforeRun (nie
+            # przez nadpisanie zmiennych skryptowych) - dot-sourcing w BeforeAll i nadpisywanie
+            # $script:x / $x z poziomu It okazało się zawodne (funkcja czasem domyka się nad innym
+            # egzemplarzem scope'u niż ten, do którego pisze It). Jawne przekazanie parametrów jest
+            # jednoznaczne niezależnie od scope'u. Zawartość config.json podajemy przez
+            # Mock Get-Content/Test-Path z tego samego powodu.
+            Mock Get-CimInstance {}
+            Mock Test-Path { return $true }
+            Mock Get-Content { return '{ "DefaultInstallSource": "winget", "Programs": { "ZlaAplikacja": { "Enabled": true, "FileName": "" } } }' }
             Mock Show-ThemedMessageBox { return [System.Windows.MessageBoxResult]::OK }
             Mock Write-Log {}
 
-            $wynik = Test-BeforeRun
+            $wynik = Test-BeforeRun -SelectedApps @{ "ZlaAplikacja" = $true } -CheckboxControls @{ 'InstallApplications' = [PSCustomObject]@{ IsChecked = $true } }
             $wynik | Should -Be $false
-            Assert-MockCalled Write-Log -ParameterFilter { $Text -match "Brak 'FileName' dla 'ZlaAplikacja'" } -Times 1
-            
-            if (Test-Path $script:configPath) { Remove-Item $script:configPath -Force }
+            Should -Invoke Write-Log -ParameterFilter { $Text -match "Brak 'FileName' dla 'ZlaAplikacja'" } -Times 1
         }
-        
-        It "Dodaje ostrzeżenie, jeśli na dysku C: jest mniej niż 15 GB wolnego miejsca" {
-            $script:configPath = "$PSScriptRoot\temp_test_config.json"
-            $script:SelectedApps = @{}
-            $script:CheckboxControls = @{}
-            
-            $tempConfig = @{ DefaultInstallSource = "winget"; Programs = @{} } | ConvertTo-Json -Depth 5
-            Set-Content -Path $script:configPath -Value $tempConfig -Encoding UTF8
 
+        It "Dodaje ostrzeżenie, jeśli na dysku C: jest mniej niż 15 GB wolnego miejsca" {
+            Mock Test-Path { return $true }
+            Mock Get-Content { return '{ "DefaultInstallSource": "winget", "Programs": {} }' }
             Mock Get-CimInstance { return [PSCustomObject]@{ FreeSpace = 10GB } } -ParameterFilter { $ClassName -eq 'Win32_LogicalDisk' }
             Mock Show-ThemedMessageBox { return [System.Windows.MessageBoxResult]::OK }
             Mock Write-Log {}
 
-            Test-BeforeRun | Out-Null
-            
-            Assert-MockCalled Write-Log -ParameterFilter { $Text -match "Mało wolnego miejsca na dysku C:" } -Times 1
-            
-            if (Test-Path $script:configPath) { Remove-Item $script:configPath -Force }
+            Test-BeforeRun -SelectedApps @{} -CheckboxControls @{} | Out-Null
+
+            Should -Invoke Write-Log -ParameterFilter { $Text -match "Mało wolnego miejsca na dysku C:" } -Times 1
         }
     }
 
@@ -233,6 +247,97 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             Mock Write-Log {}
             Suspend-Hibernation
             Assert-MockCalled Write-Log -ParameterFilter { $Text -match "Zapobieganie usypianiu włączone" } -Times 1
+        }
+    }
+
+    Context "Parsowanie deinstalatora Office Click-to-Run (Resolve-OfficeClickToRunUninstallInfo)" {
+        It "Wyodrębnia ProductId (productstoremove=) i ścieżkę z cudzysłowu" {
+            $cmd = '"C:\Program Files\Common Files\microsoft shared\ClickToRun\OfficeClickToRun.exe" scenario=install scenariosubtype=ARP sourcetype=None productstoremove=O365HomePremRetail.16_pl-pl_x-none culture=pl-pl'
+            $r = Resolve-OfficeClickToRunUninstallInfo -Cmd $cmd
+            $r.ProductId | Should -Be "O365HomePremRetail.16_pl-pl_x-none"
+            $r.ExePath | Should -Be "C:\Program Files\Common Files\microsoft shared\ClickToRun\OfficeClickToRun.exe"
+        }
+
+        It "Wyodrębnia ProductId z alternatywnej pisowni ProductID=" {
+            $cmd = '"C:\ClickToRun\OfficeClickToRun.exe" ProductID=O365ProPlusRetail'
+            $r = Resolve-OfficeClickToRunUninstallInfo -Cmd $cmd
+            $r.ProductId | Should -Be "O365ProPlusRetail"
+        }
+
+        It "Wyodrębnia samą ścieżkę .exe, gdy cmd nie jest w cudzysłowie" {
+            $cmd = 'C:\ClickToRun\OfficeClickToRun.exe scenario=install'
+            $r = Resolve-OfficeClickToRunUninstallInfo -Cmd $cmd
+            $r.ExePath | Should -Be "C:\ClickToRun\OfficeClickToRun.exe"
+        }
+
+        It "Zwraca `$null dla ProductId i ExePath, gdy string nie pasuje do żadnego wzorca" {
+            $r = Resolve-OfficeClickToRunUninstallInfo -Cmd "zupelnie niepowiazany tekst bez sciezki"
+            $r.ProductId | Should -Be $null
+            $r.ExePath | Should -Be $null
+        }
+    }
+
+    Context "Uruchamianie deinstalatora z obsługą anulowania (Start-UninstallProcessWithCancel)" {
+        BeforeEach {
+            $script:isCancelledFromUninstall = $false
+        }
+
+        It "Zwraca -1 i loguje błąd, gdy Start-Process rzuci wyjątek" {
+            Mock Start-Process { throw "Nie znaleziono pliku" }
+            Mock Write-Log {}
+            $exitCode = Start-UninstallProcessWithCancel -FilePath "brak.exe" -ArgumentList "" -LogContext "TestApp"
+            $exitCode | Should -Be -1
+            Assert-MockCalled Write-Log -ParameterFilter { $Text -match "Błąd uruchamiania deinstalatora \(TestApp\)" } -Times 1
+        }
+
+        It "Zwraca kod wyjścia procesu, gdy zakończy się od razu bez anulowania" {
+            $fakeProc = [PSCustomObject]@{ HasExited = $true; ExitCode = 0; Id = 4242 }
+            Mock Start-Process { return $fakeProc }
+            Mock Do-WpfEvents {}
+            $exitCode = Start-UninstallProcessWithCancel -FilePath "cicho.exe" -ArgumentList "/S" -LogContext "TestApp"
+            $exitCode | Should -Be 0
+        }
+    }
+
+    Context "Checkpoint wdrożenia (Import/Save/Clear-DeploymentCheckpoint, Test-StepDone)" {
+        # Uwaga: celowo NIE odczytujemy/nadpisujemy $script:CompletedDeploymentSteps bezpośrednio
+        # z poziomu It - tylko przez wywołania funkcji (Import-/Save-/Clear-DeploymentCheckpoint,
+        # Test-StepDone), tak by test nie zależał od domykania zmiennych skryptowych przez
+        # PowerShell/Pester pomiędzy blokiem BeforeAll a It (patrz komentarz w kontekście
+        # "Walidacja przed wdrożeniem" powyżej).
+        It "Import-DeploymentCheckpoint zwraca Found = `$false, gdy plik checkpointu nie istnieje" {
+            Mock Test-Path { return $false }
+            $result = Import-DeploymentCheckpoint
+            $result.Found | Should -Be $false
+        }
+
+        It "Import-DeploymentCheckpoint wczytuje ukończone kroki, a Test-StepDone je widzi" {
+            Mock Test-Path { return $true }
+            Mock Get-Content { return '{ "Timestamp": "2026-01-01 10:00:00", "CompletedSteps": ["WaitForNetwork", "InstallAV"] }' }
+            $result = Import-DeploymentCheckpoint
+            $result.Found | Should -Be $true
+            $result.StepCount | Should -Be 2
+            Test-StepDone "InstallAV" | Should -Be $true
+            Test-StepDone "JoinDomain" | Should -Be $false
+        }
+
+        It "Save-DeploymentCheckpointStep zapisuje krok, który Test-StepDone potem widzi" {
+            Mock Set-Content {}
+            Clear-DeploymentCheckpoint
+            Save-DeploymentCheckpointStep "RemoveBloatware"
+            Test-StepDone "RemoveBloatware" | Should -Be $true
+            Test-StepDone "InnyKrok" | Should -Be $false
+            Assert-MockCalled Set-Content -Times 1
+        }
+
+        It "Clear-DeploymentCheckpoint usuwa plik i czyści zapamiętane kroki" {
+            Mock Set-Content {}
+            Mock Test-Path { return $true }
+            Mock Remove-Item {}
+            Save-DeploymentCheckpointStep "JakisKrok"
+            Clear-DeploymentCheckpoint
+            Test-StepDone "JakisKrok" | Should -Be $false
+            Assert-MockCalled Remove-Item -Times 1
         }
     }
 }

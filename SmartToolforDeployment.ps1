@@ -3,12 +3,44 @@
 # Automatyczna elewacja uprawnień (UAC)
 # ------------------------------------------
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {
+if (-not $isAdmin -and $null -eq $global:PesterTesting) {
     $scriptPath = $MyInvocation.MyCommand.Path
     if (-not [string]::IsNullOrWhiteSpace($scriptPath)) {
         Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
     }
     exit
+}
+
+# ------------------------------------------
+# Siatka bezpieczeństwa na start: bez tego, nieobsłużony błąd gdziekolwiek w reszcie skryptu
+# (np. zanim zdąży pokazać się okno GUI) po prostu ubijał cały proces - a że konsola PowerShell
+# uruchomiona przez UAC/"Uruchom jako administrator" (powershell.exe -File ...) zamyka się
+# natychmiast po zakończeniu skryptu (sukces czy błąd), użytkownik widział tylko znikające okno
+# bez żadnego komunikatu. Teraz taki błąd jest pokazany, zapisany do pliku i konsola czeka na
+# Enter zamiast się zamykać w milczeniu.
+trap {
+    # W testach Pester ten trap NIE MOŻE wołać exit - to ubiłoby cały proces Invoke-Pester, nie
+    # tylko pojedynczy test (dokładnie ten sam rodzaj błędu, co niegdyś ubijało WSZYSTKIE testy
+    # przez elewację UAC na starcie). Błędy oczekiwane przez testy (np. Should -Throw) i tak nie
+    # dotrą tutaj - Pester łapie je lokalnie, zanim zdążą "uciec" aż do tego trapa. Jeśli mimo to
+    # coś tu trafi podczas testów, po prostu wracamy do normalnego biegu (continue), zamiast
+    # zamykać proces.
+    if ($null -ne $global:PesterTesting) { continue }
+
+    $errText = "Nieoczekiwany błąd uniemożliwił uruchomienie narzędzia:`n`n$($_.Exception.Message)"
+    try {
+        $logPath = Join-Path $env:TEMP "SmartToolforDeployment_crash.log"
+        "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | $($_ | Out-String) | $($_.ScriptStackTrace)" | Out-File -FilePath $logPath -Append -Encoding UTF8
+        $errText += "`n`nSzczegóły zapisano w: $logPath"
+    } catch {}
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        [System.Windows.Forms.MessageBox]::Show($errText, "Smart Tool for Deployment - Błąd krytyczny", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+    } catch {
+        Write-Host $errText -ForegroundColor Red
+    }
+    try { Read-Host "Naciśnij Enter, aby zamknąć to okno" | Out-Null } catch {}
+    exit 1
 }
 
 # ------------------------------------------
@@ -377,6 +409,7 @@ if ([string]::IsNullOrWhiteSpace($ScriptDir)) {
 }
 if ([string]::IsNullOrWhiteSpace($ScriptDir)) { $ScriptDir = $PWD.Path }
 
+$script:ScriptVersion = "3.1.0"
 $configPath = Join-Path $ScriptDir "config.json"
 $script:LogFilePath = "C:\deploy-log.txt"
 $script:ErrorLogFilePath = "C:\deploy-error-log.txt"
@@ -385,6 +418,16 @@ $script:ValidationErrors   = New-Object System.Collections.Generic.List[string]
 $script:SelectedApps = @{}
 $CheckboxControls = @{}
 $checkboxOptions = [ordered]@{
+    "DryRun"                = @{
+        "Text"    = "🧪 Tryb testowy (Dry-Run - bez rzeczywistych zmian)"
+        "Tooltip" = "Symuluje wdrożenie: loguje co zostałoby zrobione (instalacje, deinstalacje, zmiany rejestru, dołączenie do domeny, BitLocker itd.), ale nie wykonuje żadnej z tych operacji naprawdę. Przydatne do sprawdzenia poprawności konfiguracji przed wdrożeniem na realnej stacji."
+        "Enabled" = $false
+    }
+    "CreateRestorePoint"    = @{
+        "Text"    = "Utwórz punkt przywracania systemu przed startem"
+        "Tooltip" = "Tworzy punkt przywracania systemu Windows tuż przed rozpoczęciem wdrożenia, aby w razie problemu można było łatwo cofnąć zmiany w systemie (System Restore). Nie obejmuje plików użytkownika ani zainstalowanych aplikacji spoza mechanizmu Restore."
+        "Enabled" = $false
+    }
     "WaitForNetwork"        = @{
         "Text"    = "Czekaj na połączenie z siecią przed startem"
         "Tooltip" = "Wstrzymuje konfigurację do momentu podłączenia kabla sieciowego lub Wi-Fi i uzyskania adresu IP."
@@ -497,113 +540,6 @@ function global:Do-WpfEvents {
         }
 }
 
-function global:Show-ThemedMessageBox {
-    param(
-        [string]$Message,
-        [string]$Title = "Informacja",
-            [string]$Button = "OK",
-            [string]$Image = "Information"
-    )
-    [xml]$xaml = @"
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Width="450" SizeToContent="Height" WindowStartupLocation="CenterScreen"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize" Topmost="True" WindowStyle="ToolWindow">
-    <Window.Resources>
-        <Style TargetType="Button">
-            <Setter Property="Background" Value="{DynamicResource ThemeButton}"/>
-            <Setter Property="Foreground" Value="{DynamicResource ThemeButtonText}"/>
-            <Setter Property="Padding" Value="15,6"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Margin" Value="10,0,0,0"/>
-            <Setter Property="MinHeight" Value="32"/>
-            <Setter Property="MinWidth" Value="85"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" CornerRadius="4">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
-                        </Border>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True"><Setter Property="Opacity" Value="0.8"/></Trigger>
-            </Style.Triggers>
-        </Style>
-    </Window.Resources>
-    <Grid Margin="20">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,25" MaxWidth="390">
-            <TextBlock Name="txtIcon" FontSize="36" Margin="0,0,15,0" VerticalAlignment="Center"/>
-            <TextBlock Name="txtMessage" FontSize="14" TextWrapping="Wrap" VerticalAlignment="Center" Width="330"/>
-        </StackPanel>
-        <StackPanel Name="spButtons" Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right"/>
-    </Grid>
-</Window>
-"@
-    $reader = New-Object System.Xml.XmlNodeReader $xaml
-    $dlg = [Windows.Markup.XamlReader]::Load($reader)
-    $dlg.Title = $Title
-    try { Apply-ThemeToWindow $dlg } catch {}
-    if ($null -eq $dlg.Resources["ThemeBackground"]) {
-        $dlg.Resources["ThemeBackground"] = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("#FF202225")
-        $dlg.Resources["ThemeText"] = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("#FFDCDDDE")
-        $dlg.Resources["ThemeButton"] = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("#FF4F545C")
-        $dlg.Resources["ThemeButtonText"] = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("White")
-    }
-    $txtMessage = $dlg.FindName("txtMessage")
-    $txtMessage.Text = $Message
-    $txtIcon = $dlg.FindName("txtIcon")
-    
-    if ($Image -match 'Error') { $imgStr = 'Error' }
-    elseif ($Image -match 'Warning') { $imgStr = 'Warning' }
-    elseif ($Image -match 'Question') { $imgStr = 'Question' }
-    else { $imgStr = 'Information' }
-    
-    switch ($imgStr) {
-        "Error" { $txtIcon.Text = "❌"; $txtIcon.Foreground = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("#FFC50F1F") }
-        "Warning" { $txtIcon.Text = "⚠️"; $txtIcon.Foreground = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("#FFE6A100") }
-        "Question" { $txtIcon.Text = "❓"; $txtIcon.Foreground = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("#FF0078D7") }
-        default { $txtIcon.Text = "ℹ️"; $txtIcon.Foreground = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("#FF107C10") }
-    }
-    $spButtons = $dlg.FindName("spButtons")
-    $script:msgBoxResult = [System.Windows.MessageBoxResult]::None
-    $AddBtn = {
-        param($content, $resVal, $isDef, $isCanc, $bgHex)
-        $btn = New-Object System.Windows.Controls.Button
-        $btn.Content = $content
-        $btn.IsDefault = $isDef
-        $btn.IsCancel = $isCanc
-        $btn.Tag = $resVal
-        if ($bgHex) { $btn.Background = (New-Object System.Windows.Media.BrushConverter).ConvertFromString($bgHex); $btn.Foreground = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("White") }
-        $btn.Add_Click({ 
-            $script:msgBoxResult = $this.Tag
-            $dlg.Close() 
-        })
-        $spButtons.Children.Add($btn) | Out-Null
-    }
-    
-    if ($Button -match 'YesNoCancel') { $btnStr = 'YesNoCancel' }
-    elseif ($Button -match 'OKCancel') { $btnStr = 'OKCancel' }
-    elseif ($Button -match 'YesNo') { $btnStr = 'YesNo' }
-    else { $btnStr = 'OK' }
-    
-    switch ($btnStr) {
-        "OKCancel" { & $AddBtn "OK" [System.Windows.MessageBoxResult]::OK $true $false "#FF0078D7"; & $AddBtn "Anuluj" [System.Windows.MessageBoxResult]::Cancel $false $true $null }
-        "YesNo" { & $AddBtn "Tak" [System.Windows.MessageBoxResult]::Yes $true $false "#FF0078D7"; & $AddBtn "Nie" [System.Windows.MessageBoxResult]::No $false $true $null }
-        "YesNoCancel" { & $AddBtn "Tak" [System.Windows.MessageBoxResult]::Yes $true $false "#FF0078D7"; & $AddBtn "Nie" [System.Windows.MessageBoxResult]::No $false $false $null; & $AddBtn "Anuluj" [System.Windows.MessageBoxResult]::Cancel $false $true $null }
-        default { & $AddBtn "OK" [System.Windows.MessageBoxResult]::OK $true $false "#FF0078D7" }
-    }
-    if ($null -ne $Window -and $Window.IsLoaded) { $dlg.Owner = $Window; $dlg.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterOwner }
-    $dlg.ShowDialog() | Out-Null
-    return $script:msgBoxResult
-}
-
 function global:Set-ProgressText {
     param([string]$Text)
     if ($null -ne $txtProgressInfo) {
@@ -645,6 +581,19 @@ function Remove-Bloatware {
     foreach ($app in $bloatwareApps) {
         if ($script:isCancelled) { break }
         Do-WpfEvents
+        if ($script:DryRun) {
+            # -ErrorAction SilentlyContinue NIE tłumi błędu ładowania modułu Appx (np. na
+            # niektórych kompilacjach Windows 11: "Operation is not supported on this platform") -
+            # to osobny mechanizm od błędów samego cmdletu, więc bez try/catch przerywał całą
+            # pętlę (i uniemożliwiał Przerwanie/Pauzę do końca jej trwania).
+            try {
+                $found = Get-AppxPackage -Name $app -AllUsers -ErrorAction SilentlyContinue
+                if ($found) { Write-Log "[DRY-RUN] Usunięto by: $app" }
+            } catch {
+                Write-Log "[DRY-RUN] Nie udało się sprawdzić pakietu ${app}: $_" -IsError
+            }
+            continue
+        }
         try {
             Get-AppxPackage -Name $app -AllUsers -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
             Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like $app } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
@@ -705,71 +654,48 @@ function Test-ConfigurationFile {
 
 function Ensure-Configuration {
     while (-not (Test-ConfigurationFile -Silent)) {
-        $msg = "Nie znaleziono poprawnego pliku konfiguracyjnego ($configPath).`nCzy chcesz wskazać inny plik .json?"
-        $ans = Show-ThemedMessageBox -Message $msg -Title "Brak konfiguracji" -Button [System.Windows.MessageBoxButton]::YesNoCancel -Image [System.Windows.MessageBoxImage]::Warning
-        
-        if ($ans -eq [System.Windows.MessageBoxResult]::Yes) {
-            $ofd = New-Object Microsoft.Win32.OpenFileDialog
-            $ofd.Filter = "Pliki JSON (*.json)|*.json|Wszystkie pliki (*.*)|*.*"
-            $ofd.Title = "Wybierz plik konfiguracyjny"
-            if ($ofd.ShowDialog() -eq $true) {
-                $script:configPath = $ofd.FileName
-            }
-        } elseif ($ans -eq [System.Windows.MessageBoxResult]::No) {
-            $ans2 = Show-ThemedMessageBox -Message "Czy chcesz utworzyć domyślną (pustą) konfigurację w '$configPath'?" -Title "Utwórz konfigurację" -Button [System.Windows.MessageBoxButton]::YesNo -Image [System.Windows.MessageBoxImage]::Question
-            if ($ans2 -eq [System.Windows.MessageBoxResult]::Yes) {
-                $defaultConfig = [ordered]@{
-                    DefaultInstallSource = "network"
-                    InstallSourcePaths = @{ network = "\\server\share\"; web = "https://example.com/apps/" }
-                    CustomWebDataLocation = @{ URL = "" }
-                    DomainJoin = @{ DomainName = ""; Username = "" }
-                    LocalAdmin = @{ Username = "Admin" }
+        if (-not (Test-Path -LiteralPath $configPath)) {
+            $msg = "Nie znaleziono pliku konfiguracyjnego. Zostanie utworzony domyślny szablon w lokalizacji:`n$configPath`n`nMożesz go później edytować w Ustawieniach."
+            Show-ThemedMessageBox -Message $msg -Title "Tworzenie konfiguracji" -Button "OK" -Image "Information" | Out-Null
+            
+            $defaultConfig = [ordered]@{
+                DefaultInstallSource = "network"
+                InstallSourcePaths = @{ network = "\\server\share\"; web = "https://example.com/apps/" }
+                CustomWebDataLocation = @{ URL = "" }
+                DomainJoin = @{ DomainName = ""; Username = "" }
+                LocalAdmin = @{ Username = "Admin" }
                 SystemSettings = @{ DisableDeliveryOptimization=$true; EnableWin10StartMenu=$false; DisableTelemetry=$true; DisableCortana=$true; DisableFastStartup=$true; DisableNewsAndInterests=$true; CustomRegistry=@() }
-                    WebAuth = @{ Username = ""; Password = "" }
-                    TeamViewer = @{ FileName = ""; Arguments = "" }
-                    AntyVirus = @{ DefaultInstallSource = "network"; InstallSourcePaths = @{ network = ""; web = "" }; Credentials = @{ Username = ""; Password = "" }; FileName = "" }
-                    WiFiProfile = @{ FileName = "" }
-                    Programs = @{}
-                    Profiles = @{
-                        "Standard" = @("Chrome", "7zip", "PowerToys")
-                        "Księgowość" = @("Chrome", "7zip", "Szafir_KIR", "AdobeReader")
-                    }
-                    PostInstallScripts = @()
-                    HardwareAudit = @{ ExportPath = "C:\Audit\" }
-                    DefaultCheckboxes = @{
-                        WaitForNetwork = $true
-                        SuspendHibernation = $true
-                        ImportWiFiProfile = $false
-                        UninstallMicrosoft365 = $false
-                        UninstallOneDrive = $false
-                        RemoveBloatware = $true
-                        InstallTeamViewer = $true
-                        InstallApplications = $true
-                        CreateLocalAdmin = $true
-                        InstallAV = $true
-                        JoinDomain = $true
-                        ChangeSystemSettings = $true
-                        RunWindowsUpdate = $true
-                        ChangeComputerName = $false
-                        JoinIntune = $false
-                        RunPostInstallScripts = $false
-                        ExportHardwareAudit = $false
-                        EnableBitLocker = $false
-                        AutoReboot = $false
-                    }
-                    DarkTheme = $true
+                WebAuth = @{ Username = ""; Password = "" }
+                TeamViewer = @{ FileName = ""; Arguments = "" }
+                AntyVirus = @{ DefaultInstallSource = "network"; InstallSourcePaths = @{ network = ""; web = "" }; Credentials = @{ Username = ""; Password = "" }; FileName = "" }
+                WiFiProfile = @{ FileName = "" }
+                Programs = @{}
+                Profiles = @{
+                    "Standard" = @("Chrome", "7zip", "PowerToys")
+                    "Księgowość" = @("Chrome", "7zip", "Szafir_KIR", "AdobeReader")
                 }
-                try {
-                    $defaultConfig | ConvertTo-Json -Depth 10 | Set-Content -Path $script:configPath -Encoding UTF8
-                } catch {
-                    Show-ThemedMessageBox -Message "Nie udało się utworzyć pliku: $_" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
-                    exit 1
+                PostInstallScripts = @()
+                HardwareAudit = @{ ExportPath = "C:\Audit\" }
+                DefaultCheckboxes = @{
+                    DryRun = $false; CreateRestorePoint = $false
+                    WaitForNetwork = $true; SuspendHibernation = $true; ImportWiFiProfile = $false; UninstallMicrosoft365 = $false
+                    UninstallOneDrive = $false; RemoveBloatware = $true; InstallTeamViewer = $true; InstallApplications = $true
+                    CreateLocalAdmin = $true; InstallAV = $true; JoinDomain = $true; ChangeSystemSettings = $true
+                    RunWindowsUpdate = $true; ChangeComputerName = $false; RunPostInstallScripts = $false; ExportHardwareAudit = $false
+                    EnableBitLocker = $false; AutoReboot = $false; JoinIntune = $false
                 }
-            } else {
+                AutoUpdate = @{ Enabled = $false; VersionCheckPath = "" }
+                DarkTheme = $true
+            }
+            try {
+                $defaultConfig | ConvertTo-Json -Depth 10 | Set-Content -Path $configPath -Encoding UTF8
+            } catch {
+                Show-ThemedMessageBox -Message "Nie udało się utworzyć pliku: $_" -Title "Błąd krytyczny" -Button "OK" -Image "Error" | Out-Null
                 exit 1
             }
         } else {
-            exit 1
+            Show-ThemedMessageBox -Message "Plik konfiguracyjny jest uszkodzony. Popraw go ręcznie lub usuń, aby utworzyć nowy." -Title "Błąd krytyczny" -Button "OK" -Image "Error" | Out-Null
+            exit 1 # Wyjście, jeśli plik istnieje, ale jest niepoprawny
         }
     }
 }
@@ -778,9 +704,25 @@ function Ensure-Configuration {
 function Write-Log {
     param(
         [string]$Text,
-        [switch]$IsError
+        [switch]$IsError,
+        # System = komunikat samego narzędzia (walidacja, zapis configu, cykl życia okna),
+        # Automat = krok wykonywany automatycznie w ramach sekwencji wdrożenia (Start-Deployment),
+        # Użytkownik = bezpośredni skutek kliknięcia/decyzji operatora.
+        # Gdy nieustawiony, bierzemy $script:CurrentLogContext (patrz Start-Deployment), a jak i
+        # tego brak - domyślnie "System".
+        [ValidateSet("System", "Automat", "Użytkownik")]
+        [string]$Context
     )
-    $timestamp = Get-Date -Format "HH:mm:ss"
+    if ([string]::IsNullOrWhiteSpace($Context)) {
+        $Context = if (-not [string]::IsNullOrWhiteSpace($script:CurrentLogContext)) { $script:CurrentLogContext } else { "System" }
+    }
+    # Pełna data+godzina (nie tylko HH:mm:ss), poziom i kontekst wpisane wprost w linii - dzięki
+    # temu C:\deploy-log.txt da się jednoznacznie sparsować (data + poziom + kontekst + treść)
+    # zarówno przy przeglądaniu logów z wielu dni, jak i w Show-LogWindow (sortowalne kolumny,
+    # filtrowanie, eksport raportu).
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $level = if ($IsError) { "ERROR" } else { "INFO" }
+    $line = "[$timestamp] [$level] [$Context] $Text"
 
     if ($IsError) {
         try { [System.Media.SystemSounds]::Hand.Play() } catch { }
@@ -790,11 +732,11 @@ function Write-Log {
     try {
         if ($null -ne $rtbLog) {
             if ($rtbLog.Dispatcher.CheckAccess()) {
-                $rtbLog.AppendText("[$timestamp] $Text`r`n")
+                $rtbLog.AppendText("$line`r`n")
                 try { $rtbLog.ScrollToEnd() } catch { }
             } else {
                 $rtbLog.Dispatcher.Invoke([Action]{
-                    $rtbLog.AppendText("[$timestamp] $Text`r`n")
+                    $rtbLog.AppendText("$line`r`n")
                     try { $rtbLog.ScrollToEnd() } catch { }
                 })
             }
@@ -803,9 +745,9 @@ function Write-Log {
 
     # Log to File
     try {
-        "[$timestamp] $Text" | Add-Content -Path $script:LogFilePath -Encoding UTF8 -ErrorAction SilentlyContinue
+        $line | Add-Content -Path $script:LogFilePath -Encoding UTF8 -ErrorAction SilentlyContinue
         if ($IsError) {
-            "[$timestamp] [ERROR] $Text" | Add-Content -Path $script:ErrorLogFilePath -Encoding UTF8 -ErrorAction SilentlyContinue
+            $line | Add-Content -Path $script:ErrorLogFilePath -Encoding UTF8 -ErrorAction SilentlyContinue
         }
     } catch { }
 }
@@ -815,6 +757,10 @@ function Start-ProcessWithEvents {
         [string]$FilePath,
         [string]$ArgumentList
     )
+    if ($script:DryRun) {
+        Write-Log "[DRY-RUN] Pominięto uruchomienie: `"$FilePath`" $ArgumentList"
+        return 0
+    }
     try {
         $proc = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru -NoNewWindow -ErrorAction Stop
         if ($null -ne $proc) {
@@ -832,6 +778,53 @@ function Start-ProcessWithEvents {
     } catch {
         Write-Log "Błąd uruchamiania procesu: $_" -IsError
     }
+}
+
+function Start-UninstallProcessWithCancel {
+    param (
+        [string]$FilePath,
+        [string]$ArgumentList,
+        [string]$LogContext
+    )
+    try {
+        $proc = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru -WindowStyle Hidden -ErrorAction Stop
+    } catch {
+        Write-Log "Błąd uruchamiania deinstalatora ($LogContext): $_" -IsError
+        return -1
+    }
+    $script:uninstProc = $proc
+    while (-not $proc.HasExited) {
+        Do-WpfEvents
+        if ($script:isCancelledFromUninstall) {
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+            try { $proc.WaitForExit(3000) } catch {}
+            Write-Log "Proces deinstalacji przerwany ($LogContext)." -IsError
+            break
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    $exitCode = -1
+    try { if ($proc.HasExited -and $null -ne $proc.ExitCode) { $exitCode = $proc.ExitCode } } catch {}
+    return $exitCode
+}
+
+function Resolve-OfficeClickToRunUninstallInfo {
+    param([string]$Cmd)
+    $productId = $null
+    if ($Cmd -match 'productstoremove="?([^"\s]+)"?') {
+        $productId = $matches[1]
+    } elseif ($Cmd -match 'ProductID="?([^"\s]+)"?') {
+        $productId = $matches[1]
+    }
+
+    $exePath = $null
+    if ($Cmd -match '^\s*"([^"]+)"') {
+        $exePath = $matches[1]
+    } elseif ($Cmd -match '^\s*(\S+\.exe)') {
+        $exePath = $matches[1]
+    }
+
+    return [PSCustomObject]@{ ProductId = $productId; ExePath = $exePath }
 }
 
 function Invoke-DownloadFile {
@@ -904,6 +897,14 @@ function Test-UrlValid {
 }
 
 function Test-BeforeRun {
+    # CheckboxControls/SelectedApps jako parametry z wartością domyślną = biezący stan globalny -
+    # zachowanie identyczne jak wcześniej dla realnego GUI (wywołanie bez argumentów), ale pozwala
+    # jednoznacznie wstrzyknąć stan w testach jednostkowych bez polegania na domykaniu zmiennych
+    # skryptowych przez PowerShell/Pester (patrz SmartToolforDeployment.Tests.ps1).
+    param(
+        $CheckboxControls = $CheckboxControls,
+        $SelectedApps = $script:SelectedApps
+    )
     Write-Log "Rozpoczęto walidację konfiguracji i plików przed wdrożeniem..."
     $errors = New-Object System.Collections.Generic.List[string]
     $warnings = New-Object System.Collections.Generic.List[string]
@@ -929,7 +930,13 @@ function Test-BeforeRun {
             'network' {
                 if ([string]::IsNullOrWhiteSpace($sourcePath)) { $errors.Add("Brak sciezki sieciowej (InstallSourcePaths.network).") | Out-Null }
                 elseif ($sourcePath -notmatch '^\\\\') { $errors.Add("Sciezka sieciowa musi byc UNC (np. \\serwer\\udzial\\).") | Out-Null }
-                elseif (-not (Test-Path -LiteralPath $sourcePath)) { $errors.Add("Nie znaleziono zasobu sieciowego: $sourcePath") | Out-Null }
+                else {
+                    try {
+                        if (-not (Test-Path -LiteralPath $sourcePath -ErrorAction Stop)) { $errors.Add("Nie znaleziono zasobu sieciowego: $sourcePath") | Out-Null }
+                    } catch {
+                        $errors.Add("Błąd dostępu do zasobu sieciowego: $sourcePath`n$($_.Exception.Message)`n(Możliwy problem z poświadczeniami na koncie niedomenowym).") | Out-Null
+                    }
+                }
             }
             'web' {
                 if (-not (Test-UrlValid -Url $sourcePath)) { $errors.Add("Niepoprawny URL zrodla web: $sourcePath") | Out-Null }
@@ -941,10 +948,10 @@ function Test-BeforeRun {
         }
 
         if ($CheckboxControls.ContainsKey('InstallApplications') -and $CheckboxControls['InstallApplications'].IsChecked -eq $true) {
-            if ($script:SelectedApps.Count -eq 0) {
+            if ($SelectedApps.Count -eq 0) {
                 $errors.Add("Brak wybranych aplikacji do instalacji.") | Out-Null
             } else {
-                foreach ($appName in $script:SelectedApps.Keys) {
+                foreach ($appName in $SelectedApps.Keys) {
                     $app = $config.Programs.$appName
                     if ($null -eq $app) { $errors.Add("Brak konfiguracji dla aplikacji '$appName'.") | Out-Null; continue }
                     if ([string]::IsNullOrWhiteSpace($app.FileName)) { $errors.Add("Brak 'FileName' dla '$appName'.") | Out-Null; continue }
@@ -1314,6 +1321,10 @@ function New-LocalAdmin {
     try {
         $config = Get-Content $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $username = $config.LocalAdmin.Username
+        if ($script:DryRun) {
+            Write-Log "[DRY-RUN] Utworzono by lokalne konto administratora: '$username'."
+            return
+        }
         $PasswordSecure = Read-Host "Wprowadź hasło dla konta $username" -AsSecureString
         if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
             if ($null -ne $PasswordSecure -and $PasswordSecure.Length -ge 8) {
@@ -1350,6 +1361,11 @@ function Join-Domain {
         $UserForJoin = $config.DomainJoin.Username
         $ComputerName = $env:COMPUTERNAME
 
+        if ($script:DryRun) {
+            Write-Log "[DRY-RUN] Dołączono by do domeny '$DomainName' jako '$UserForJoin' (komputer: $ComputerName)."
+            return
+        }
+
         Write-Log "Dołączanie do domeny $DomainName jako $UserForJoin..."
         $Credential = Get-Credential -UserName $UserForJoin -Message "Podaj dane domenowe dla $UserForJoin"
         if ($null -eq $Credential) {
@@ -1367,6 +1383,11 @@ function Join-Domain {
 }
 
 function Set-NewComputerName {
+    if ($script:DryRun) {
+        $previewName = "PC-$((Get-CimInstance -ClassName Win32_BIOS -ErrorAction SilentlyContinue).SerialNumber)"
+        Write-Log "[DRY-RUN] Zmieniono by nazwę komputera (domyślnie '$previewName')."
+        return
+    }
     Read-Host "Podaj nową nazwę komputera (domyślnie 'PC-SERIAL_NUMBER'): " -OutVariable NewName
     if ([string]::IsNullOrWhiteSpace($NewName)) {
         $NewName = "PC-$((Get-CimInstance -ClassName Win32_BIOS).SerialNumber)"
@@ -1381,6 +1402,10 @@ function Set-RegistryDword {
         [string]$Name,
         [int]$Value
     )
+    if ($script:DryRun) {
+        Write-Log "[DRY-RUN] Ustawiono by rejestr: $Path\$Name = $Value"
+        return
+    }
     try {
         # Sprawdź, czy wartość już istnieje
         $current = Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue
@@ -1398,8 +1423,148 @@ function Set-RegistryDword {
     }
 }
 
+# ---------- Punkt przywracania i wznawianie przerwanego wdrożenia ----------
+$script:CheckpointFilePath = "C:\deploy-checkpoint.json"
+
+function New-DeploymentRestorePoint {
+    if ($script:DryRun) {
+        Write-Log "[DRY-RUN] Utworzono by punkt przywracania systemu."
+        return
+    }
+    try {
+        Write-Log "Tworzenie punktu przywracania systemu..."
+        $svc = Get-Service -Name "swprv" -ErrorAction SilentlyContinue
+        if ($null -ne $svc -and $svc.Status -ne 'Running') {
+            try { Start-Service -Name "swprv" -ErrorAction Stop } catch {}
+        }
+        Enable-ComputerRestore -Drive "$env:SystemDrive\" -ErrorAction SilentlyContinue
+        Checkpoint-Computer -Description "STD-PrzedWdrozeniem-$(Get-Date -Format 'yyyyMMdd-HHmmss')" -RestorePointType "MODIFY_SETTINGS" -ErrorAction Stop
+        Write-Log "Punkt przywracania systemu utworzony pomyślnie."
+    } catch {
+        Write-Log "Nie udało się utworzyć punktu przywracania (kontynuuję mimo to): $_" -IsError
+    }
+}
+
+function Import-DeploymentCheckpoint {
+    # Zwraca obiekt informujący, czy istnieje zapis przerwanego wdrożenia, i wczytuje ukończone
+    # kroki do $script:CompletedDeploymentSteps, aby Test-StepDone mogło je pomijać przy wznowieniu.
+    $script:CompletedDeploymentSteps = @{}
+    if (-not (Test-Path -LiteralPath $script:CheckpointFilePath)) {
+        return [PSCustomObject]@{ Found = $false; Timestamp = $null; StepCount = 0 }
+    }
+    try {
+        $data = Get-Content -LiteralPath $script:CheckpointFilePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($step in @($data.CompletedSteps)) { $script:CompletedDeploymentSteps[$step] = $true }
+        return [PSCustomObject]@{ Found = $true; Timestamp = $data.Timestamp; StepCount = @($data.CompletedSteps).Count }
+    } catch {
+        Write-Log "Nie udało się odczytać pliku checkpointu ($script:CheckpointFilePath): $_" -IsError
+        return [PSCustomObject]@{ Found = $false; Timestamp = $null; StepCount = 0 }
+    }
+}
+
+function Test-StepDone {
+    param([string]$StepName)
+    return ($null -ne $script:CompletedDeploymentSteps -and $script:CompletedDeploymentSteps.ContainsKey($StepName))
+}
+
+function Save-DeploymentCheckpointStep {
+    param([string]$StepName)
+    if ($null -eq $script:CompletedDeploymentSteps) { $script:CompletedDeploymentSteps = @{} }
+    $script:CompletedDeploymentSteps[$StepName] = $true
+    try {
+        $data = [ordered]@{
+            Timestamp      = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+            CompletedSteps = @($script:CompletedDeploymentSteps.Keys)
+        }
+        $data | ConvertTo-Json | Set-Content -LiteralPath $script:CheckpointFilePath -Encoding UTF8
+    } catch {
+        Write-Log "Nie udało się zapisać checkpointu wdrożenia: $_" -IsError
+    }
+}
+
+function Clear-DeploymentCheckpoint {
+    $script:CompletedDeploymentSteps = @{}
+    if (Test-Path -LiteralPath $script:CheckpointFilePath) {
+        try { Remove-Item -LiteralPath $script:CheckpointFilePath -Force -ErrorAction SilentlyContinue } catch {}
+    }
+}
+
+# ---------- Aktualizacja narzędzia ----------
+# Oczekiwany format pliku wersji (std_version.json) publikowanego pod AutoUpdate.VersionCheckPath:
+# { "Version": "3.2.0", "FileName": "SmartToolforDeployment.ps1", "Notes": "Opis zmian..." }
+# Aktualizuje plik .ps1 wskazywany przez $PSCommandPath. Jeśli w praktyce uruchamiany jest
+# skompilowany SmartToolforDeployment_v3.exe, ten mechanizm NIE podmienia tego pliku exe -
+# potrzebny byłby analogiczny, osobny mechanizm dla binarki.
+function Test-ForAppUpdate {
+    param([switch]$Silent)
+    try {
+        $cfg = Get-Config
+        if ($null -eq $cfg.AutoUpdate -or $cfg.AutoUpdate.Enabled -ne $true -or [string]::IsNullOrWhiteSpace([string]$cfg.AutoUpdate.VersionCheckPath)) {
+            if (-not $Silent) {
+                Show-ThemedMessageBox -Message "Automatyczne aktualizacje nie są skonfigurowane.`nUstaw AutoUpdate.Enabled=true i AutoUpdate.VersionCheckPath w config.json (ścieżka UNC lub URL do katalogu z plikiem std_version.json)." -Title "Aktualizacje" -Button "OK" -Image "Information" | Out-Null
+            }
+            return
+        }
+
+        $basePath = [string]$cfg.AutoUpdate.VersionCheckPath
+        $isWeb = $basePath -match '^https?://'
+        $infoUri = if ($isWeb) { "$($basePath.TrimEnd('/'))/std_version.json" } else { Join-Path $basePath "std_version.json" }
+
+        Write-Log "Sprawdzanie dostępności aktualizacji ($infoUri)..."
+        $raw = if ($isWeb) {
+            (Invoke-WebRequest -Uri $infoUri -UseBasicParsing -ErrorAction Stop).Content
+        } else {
+            Get-Content -LiteralPath $infoUri -Raw -Encoding UTF8 -ErrorAction Stop
+        }
+        $remote = $raw | ConvertFrom-Json
+
+        $localVer  = [version]$script:ScriptVersion
+        $remoteVer = [version]$remote.Version
+
+        if ($remoteVer -le $localVer) {
+            Write-Log "Aktualna wersja ($script:ScriptVersion) jest najnowsza."
+            if (-not $Silent) { Show-ThemedMessageBox -Message "Masz już najnowszą wersję ($script:ScriptVersion)." -Title "Aktualizacje" -Button "OK" -Image "Information" | Out-Null }
+            return
+        }
+
+        $msg = "Dostępna jest nowa wersja: $($remote.Version) (obecna: $script:ScriptVersion).`n`n$($remote.Notes)`n`nCzy pobrać i zainstalować aktualizację teraz? Aplikacja zostanie zamknięta i uruchomiona ponownie."
+        $ans = Show-ThemedMessageBox -Message $msg -Title "Dostępna aktualizacja $($remote.Version)" -Button "YesNo" -Image "Question"
+        if ($ans -ne [System.Windows.MessageBoxResult]::Yes) {
+            Write-Log "Użytkownik odrzucił aktualizację do wersji $($remote.Version)." -Context "Użytkownik"
+            return
+        }
+
+        $remoteFileName = [string]$remote.FileName
+        if ([string]::IsNullOrWhiteSpace($remoteFileName)) { throw "Brak nazwy pliku (FileName) w informacji o wersji." }
+        $downloadSource = if ($isWeb) { "$($basePath.TrimEnd('/'))/$remoteFileName" } else { Join-Path $basePath $remoteFileName }
+        $tempNewFile = Join-Path $env:TEMP $remoteFileName
+
+        Write-Log "Pobieranie wersji $($remote.Version)..."
+        if ($isWeb) {
+            Invoke-WebRequest -Uri $downloadSource -OutFile $tempNewFile -UseBasicParsing -ErrorAction Stop
+        } else {
+            Copy-Item -LiteralPath $downloadSource -Destination $tempNewFile -Force -ErrorAction Stop
+        }
+
+        $currentFile = $PSCommandPath
+        if ([string]::IsNullOrWhiteSpace($currentFile)) { throw "Nie udało się ustalić ścieżki bieżącego pliku (`$PSCommandPath) do podmiany." }
+
+        # Uruchamiamy odrębny, krótkotrwały proces PowerShell, który poczeka aż bieżący proces się
+        # zamknie, podmieni plik i uruchomi narzędzie ponownie - nie da się nadpisać pliku, który
+        # jest w danym momencie wykonywany przez BIEŻĄCY proces.
+        $updaterScript = "Start-Sleep -Seconds 2; Copy-Item -LiteralPath '$tempNewFile' -Destination '$currentFile' -Force; Start-Process powershell.exe -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File `"$currentFile`"'"
+        Start-Process powershell.exe -ArgumentList @("-NoProfile", "-WindowStyle", "Hidden", "-Command", $updaterScript) -WindowStyle Hidden
+
+        Write-Log "Aktualizacja pobrana. Zamykanie aplikacji w celu dokończenia instalacji wersji $($remote.Version)..."
+        if ($null -ne $Window) { $Window.Close() }
+    } catch {
+        Write-Log "Błąd podczas sprawdzania/pobierania aktualizacji: $_" -IsError
+        if (-not $Silent) { Show-ThemedMessageBox -Message "Nie udało się sprawdzić/pobrać aktualizacji:`n$_" -Title "Błąd aktualizacji" -Button "OK" -Image "Error" | Out-Null }
+    }
+}
+
 function Get-HardwareAudit {
-    param([switch]$AsHtml)
+    param([switch]$AsHtml, [switch]$AsObject)
     $os = Get-CimInstance Win32_OperatingSystem
     $bios = Get-CimInstance Win32_BIOS
     $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
@@ -1432,6 +1597,23 @@ function Get-HardwareAudit {
         $installedApps = $installedAppsList | Sort-Object DisplayName -Unique
     } catch {
         $appError = $_.Exception.Message
+    }
+
+    if ($AsObject) {
+        return [PSCustomObject]@{
+            ComputerName  = $env:COMPUTERNAME
+            UserName      = $env:USERNAME
+            GeneratedAt   = Get-Date
+            OsSummary     = "$($os.Caption) $($os.OSArchitecture) (Build: $($os.BuildNumber))"
+            BiosSerial    = $bios.SerialNumber
+            BiosVersion   = $bios.SMBIOSBIOSVersion
+            CpuName       = $cpu.Name
+            RamGb         = $ramGb
+            Disks         = @($disks | ForEach-Object { [PSCustomObject]@{ Model = $_.Model; SizeGb = [math]::Round($_.Size / 1GB, 2); SerialNumber = ([string]$_.SerialNumber).Trim() } })
+            Networks      = @($nets | ForEach-Object { [PSCustomObject]@{ Description = $_.Description; Mac = $_.MACAddress; Ip = ($_.IPAddress -join ', ') } })
+            InstalledApps = @($installedApps | ForEach-Object { [PSCustomObject]@{ DisplayName = $_.DisplayName; DisplayVersion = $_.DisplayVersion } })
+            AppError      = $appError
+        }
     }
 
     if ($AsHtml) {
@@ -1678,6 +1860,10 @@ function Enable-BitLockerEncryption {
             Write-Log "Dysk C: jest już zaszyfrowany lub proces jest w toku."
             return
         }
+        if ($script:DryRun) {
+            Write-Log "[DRY-RUN] Zaszyfrowano by dysk C: (BitLocker XTS-AES 256) i wyeksportowano klucz odzyskiwania."
+            return
+        }
         Write-Log "Generowanie klucza odzyskiwania..."
         Add-BitLockerKeyProtector -MountPoint "C:" -TpmProtector -ErrorAction Stop | Out-Null
         $recovery = Add-BitLockerKeyProtector -MountPoint "C:" -RecoveryPasswordProtector -ErrorAction Stop
@@ -1853,16 +2039,6 @@ function Uninstall-OneDrive {
 
 function Join-Intune {
     Write-Log "Funkcja dołączania do Intune nie została jeszcze zaimplementowana."
-}
-
-function Apply-ThemeToWindow($dlg) {
-    if ($Window -is [System.Windows.Window]) {
-        $dlg.Owner = $Window
-        $keys = @("ThemeBackground", "ThemePanel", "ThemeText", "ThemeButton", "ThemeButtonText", "ThemeBorder", "ThemeTextBoxBg")
-        foreach ($key in $keys) {
-            $dlg.Resources[$key] = $Window.Resources[$key]
-        }
-    }
 }
 
 function Show-AppSelectionWindow {
@@ -2098,6 +2274,7 @@ function Show-AppSelectionWindow {
 }
 
 function Start-Deployment {
+    Write-Log "Użytkownik rozpoczął wdrożenie (przycisk 'ROZPOCZNIJ KONFIGURACJĘ')." -Context "Użytkownik"
     $btnStart.IsEnabled = $false
     $btnPause.IsEnabled = $true
     $btnCancelDeploy.IsEnabled = $true
@@ -2105,6 +2282,8 @@ function Start-Deployment {
     $progressBar.Value = 0
     $script:isCancelled = $false
     $script:isPaused = $false
+    $script:DryRun = ($CheckboxControls.ContainsKey("DryRun") -and $CheckboxControls["DryRun"].IsChecked -eq $true)
+    if ($script:DryRun) { Write-Log "=== TRYB TESTOWY (DRY-RUN) WŁĄCZONY: żadne rzeczywiste zmiany nie zostaną wprowadzone ===" }
 
     if (-not (Test-BeforeRun)) {
         Write-Log "Walidacja nie powiodla sie. Przerywam." -IsError
@@ -2115,12 +2294,28 @@ function Start-Deployment {
         return
     }
 
+    # Checkpoint z poprzedniego, niedokończonego uruchomienia - służy tylko jako ślad diagnostyczny
+    # (co zdążyło się wykonać przed przerwaniem); każde nowe wdrożenie zawsze startuje od zera.
+    $resumeInfo = Import-DeploymentCheckpoint
+    if ($resumeInfo.Found) {
+        Write-Log "Wykryto ślad poprzedniego, niedokończonego wdrożenia z $($resumeInfo.Timestamp) ($($resumeInfo.StepCount) ukończonych kroków). Rozpoczynam nowe wdrożenie od początku."
+    }
+    Clear-DeploymentCheckpoint
+
+    if ($CheckboxControls.ContainsKey("CreateRestorePoint") -and $CheckboxControls["CreateRestorePoint"].IsChecked -eq $true) {
+        Set-ProgressText "Tworzenie punktu przywracania systemu..."
+        New-DeploymentRestorePoint
+    }
+
     $txtStopwatch.Visibility = [System.Windows.Visibility]::Visible
     $script:stopwatchStartTime = Get-Date
     $script:stopwatchAccumulated = [TimeSpan]::Zero
     $txtStopwatch.Text = "⏱ 00:00:00"
     $script:stopwatchTimer.Start()
 
+    # Od tego miejsca wpisy Write-Log bez jawnego -Context oznaczane są jako "Automat" (kroki
+    # wykonywane samodzielnie w ramach sekwencji wdrożenia), aż do zakończenia w bloku finally.
+    $script:CurrentLogContext = "Automat"
     try {
         Set-ProgressText "Przygotowywanie do wdrożenia..."
         
@@ -2144,62 +2339,65 @@ function Start-Deployment {
     
         $script:CurrentDeploymentStep = 0
     
-        if ($CheckboxControls.ContainsKey("WaitForNetwork") -and $CheckboxControls["WaitForNetwork"].IsChecked -eq $true) { Set-ProgressText "Oczekiwanie na sieć..."; Wait-ForNetwork; if ($script:isCancelled) { return }; Step-DeploymentProgress }
-    
-        if ($CheckboxControls.ContainsKey("SuspendHibernation") -and $CheckboxControls["SuspendHibernation"].IsChecked -eq $true) { Set-ProgressText "Wstrzymywanie hibernacji..."; Suspend-Hibernation; if ($script:isCancelled) { return }; Step-DeploymentProgress }
-    
-        if ($CheckboxControls["InstallTeamViewer"].IsChecked -eq $true) { Set-ProgressText "Instalacja: TeamViewer..."; Install-TeamViewer; if ($script:isCancelled) { return }; Step-DeploymentProgress }
-    
-        if ($CheckboxControls["UninstallMicrosoft365"].IsChecked -eq $true) { Set-ProgressText "Deinstalacja: Microsoft 365..."; Uninstall-Microsoft365Apps; if ($script:isCancelled) { return }; Step-DeploymentProgress }
-    
-        if ($CheckboxControls.ContainsKey("UninstallOneDrive") -and $CheckboxControls["UninstallOneDrive"].IsChecked -eq $true) { Set-ProgressText "Deinstalacja: OneDrive..."; Uninstall-OneDrive; if ($script:isCancelled) { return }; Step-DeploymentProgress }
-    
-        if ($CheckboxControls.ContainsKey("RemoveBloatware") -and $CheckboxControls["RemoveBloatware"].IsChecked -eq $true) { Set-ProgressText "Usuwanie Bloatware..."; Remove-Bloatware; if ($script:isCancelled) { return }; Step-DeploymentProgress }
-    
-        if ($CheckboxControls["InstallAV"].IsChecked -eq $true) { Set-ProgressText "Instalacja: AntyVirus..."; Install-AV; if ($script:isCancelled) { return }; Step-DeploymentProgress }
-    
-        if ($CheckboxControls["ImportWiFiProfile"].IsChecked -eq $true) { Set-ProgressText "Importowanie profilu Wi-Fi..."; Import-WiFiProfile; if ($script:isCancelled) { return }; Step-DeploymentProgress }
-    
-        if ($CheckboxControls["CreateLocalAdmin"].IsChecked -eq $true) { Set-ProgressText "Tworzenie konta lokalnego administratora..."; New-LocalAdmin; if ($script:isCancelled) { return }; Step-DeploymentProgress }
-    
-        if ($CheckboxControls["JoinDomain"].IsChecked -eq $true) { Set-ProgressText "Dołączanie do domeny..."; Join-Domain; if ($script:isCancelled) { return }; Step-DeploymentProgress }
-    
+        if ($CheckboxControls.ContainsKey("WaitForNetwork") -and $CheckboxControls["WaitForNetwork"].IsChecked -eq $true) { Set-ProgressText "Oczekiwanie na sieć..."; Wait-ForNetwork; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "WaitForNetwork" }
+
+        if ($CheckboxControls.ContainsKey("SuspendHibernation") -and $CheckboxControls["SuspendHibernation"].IsChecked -eq $true) { Set-ProgressText "Wstrzymywanie hibernacji..."; Suspend-Hibernation; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "SuspendHibernation" }
+
+        if ($CheckboxControls["InstallTeamViewer"].IsChecked -eq $true) { Set-ProgressText "Instalacja: TeamViewer..."; Install-TeamViewer; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "InstallTeamViewer" }
+
+        if ($CheckboxControls["UninstallMicrosoft365"].IsChecked -eq $true) { Set-ProgressText "Deinstalacja: Microsoft 365..."; Uninstall-Microsoft365Apps; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "UninstallMicrosoft365" }
+
+        if ($CheckboxControls.ContainsKey("UninstallOneDrive") -and $CheckboxControls["UninstallOneDrive"].IsChecked -eq $true) { Set-ProgressText "Deinstalacja: OneDrive..."; Uninstall-OneDrive; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "UninstallOneDrive" }
+
+        if ($CheckboxControls.ContainsKey("RemoveBloatware") -and $CheckboxControls["RemoveBloatware"].IsChecked -eq $true) { Set-ProgressText "Usuwanie Bloatware..."; Remove-Bloatware; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "RemoveBloatware" }
+
+        if ($CheckboxControls["InstallAV"].IsChecked -eq $true) { Set-ProgressText "Instalacja: AntyVirus..."; Install-AV; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "InstallAV" }
+
+        if ($CheckboxControls["ImportWiFiProfile"].IsChecked -eq $true) { Set-ProgressText "Importowanie profilu Wi-Fi..."; Import-WiFiProfile; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "ImportWiFiProfile" }
+
+        if ($CheckboxControls["CreateLocalAdmin"].IsChecked -eq $true) { Set-ProgressText "Tworzenie konta lokalnego administratora..."; New-LocalAdmin; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "CreateLocalAdmin" }
+
+        if ($CheckboxControls["JoinDomain"].IsChecked -eq $true) { Set-ProgressText "Dołączanie do domeny..."; Join-Domain; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "JoinDomain" }
+
         if ($CheckboxControls["InstallApplications"].IsChecked -eq $true -and $script:SelectedApps.Count -gt 0) {
             Install-SelectedApps
             if ($script:isCancelled) { return }
+            Save-DeploymentCheckpointStep "InstallApplications"
         }
         else {
-            Write-Log "Instalacja aplikacji pominięta." 
+            Write-Log "Instalacja aplikacji pominięta."
         }
-    
-        if ($CheckboxControls.ContainsKey("ChangeComputerName") -and $CheckboxControls["ChangeComputerName"].IsChecked -eq $true) { Set-ProgressText "Zmiana nazwy komputera..."; Set-NewComputerName; if ($script:isCancelled) { return }; Step-DeploymentProgress }
-    
-        if ($CheckboxControls.ContainsKey("JoinIntune") -and $CheckboxControls["JoinIntune"].IsChecked -eq $true) { Set-ProgressText "Dołączanie do Intune..."; Join-Intune; if ($script:isCancelled) { return }; Step-DeploymentProgress }
-    
-        if ($CheckboxControls.ContainsKey("RunPostInstallScripts") -and $CheckboxControls["RunPostInstallScripts"].IsChecked -eq $true) { Set-ProgressText "Skrypty poinstalacyjne..."; Invoke-PostInstallScripts; if ($script:isCancelled) { return }; Step-DeploymentProgress }
-    
-        if ($CheckboxControls.ContainsKey("ExportHardwareAudit") -and $CheckboxControls["ExportHardwareAudit"].IsChecked -eq $true) { Set-ProgressText "Eksport audytu sprzętowego..."; Export-HardwareAuditTask; if ($script:isCancelled) { return }; Step-DeploymentProgress }
-    
-        if ($CheckboxControls.ContainsKey("EnableBitLocker") -and $CheckboxControls["EnableBitLocker"].IsChecked -eq $true) { Set-ProgressText "Włączanie szyfrowania BitLocker..."; Enable-BitLockerEncryption; if ($script:isCancelled) { return }; Step-DeploymentProgress }
-    
-        if ($CheckboxControls["ChangeSystemSettings"].IsChecked -eq $true) { Set-ProgressText "Aplikowanie modyfikacji systemu..."; Set-SystemTweaks }
+
+        if ($CheckboxControls.ContainsKey("ChangeComputerName") -and $CheckboxControls["ChangeComputerName"].IsChecked -eq $true) { Set-ProgressText "Zmiana nazwy komputera..."; Set-NewComputerName; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "ChangeComputerName" }
+
+        if ($CheckboxControls.ContainsKey("JoinIntune") -and $CheckboxControls["JoinIntune"].IsChecked -eq $true) { Set-ProgressText "Dołączanie do Intune..."; Join-Intune; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "JoinIntune" }
+
+        if ($CheckboxControls.ContainsKey("RunPostInstallScripts") -and $CheckboxControls["RunPostInstallScripts"].IsChecked -eq $true) { Set-ProgressText "Skrypty poinstalacyjne..."; Invoke-PostInstallScripts; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "RunPostInstallScripts" }
+
+        if ($CheckboxControls.ContainsKey("ExportHardwareAudit") -and $CheckboxControls["ExportHardwareAudit"].IsChecked -eq $true) { Set-ProgressText "Eksport audytu sprzętowego..."; Export-HardwareAuditTask; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "ExportHardwareAudit" }
+
+        if ($CheckboxControls.ContainsKey("EnableBitLocker") -and $CheckboxControls["EnableBitLocker"].IsChecked -eq $true) { Set-ProgressText "Włączanie szyfrowania BitLocker..."; Enable-BitLockerEncryption; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "EnableBitLocker" }
+
+        if ($CheckboxControls["ChangeSystemSettings"].IsChecked -eq $true) { Set-ProgressText "Aplikowanie modyfikacji systemu..."; Set-SystemTweaks; Save-DeploymentCheckpointStep "ChangeSystemSettings" }
         if ($script:isCancelled) { return }
-        
-        if ($CheckboxControls["RunWindowsUpdate"].IsChecked -eq $true) { 
+
+        if ($CheckboxControls["RunWindowsUpdate"].IsChecked -eq $true) {
             Set-ProgressText "Uruchamianie Windows Update..."
             Write-Log "Uruchamianie Windows Update..."
-            Start-WindowsUpdate 
+            Start-WindowsUpdate
+            Save-DeploymentCheckpointStep "RunWindowsUpdate"
         }
-    
+
         if ($CheckboxControls.ContainsKey("SuspendHibernation") -and $CheckboxControls["SuspendHibernation"].IsChecked -eq $true) { Set-ProgressText "Przywracanie ustawień hibernacji..."; Resume-Hibernation }
-        
+
         Step-DeploymentProgress
         if ($progressBar.Value -lt 100 -and -not $script:isCancelled) { $progressBar.Value = 100 }
-        
+
         if (-not $script:isCancelled) {
             if ($null -ne $script:stopwatchTimer) { $script:stopwatchTimer.Stop() }
             Set-ProgressText "Konfiguracja zakończona pomyślnie!"
             Write-Log "Konfiguracja zakończona."
+            Clear-DeploymentCheckpoint
             
             if ($null -ne $notifyIcon -and $Window.WindowState -eq [System.Windows.WindowState]::Minimized) {
                 $notifyIcon.ShowBalloonTip(5000, "Instalacja zakończona", "Wszystkie zadania zostały pomyślnie wykonane. Możesz przywrócić okno.", [System.Windows.Forms.ToolTipIcon]::Info)
@@ -2213,18 +2411,31 @@ function Start-Deployment {
                 Show-ThemedMessageBox -Message "Gotowe!" -Title "Zakończono" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
             }
         }
+    } catch {
+        # Zabezpieczenie przed sytuacją, w której NIEOCZEKIWANY wyjątek w dowolnym miejscu
+        # sekwencji wdrożenia (np. brak/niedostępność modułu Appx na niektórych kompilacjach
+        # Windows, błąd sieciowy itp.) uciekał poza tę funkcję nieobsłużony aż do handlera
+        # kliknięcia $btnStart, co mogło ubić całą aplikację (i uniemożliwić Pauzę/Przerwanie,
+        # bo w praktyce proces już nie żył). Teraz taki błąd jest logowany i pokazywany
+        # użytkownikowi, a przyciski/stan interfejsu i tak wracają do normy w bloku finally.
+        Write-Log "Nieoczekiwany błąd podczas wdrożenia - przerwano: $_" -IsError
+        Show-ThemedMessageBox -Message "Wystąpił nieoczekiwany błąd i wdrożenie zostało przerwane:`n`n$($_.Exception.Message)`n`nSzczegóły w logu." -Title "Błąd wdrożenia" -Button "OK" -Image "Error" | Out-Null
+        $script:isCancelled = $true
     } finally {
         if ($null -ne $script:stopwatchTimer) { $script:stopwatchTimer.Stop() }
         $btnStart.Background = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("#FF107C10")
         $btnStart.IsEnabled = $true
         $btnPause.IsEnabled = $false
         $btnCancelDeploy.IsEnabled = $false
+        $wasCancelled = $script:isCancelled
         $script:isPaused = $false
         $script:isCancelled = $false
+        $script:DryRun = $false
+        $script:CurrentLogContext = "System"
         $btnPause.Content = "Pauza"
         $btnPause.Background = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("#FFE6A100")
-        
-        if ($script:isCancelled) {
+
+        if ($wasCancelled) {
             Set-ProgressText "Wdrożenie zostało przerwane."
         }
     }
@@ -2291,7 +2502,190 @@ function Get-Config {
 function Save-Config($config) {
     $json = $config | ConvertTo-Json -Depth 10
     $json | Set-Content -Path $configPath -Encoding UTF8
-    Write-Log "Zapisano zmiany do config.json"
+    Write-Log "Zapisano zmiany do config.json" -Context "Użytkownik"
+}
+
+# Generuje czytelny, samodzielny raport HTML z (przefiltrowanych/posortowanych) wpisów logu -
+# do wysłania klientowi/dołączenia do ticketu, zamiast surowego pliku tekstowego.
+function Export-LogReportHtml {
+    param(
+        [array]$Entries,
+        [string]$FiltersText,
+        [string]$OutFile
+    )
+
+    $rowBg = @{
+        'Error'   = '#FDECEA'
+        'Warning' = '#FFF4E0'
+        'Success' = '#E7F6E9'
+        'DryRun'  = '#F2E9F7'
+        'Info'    = '#FFFFFF'
+    }
+    $rowFg = @{
+        'Error'   = '#B91C1C'
+        'Warning' = '#92600A'
+        'Success' = '#0F6B1F'
+        'DryRun'  = '#6A3691'
+        'Info'    = '#1F2328'
+    }
+
+    $errorCount = @($Entries | Where-Object { $_.RodzajKey -eq 'Error' }).Count
+    $warnCount = @($Entries | Where-Object { $_.RodzajKey -eq 'Warning' }).Count
+    $successCount = @($Entries | Where-Object { $_.RodzajKey -eq 'Success' }).Count
+
+    $rowsHtml = New-Object System.Text.StringBuilder
+    foreach ($e in $Entries) {
+        $bg = $rowBg[$e.RodzajKey]; if (-not $bg) { $bg = '#FFFFFF' }
+        $fg = $rowFg[$e.RodzajKey]; if (-not $fg) { $fg = '#1F2328' }
+        [void]$rowsHtml.AppendLine("<tr style='background:$bg;color:$fg;'>")
+        [void]$rowsHtml.AppendLine("<td class='c-rodzaj'>$([System.Net.WebUtility]::HtmlEncode($e.RodzajText))</td>")
+        [void]$rowsHtml.AppendLine("<td class='c-data'>$([System.Net.WebUtility]::HtmlEncode($e.DataText))</td>")
+        [void]$rowsHtml.AppendLine("<td class='c-kontekst'>$([System.Net.WebUtility]::HtmlEncode($e.Kontekst))</td>")
+        [void]$rowsHtml.AppendLine("<td class='c-info'>$([System.Net.WebUtility]::HtmlEncode($e.Informacja))</td>")
+        [void]$rowsHtml.AppendLine("</tr>")
+    }
+
+    $html = @"
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<title>Raport wdrożenia - $([System.Net.WebUtility]::HtmlEncode($env:COMPUTERNAME))</title>
+<style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #F4F5F7; color: #1F2328; margin: 0; padding: 32px; }
+    .card { background: #FFFFFF; border-radius: 10px; padding: 28px 32px; max-width: 1200px; margin: 0 auto; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+    h1 { font-size: 22px; margin: 0 0 4px 0; }
+    .subtitle { color: #6B7280; font-size: 13px; margin-bottom: 20px; }
+    .stats { display: flex; gap: 14px; margin-bottom: 20px; flex-wrap: wrap; }
+    .stat { border-radius: 8px; padding: 10px 16px; font-size: 13px; font-weight: 600; }
+    .stat.total { background: #EEF1F5; color: #374151; }
+    .stat.error { background: #FDECEA; color: #B91C1C; }
+    .stat.warn { background: #FFF4E0; color: #92600A; }
+    .stat.success { background: #E7F6E9; color: #0F6B1F; }
+    .filters { font-size: 12px; color: #6B7280; margin-bottom: 20px; }
+    table { border-collapse: collapse; width: 100%; font-size: 13px; }
+    th { text-align: left; background: #1F2328; color: #FFFFFF; padding: 9px 10px; position: sticky; top: 0; }
+    td { padding: 7px 10px; border-bottom: 1px solid #E5E7EB; vertical-align: top; }
+    .c-rodzaj { white-space: nowrap; font-weight: 600; }
+    .c-data { white-space: nowrap; font-family: Consolas, monospace; }
+    .c-kontekst { white-space: nowrap; }
+    .c-info { word-break: break-word; }
+    .footer { margin-top: 20px; font-size: 11px; color: #9CA3AF; }
+    @media print { body { background: #FFFFFF; padding: 0; } .card { box-shadow: none; } }
+</style>
+</head>
+<body>
+<div class="card">
+    <h1>Raport wdrożenia - Smart Tool for Deployment</h1>
+    <div class="subtitle">Stacja: $([System.Net.WebUtility]::HtmlEncode($env:COMPUTERNAME)) &nbsp;·&nbsp; Wygenerowano: $(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')</div>
+    <div class="stats">
+        <div class="stat total">$($Entries.Count) wpisów</div>
+        <div class="stat error">$errorCount błędów</div>
+        <div class="stat warn">$warnCount ostrzeżeń</div>
+        <div class="stat success">$successCount sukcesów</div>
+    </div>
+    <div class="filters">Zastosowane filtry: $([System.Net.WebUtility]::HtmlEncode($FiltersText))</div>
+    <table>
+        <thead><tr><th>Rodzaj</th><th>Data zdarzenia</th><th>Kontekst</th><th>Informacja</th></tr></thead>
+        <tbody>
+$($rowsHtml.ToString())
+        </tbody>
+    </table>
+    <div class="footer">Wygenerowano przez Smart Tool for Deployment (STD) v$script:ScriptVersion</div>
+</div>
+</body>
+</html>
+"@
+
+    $html | Set-Content -Path $OutFile -Encoding UTF8
+}
+
+# Podgląd pojedynczego wpisu logu na osobnym, większym oknie - przydatne gdy treść Informacji jest
+# długa (np. pełny stack trace błędu) i nie mieści się w jednej linii tabeli. Tekst jest w polu
+# tylko do odczytu, ale zaznaczalnym/kopiowalnym.
+function Show-LogEntryDetail {
+    param($Entry)
+    if ($null -eq $Entry) { return }
+
+    [xml]$xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        Title="Szczegóły wpisu logu" Width="620" Height="440" MinWidth="420" MinHeight="280" WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource ThemeButton}"/>
+            <Setter Property="Foreground" Value="{DynamicResource ThemeButtonText}"/>
+            <Setter Property="Padding" Value="15,6"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True"><Setter Property="Opacity" Value="0.8"/></Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid Grid.Row="0" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Border Grid.Column="0" Background="{DynamicResource ThemeTextBoxBg}" CornerRadius="4" Padding="10,5" Margin="0,0,10,0">
+                <TextBlock Name="txtRodzaj" FontWeight="SemiBold"/>
+            </Border>
+            <Border Grid.Column="1" Background="{DynamicResource ThemeTextBoxBg}" CornerRadius="4" Padding="10,5" Margin="0,0,10,0">
+                <TextBlock Name="txtData" FontFamily="Consolas"/>
+            </Border>
+            <Border Grid.Column="2" Background="{DynamicResource ThemeTextBoxBg}" CornerRadius="4" Padding="10,5">
+                <TextBlock Name="txtKontekst"/>
+            </Border>
+        </Grid>
+        <Border Grid.Row="1" Background="{DynamicResource ThemeTextBoxBg}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="1" CornerRadius="6">
+            <TextBox Name="txtInformacja" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" BorderThickness="0" Background="Transparent"
+                     Foreground="{DynamicResource ThemeText}" FontFamily="Consolas" FontSize="13" Padding="12"
+                     VerticalScrollBarVisibility="Auto"/>
+        </Border>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,15,0,0">
+            <Button Name="btnCopy" Content="Kopiuj" Width="100" Margin="0,0,10,0"/>
+            <Button Name="btnClose" Content="Zamknij" Width="100" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>
+"@
+    $reader = New-Object System.Xml.XmlNodeReader $xaml
+    $dlg = [Windows.Markup.XamlReader]::Load($reader)
+    Apply-ThemeToWindow $dlg
+
+    $dlg.FindName("txtRodzaj").Text = $Entry.RodzajText
+    $dlg.FindName("txtData").Text = $Entry.DataText
+    $dlg.FindName("txtKontekst").Text = "Kontekst: $($Entry.Kontekst)"
+    $txtInformacja = $dlg.FindName("txtInformacja")
+    $txtInformacja.Text = $Entry.Informacja
+
+    $dlg.FindName("btnCopy").Add_Click({
+        try { [System.Windows.Clipboard]::SetText($Entry.Informacja) } catch {}
+    })
+    $dlg.FindName("btnClose").Add_Click({ $dlg.Close() })
+
+    $dlg.Add_Loaded({ $txtInformacja.Focus() | Out-Null; $txtInformacja.SelectAll() })
+    if ($null -ne $script:ActiveLogWindow -and $script:ActiveLogWindow.IsLoaded) {
+        $dlg.Owner = $script:ActiveLogWindow
+    }
+    $dlg.ShowDialog() | Out-Null
 }
 
 function Show-LogWindow {
@@ -2305,7 +2699,8 @@ function Show-LogWindow {
 
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Title="Przeglądarka Logów" Height="600" Width="800" WindowStartupLocation="CenterOwner"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Przeglądarka Logów" Height="700" Width="1150" MinHeight="420" MinWidth="820" WindowStartupLocation="CenterOwner"
         Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
     <Window.Resources>
         <Style TargetType="Button">
@@ -2330,21 +2725,160 @@ function Show-LogWindow {
         <Style TargetType="ComboBoxItem">
             <Setter Property="Background" Value="{DynamicResource ThemeTextBoxBg}"/>
             <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
-            <Style.Triggers>
-                <Trigger Property="IsHighlighted" Value="True"><Setter Property="Background" Value="{DynamicResource ThemeButton}"/></Trigger>
-            </Style.Triggers>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border Name="Bd" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center" TextElement.Foreground="{TemplateBinding Foreground}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ThemeButton}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource ThemeButtonText}"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ThemeButton}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource ThemeButtonText}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="{DynamicResource ThemeTextBoxBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Background" Value="{DynamicResource ThemeTextBoxBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton x:Name="ToggleButton" IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}" ClickMode="Press" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Foreground="{TemplateBinding Foreground}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4">
+                                            <TextBlock Text="▼" Foreground="{TemplateBinding Foreground}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="10"/>
+                                        </Border>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter x:Name="ContentSite" IsHitTestVisible="False" Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}" Margin="8,0,25,0" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                            <Popup Name="Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}" AllowsTransparency="True" Focusable="False" PopupAnimation="Slide">
+                                <Border Background="{DynamicResource ThemePanel}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="1" MinWidth="{TemplateBinding ActualWidth}" MaxHeight="250" CornerRadius="4">
+                                    <ScrollViewer SnapsToDevicePixels="True">
+                                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained" />
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="GridViewColumnHeader">
+            <Setter Property="Background" Value="{DynamicResource ThemeButton}"/>
+            <Setter Property="Foreground" Value="{DynamicResource ThemeButtonText}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="8,7"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="BorderThickness" Value="0,0,1,0"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ThemeBackground}"/>
+        </Style>
+        <Style TargetType="ListViewItem">
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{Binding RowColorHex}"/>
+            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ThemeBackground}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListViewItem">
+                        <Border Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}">
+                            <GridViewRowPresenter Content="{TemplateBinding Content}" Columns="{TemplateBinding GridView.ColumnCollection}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <!-- Bez własnego szablonu domyślny motyw Windows rysowałby tu jasne
+                                 tło zaznaczenia/najechania niezależnie od naszych kolorów tekstu
+                                 (RowColorHex), przez co wiersz stawał się nieczytelny. -->
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ThemeButton}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource ThemeButtonText}"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ThemeButton}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource ThemeButtonText}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </Window.Resources>
     <Grid Margin="15">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <TextBox Name="txtLogs" Grid.Row="0" IsReadOnly="True" ScrollViewer.VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="13" 
-                 Background="{DynamicResource ThemeTextBoxBg}" Foreground="{DynamicResource ThemeText}" BorderThickness="0" Padding="10" TextWrapping="Wrap"/>
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,15,0,0">
-            <Button Name="btnRefresh" Content="Odśwież" Width="100" Margin="0,0,10,0"/>
-            <CheckBox Name="chkAutoRefresh" Content="Auto-odświeżanie (1s)" IsChecked="True" VerticalAlignment="Center" Margin="0,0,15,0" Foreground="{DynamicResource ThemeText}"/>
+
+        <Grid Grid.Row="0" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="150"/>
+                <ColumnDefinition Width="150"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBox Name="txtSearch" Grid.Column="0" Margin="0,0,10,0" ToolTip="Szukaj w treści wpisów..."/>
+            <ComboBox Name="cmbRodzajFilter" Grid.Column="1" Margin="0,0,10,0" SelectedIndex="0">
+                <ComboBoxItem Content="Rodzaj: wszystkie"/>
+                <ComboBoxItem Content="❌ Błędy"/>
+                <ComboBoxItem Content="⚠️ Ostrzeżenia"/>
+                <ComboBoxItem Content="✔️ Sukcesy"/>
+                <ComboBoxItem Content="🧪 Dry-Run"/>
+                <ComboBoxItem Content="ℹ️ Informacyjne"/>
+            </ComboBox>
+            <ComboBox Name="cmbKontekstFilter" Grid.Column="2" Margin="0,0,10,0" SelectedIndex="0">
+                <ComboBoxItem Content="Kontekst: wszystkie"/>
+                <ComboBoxItem Content="System"/>
+                <ComboBoxItem Content="Automat"/>
+                <ComboBoxItem Content="Użytkownik"/>
+            </ComboBox>
+            <CheckBox Name="chkAutoRefresh" Grid.Column="3" Content="Auto-odświeżanie" IsChecked="True" VerticalAlignment="Center" Margin="0,0,15,0" Foreground="{DynamicResource ThemeText}"/>
+            <Button Name="btnRefresh" Grid.Column="4" Content="Odśwież" Width="100"/>
+        </Grid>
+
+        <TextBlock Name="txtStats" Grid.Row="1" Margin="2,0,0,8" FontSize="12" Opacity="0.75"/>
+
+        <Border Grid.Row="2" Background="{DynamicResource ThemeTextBoxBg}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="1" CornerRadius="6">
+            <ListView Name="lvLogs" BorderThickness="0" Background="Transparent" Foreground="{DynamicResource ThemeText}"
+                      FontFamily="Consolas" FontSize="13" ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="Rodzaj" Width="130" DisplayMemberBinding="{Binding RodzajText}"/>
+                        <GridViewColumn Header="Data zdarzenia" Width="160" DisplayMemberBinding="{Binding DataText}"/>
+                        <GridViewColumn Header="Kontekst" Width="110" DisplayMemberBinding="{Binding Kontekst}"/>
+                        <GridViewColumn Header="Informacja" Width="560" DisplayMemberBinding="{Binding Informacja}"/>
+                    </GridView>
+                </ListView.View>
+            </ListView>
+        </Border>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,12,0,0">
+            <Button Name="btnExportHtml" Content="Eksportuj raport (HTML)" Width="180" Margin="0,0,10,0" Foreground="White" Background="#FF7A3E9D" FontWeight="SemiBold"/>
             <Button Name="btnSave" Content="Zapisz jako..." Width="120" Margin="0,0,10,0"/>
             <Button Name="btnClearLogs" Content="Wyczyść" Width="90" Margin="0,0,10,0" Foreground="White" Background="#FFC50F1F" FontWeight="SemiBold"/>
             <Button Name="btnOpenLog" Content="Otwórz plik" Width="110" Margin="0,0,10,0"/>
@@ -2358,14 +2892,195 @@ function Show-LogWindow {
     $logWindow = [Windows.Markup.XamlReader]::Load($reader)
     Apply-ThemeToWindow $logWindow
 
-    $script:txtLogs = $logWindow.FindName("txtLogs")
+    $script:txtSearch = $logWindow.FindName("txtSearch")
+    $script:cmbRodzajFilter = $logWindow.FindName("cmbRodzajFilter")
+    $script:cmbKontekstFilter = $logWindow.FindName("cmbKontekstFilter")
+    $script:txtStats = $logWindow.FindName("txtStats")
+    $script:lvLogs = $logWindow.FindName("lvLogs")
     $btnRefresh = $logWindow.FindName("btnRefresh")
     $script:chkAutoRefresh = $logWindow.FindName("chkAutoRefresh")
+    $btnExportHtml = $logWindow.FindName("btnExportHtml")
     $btnSave = $logWindow.FindName("btnSave")
     $btnClearLogs = $logWindow.FindName("btnClearLogs")
     $btnOpenLog = $logWindow.FindName("btnOpenLog")
     $btnOpenDir = $logWindow.FindName("btnOpenDir")
     $btnZipLogs = $logWindow.FindName("btnZipLogs")
+
+    $script:rawLogText = ""
+    $script:LastRenderedEntries = @()
+    $script:LogSortColumn = "Data zdarzenia"
+    $script:LogSortAscending = $false   # najnowsze na górze domyślnie
+
+    # Kolor tekstu "zwykłej" informacji dopasowany do aktualnie aktywnego motywu (jasny/ciemny) -
+    # pobrany raz z zasobów okna (zsynchronizowanych przez Apply-ThemeToWindow) i skonwertowany na
+    # HEX, bo wiązanie Foreground="{Binding RowColorHex}" oczekuje stringa.
+    $script:GetThemeTextHex = {
+        try {
+            $c = $logWindow.Resources["ThemeText"].Color
+            return "#{0:X2}{1:X2}{2:X2}{3:X2}" -f $c.A, $c.R, $c.G, $c.B
+        } catch { return "#FFDCDDDE" }
+    }
+
+    # Parsuje jedną linię pliku logu do obiektu z polami do wyświetlenia w tabeli. Rozumie trzy
+    # warianty formatu (najnowszy jest zapisywany od teraz przez Write-Log, starsze to wpisy
+    # sprzed kolejnych zmian formatu logowania):
+    #   [yyyy-MM-dd HH:mm:ss] [INFO|ERROR] [Kontekst] tekst   <- aktualny
+    #   [yyyy-MM-dd HH:mm:ss] [INFO|ERROR] tekst               <- bez kontekstu
+    #   [HH:mm:ss] tekst                                       <- bez pełnej daty i kontekstu
+    $script:ParseLogLine = {
+        param([string]$Line, [int]$OrderIndex)
+
+        $fmtFull = '^\[(?<date>\d{4}-\d{2}-\d{2}) (?<time>\d{2}:\d{2}:\d{2})\] \[(?<level>INFO|ERROR)\] \[(?<ctx>[^\]]+)\] (?<text>.*)$'
+        $fmtNoCtx = '^\[(?<date>\d{4}-\d{2}-\d{2}) (?<time>\d{2}:\d{2}:\d{2})\] \[(?<level>INFO|ERROR)\] (?<text>.*)$'
+        $fmtLegacy = '^\[(?<time>\d{2}:\d{2}:\d{2})\] (?<text>.*)$'
+
+        $date = $null; $time = $null; $level = 'INFO'; $ctx = $null; $text = $Line
+        if ($Line -match $fmtFull) {
+            $date = $Matches['date']; $time = $Matches['time']; $level = $Matches['level']; $ctx = $Matches['ctx']; $text = $Matches['text']
+        } elseif ($Line -match $fmtNoCtx) {
+            $date = $Matches['date']; $time = $Matches['time']; $level = $Matches['level']; $text = $Matches['text']
+        } elseif ($Line -match $fmtLegacy) {
+            $time = $Matches['time']; $text = $Matches['text']
+            if ($text -match '^\[ERROR\]\s*') { $level = 'ERROR'; $text = $text -replace '^\[ERROR\]\s*', '' }
+        }
+
+        $sortTs = [datetime]::MinValue
+        $dataText = "—"
+        if ($date) {
+            try {
+                $dt = [datetime]::ParseExact("$date $time", "yyyy-MM-dd HH:mm:ss", $null)
+                $sortTs = $dt
+                $dataText = $dt.ToString("dd.MM.yyyy HH:mm:ss")
+            } catch { $dataText = "$date $time" }
+        } elseif ($time) {
+            $dataText = "— (godz. $time)"
+        }
+
+        $rodzajKey = 'Info'; $rodzajText = 'ℹ️ Informacja'; $colorHex = & $script:GetThemeTextHex
+        if ($level -eq 'ERROR') { $rodzajKey = 'Error'; $rodzajText = '❌ Błąd'; $colorHex = '#FFC50F1F' }
+        elseif ($text -match '\[DRY-RUN\]') { $rodzajKey = 'DryRun'; $rodzajText = '🧪 Dry-Run'; $colorHex = '#FF9B59B6' }
+        elseif ($text -match 'Mało wolnego|Nie udało się|Pominięto|Błąd dostępu|BRAK POLECENIA') { $rodzajKey = 'Warning'; $rodzajText = '⚠️ Ostrzeżenie'; $colorHex = '#FFE6A100' }
+        elseif ($text -match 'zakończon[ao] pomyślnie|Konfiguracja zakończona|Utworzono|zainstalowany\.|utworzony pomyślnie|Dołączono do domeny') { $rodzajKey = 'Success'; $rodzajText = '✔️ Sukces'; $colorHex = '#FF107C10' }
+
+        [PSCustomObject]@{
+            RodzajKey    = $rodzajKey
+            RodzajText   = $rodzajText
+            DataText     = $dataText
+            SortTimestamp = $sortTs
+            OrderIndex   = $OrderIndex
+            Kontekst     = if ($ctx) { $ctx } else { "—" }
+            Informacja   = $text
+            RowColorHex  = $colorHex
+            Level        = $level
+            Raw          = $Line
+        }
+    }
+
+    # Buduje tabelę logu (ListView/GridView) na podstawie surowego tekstu pliku oraz aktualnych
+    # filtrów (wyszukiwarka, rodzaj, kontekst) i wybranego sortowania kolumny.
+    $script:RenderLogView = {
+        $content = $script:rawLogText
+        $searchTerm = $script:txtSearch.Text
+        $rodzajIdx = $script:cmbRodzajFilter.SelectedIndex
+        $kontekstIdx = $script:cmbKontekstFilter.SelectedIndex
+
+        if ([string]::IsNullOrWhiteSpace($content)) {
+            $script:lvLogs.ItemsSource = $null
+            $script:LastRenderedEntries = @()
+            $script:txtStats.Text = "0 wpisów"
+            return
+        }
+
+        $lines = @($content -split "`r?`n" | Where-Object { $_ -ne "" })
+        $entries = New-Object System.Collections.Generic.List[object]
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $entries.Add((& $script:ParseLogLine -Line $lines[$i] -OrderIndex $i))
+        }
+
+        $totalCount = $entries.Count
+        $filtered = [System.Collections.Generic.List[object]]$entries
+
+        $rodzajMap = @{ 1 = 'Error'; 2 = 'Warning'; 3 = 'Success'; 4 = 'DryRun'; 5 = 'Info' }
+        if ($rodzajMap.ContainsKey($rodzajIdx)) {
+            $wanted = $rodzajMap[$rodzajIdx]
+            $filtered = [System.Collections.Generic.List[object]]@($filtered | Where-Object { $_.RodzajKey -eq $wanted })
+        }
+
+        $kontekstMap = @{ 1 = 'System'; 2 = 'Automat'; 3 = 'Użytkownik' }
+        if ($kontekstMap.ContainsKey($kontekstIdx)) {
+            $wanted = $kontekstMap[$kontekstIdx]
+            $filtered = [System.Collections.Generic.List[object]]@($filtered | Where-Object { $_.Kontekst -eq $wanted })
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($searchTerm)) {
+            $filtered = [System.Collections.Generic.List[object]]@($filtered | Where-Object { $_.Raw -like "*$searchTerm*" })
+        }
+
+        $shownCount = $filtered.Count
+        $errorCount = @($filtered | Where-Object { $_.RodzajKey -eq 'Error' }).Count
+
+        $sortProp = switch ($script:LogSortColumn) {
+            'Rodzaj'         { 'RodzajKey' }
+            'Data zdarzenia' { 'SortTimestamp' }
+            'Kontekst'       { 'Kontekst' }
+            'Informacja'     { 'Informacja' }
+            default          { 'SortTimestamp' }
+        }
+        $sorted = $filtered | Sort-Object -Property @{Expression = $sortProp; Descending = (-not $script:LogSortAscending)}, @{Expression = 'OrderIndex'; Descending = $false}
+
+        $maxShow = 3000
+        $truncated = $false
+        $sortedArr = @($sorted)
+        if ($sortedArr.Count -gt $maxShow) {
+            $sortedArr = $sortedArr[0..($maxShow - 1)]
+            $truncated = $true
+        }
+
+        $script:LastRenderedEntries = $sortedArr
+        $script:lvLogs.ItemsSource = $sortedArr
+
+        # Strzałka sortowania w nagłówku aktywnej kolumny (zgodnie ze wzorcem już użytym w
+        # deinstalatorze zbiorczym - patrz Show-SoftwareUninstaller).
+        try {
+            $arrow = if ($script:LogSortAscending) { " ▲" } else { " ▼" }
+            foreach ($col in $script:lvLogs.View.Columns) {
+                $clean = [string]$col.Header -replace ' [▲▼]', ''
+                $col.Header = if ($clean -eq $script:LogSortColumn) { "$clean$arrow" } else { $clean }
+            }
+        } catch {}
+
+        $statsText = "$shownCount z $totalCount wpisów"
+        if ($errorCount -gt 0) { $statsText += " · $errorCount błędów w widoku" }
+        if ($truncated) { $statsText += " · pokazano pierwsze $maxShow" }
+        $script:txtStats.Text = $statsText
+    }
+
+    # Sortowanie po kliknięciu nagłówka kolumny - ten sam sprawdzony wzorzec (ButtonBase.ClickEvent
+    # + AddHandler) co w liście programów w Show-SoftwareUninstaller, dla spójności.
+    $script:lvLogs.AddHandler(
+        [System.Windows.Controls.Primitives.ButtonBase]::ClickEvent,
+        [System.Windows.RoutedEventHandler]{
+            param($senderObj, $e)
+            if ($e.OriginalSource -isnot [System.Windows.Controls.GridViewColumnHeader]) { return }
+            $header = $e.OriginalSource
+            if ($header.Role -eq [System.Windows.Controls.GridViewColumnHeaderRole]::Padding) { return }
+            if ($null -eq $header.Column) { return }
+            $colName = ([string]$header.Column.Header) -replace ' [▲▼]', ''
+            if ($script:LogSortColumn -eq $colName) {
+                $script:LogSortAscending = -not $script:LogSortAscending
+            } else {
+                $script:LogSortColumn = $colName
+                $script:LogSortAscending = $true
+            }
+            & $script:RenderLogView
+        }
+    )
+
+    # Podwójne kliknięcie na wiersz - podgląd pełnej treści (przydatne przy długich wpisach).
+    $script:lvLogs.Add_MouseDoubleClick({
+        $item = $script:lvLogs.SelectedItem
+        if ($null -ne $item) { Show-LogEntryDetail -Entry $item }
+    })
 
     $script:LoadLogs = {
         if (Test-Path "C:\deploy-log.txt") {
@@ -2375,17 +3090,21 @@ function Show-LogWindow {
                 $content = $sr.ReadToEnd()
                 $sr.Close()
                 $fs.Close()
-                if ($script:txtLogs.Text -ne $content) {
-                    $script:txtLogs.Text = $content
-                    $script:txtLogs.ScrollToEnd()
+                if ($script:rawLogText -ne $content) {
+                    $script:rawLogText = $content
+                    & $script:RenderLogView
                 }
             } catch {}
         } else {
-            $script:txtLogs.Text = "Brak pliku logów (C:\deploy-log.txt)."
+            $script:rawLogText = ""
+            & $script:RenderLogView
         }
     }
 
     $btnRefresh.Add_Click($script:LoadLogs)
+    $script:txtSearch.Add_TextChanged({ & $script:RenderLogView })
+    $script:cmbRodzajFilter.Add_SelectionChanged({ & $script:RenderLogView })
+    $script:cmbKontekstFilter.Add_SelectionChanged({ & $script:RenderLogView })
 
     $script:logTimer = New-Object System.Windows.Threading.DispatcherTimer
     $script:logTimer.Interval = [TimeSpan]::FromSeconds(1)
@@ -2399,8 +3118,30 @@ function Show-LogWindow {
         if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz bezpowrotnie usunąć wszystkie wpisy z plików logów (C:\deploy-log.txt)?" -Title "Potwierdzenie czyszczenia" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
             try { Clear-Content -Path "C:\deploy-log.txt" -ErrorAction SilentlyContinue } catch {}
             try { Clear-Content -Path "C:\deploy-error-log.txt" -ErrorAction SilentlyContinue } catch {}
-            $script:txtLogs.Text = "Logi zostały wyczyszczone."
-            Write-Log "Utworzono nowy dziennik operacji."
+            $script:rawLogText = ""
+            & $script:RenderLogView
+            Write-Log "Utworzono nowy dziennik operacji." -Context "Użytkownik"
+        }
+    })
+
+    $btnExportHtml.Add_Click({
+        $sfd = New-Object Microsoft.Win32.SaveFileDialog
+        $sfd.Filter = "Strona HTML (*.html)|*.html|Wszystkie pliki (*.*)|*.*"
+        $sfd.FileName = "raport-wdrozenia_$($env:COMPUTERNAME)_$(Get-Date -Format 'yyyyMMdd_HHmmss').html"
+        if ($sfd.ShowDialog() -eq $true) {
+            try {
+                $filtersSummary = @()
+                if (-not [string]::IsNullOrWhiteSpace($script:txtSearch.Text)) { $filtersSummary += "wyszukiwanie: `"$($script:txtSearch.Text)`"" }
+                if ($script:cmbRodzajFilter.SelectedIndex -ne 0) { $filtersSummary += "rodzaj: $($script:cmbRodzajFilter.Text)" }
+                if ($script:cmbKontekstFilter.SelectedIndex -ne 0) { $filtersSummary += "kontekst: $($script:cmbKontekstFilter.Text)" }
+                $filtersText = if ($filtersSummary.Count -gt 0) { $filtersSummary -join ", " } else { "brak (pokazano wszystkie wpisy)" }
+
+                Export-LogReportHtml -Entries $script:LastRenderedEntries -FiltersText $filtersText -OutFile $sfd.FileName
+                Show-ThemedMessageBox -Message "Wyeksportowano raport do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
+                Start-Process $sfd.FileName
+            } catch {
+                Show-ThemedMessageBox -Message "Błąd podczas eksportu raportu: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
+            }
         }
     })
 
@@ -2410,7 +3151,7 @@ function Show-LogWindow {
         $sfd.FileName = "deploy-log_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt"
         if ($sfd.ShowDialog() -eq $true) {
             try {
-                $script:txtLogs.Text | Set-Content -Path $sfd.FileName -Encoding UTF8
+                $script:rawLogText | Set-Content -Path $sfd.FileName -Encoding UTF8
                 Show-ThemedMessageBox -Message "Zapisano logi do $($sfd.FileName)" -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
             } catch {
                 Show-ThemedMessageBox -Message "Błąd podczas zapisywania: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
@@ -2630,6 +3371,371 @@ function Show-CustomInfoDialog {
 
     $btnOk = $dlg.FindName("btnOk")
     $btnOk.Add_Click({ $dlg.Close() })
+    $dlg.ShowDialog() | Out-Null
+}
+
+# Uporządkowany widok "Informacje o systemie" - zamiast jednej ściany tekstu w wąskim, nierozwijalnym
+# oknie (Show-CustomInfoDialog): sekcje (System/BIOS, CPU/RAM, Dyski, Sieć) jako czytelne "chipy" +
+# lista zainstalowanego oprogramowania jako sortowalna/przeszukiwalna tabela (to zwykle najdłuższa,
+# najmniej czytelna część raportu).
+function Show-SystemInfoWindow {
+    $audit = Get-HardwareAudit -AsObject
+
+    [xml]$xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Informacje o systemie" Width="800" Height="700" MinWidth="620" MinHeight="450" WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource ThemeButton}"/>
+            <Setter Property="Foreground" Value="{DynamicResource ThemeButtonText}"/>
+            <Setter Property="Padding" Value="15,6"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True"><Setter Property="Opacity" Value="0.8"/></Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="{DynamicResource ThemeTextBoxBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="GridViewColumnHeader">
+            <Setter Property="Background" Value="{DynamicResource ThemeButton}"/>
+            <Setter Property="Foreground" Value="{DynamicResource ThemeButtonText}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="8,7"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="BorderThickness" Value="0,0,1,0"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ThemeBackground}"/>
+        </Style>
+        <Style TargetType="ListViewItem">
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ThemeBackground}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListViewItem">
+                        <Border Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}">
+                            <GridViewRowPresenter Content="{TemplateBinding Content}" Columns="{TemplateBinding GridView.ColumnCollection}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ThemeButton}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource ThemeButtonText}"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ThemeButton}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource ThemeButtonText}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="ChipBorder" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource ThemeTextBoxBg}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="Margin" Value="0,0,10,10"/>
+        </Style>
+        <Style x:Key="ChipBorderClickable" TargetType="Border" BasedOn="{StaticResource ChipBorder}">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="ToolTip" Value="Kliknij, aby skopiować"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource ThemeButton}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="CopyableLine" TargetType="TextBlock">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="ToolTip" Value="Kliknij, aby skopiować"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="TextDecorations" Value="Underline"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,14">
+            <TextBlock Name="txtHeader" FontSize="18" FontWeight="Bold"/>
+            <TextBlock Name="txtMeta" FontSize="12" Opacity="0.7" Margin="0,3,0,0"/>
+        </StackPanel>
+
+        <WrapPanel Grid.Row="1">
+            <Border Name="chipOs" Style="{StaticResource ChipBorderClickable}">
+                <StackPanel>
+                    <TextBlock Text="💻 System operacyjny  📋" FontSize="11" Opacity="0.65"/>
+                    <TextBlock Name="txtOs" FontWeight="SemiBold" Margin="0,2,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Name="chipBiosSn" Style="{StaticResource ChipBorderClickable}">
+                <StackPanel>
+                    <TextBlock Text="🔧 BIOS - numer seryjny (SN)  📋" FontSize="11" Opacity="0.65"/>
+                    <TextBlock Name="txtBiosSn" FontWeight="SemiBold" Margin="0,2,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Name="chipBiosVer" Style="{StaticResource ChipBorderClickable}">
+                <StackPanel>
+                    <TextBlock Text="🔧 BIOS - wersja  📋" FontSize="11" Opacity="0.65"/>
+                    <TextBlock Name="txtBiosVer" FontWeight="SemiBold" Margin="0,2,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Name="chipCpu" Style="{StaticResource ChipBorderClickable}">
+                <StackPanel>
+                    <TextBlock Text="⚙️ Procesor  📋" FontSize="11" Opacity="0.65"/>
+                    <TextBlock Name="txtCpu" FontWeight="SemiBold" Margin="0,2,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Name="chipRam" Style="{StaticResource ChipBorderClickable}">
+                <StackPanel>
+                    <TextBlock Text="🧠 Pamięć RAM  📋" FontSize="11" Opacity="0.65"/>
+                    <TextBlock Name="txtRam" FontWeight="SemiBold" Margin="0,2,0,0"/>
+                </StackPanel>
+            </Border>
+        </WrapPanel>
+
+        <Grid Grid.Row="2" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Border Grid.Column="0" Style="{StaticResource ChipBorder}" Margin="0,0,10,0">
+                <StackPanel>
+                    <TextBlock Text="💾 Dyski twarde" FontSize="11" Opacity="0.65" Margin="0,0,0,4"/>
+                    <ItemsControl Name="icDisks">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" Style="{StaticResource CopyableLine}" FontWeight="SemiBold" Margin="0,1"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="1" Style="{StaticResource ChipBorder}" Margin="0">
+                <StackPanel>
+                    <TextBlock Text="🌐 Karty sieciowe" FontSize="11" Opacity="0.65" Margin="0,0,0,4"/>
+                    <ItemsControl Name="icNets">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" Style="{StaticResource CopyableLine}" FontWeight="SemiBold" Margin="0,1" TextWrapping="Wrap"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="3" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="260"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Name="txtAppsHeader" Grid.Column="0" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            <TextBox Name="txtSearch" Grid.Column="1" ToolTip="Szukaj po nazwie programu..."/>
+        </Grid>
+
+        <Border Grid.Row="4" Background="{DynamicResource ThemeTextBoxBg}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="1" CornerRadius="6">
+            <ListView Name="lvApps" BorderThickness="0" Background="Transparent" Foreground="{DynamicResource ThemeText}">
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="Nazwa programu" Width="480" DisplayMemberBinding="{Binding DisplayName}"/>
+                        <GridViewColumn Header="Wersja" Width="180" DisplayMemberBinding="{Binding DisplayVersion}"/>
+                    </GridView>
+                </ListView.View>
+            </ListView>
+        </Border>
+
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Name="btnCopy" Content="Kopiuj do schowka" Width="150" Margin="0,0,10,0" Background="#FF107C10" Foreground="White" FontWeight="SemiBold"/>
+            <Button Name="btnExportHtml" Content="Zapisz jako HTML" Width="150" Margin="0,0,10,0" Background="#FF7A3E9D" Foreground="White" FontWeight="SemiBold"/>
+            <Button Name="btnClose" Content="Zamknij" Width="100" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>
+"@
+    $reader = New-Object System.Xml.XmlNodeReader $xaml
+    $dlg = [Windows.Markup.XamlReader]::Load($reader)
+    Apply-ThemeToWindow $dlg
+
+    $dlg.FindName("txtHeader").Text = "🖥️ $($audit.ComputerName)"
+    $dlg.FindName("txtMeta").Text = "Wygenerowano: $($audit.GeneratedAt.ToString('dd.MM.yyyy HH:mm:ss'))  ·  Użytkownik: $($audit.UserName)"
+    $dlg.FindName("txtOs").Text = $audit.OsSummary
+    $dlg.FindName("txtBiosSn").Text = $audit.BiosSerial
+    $dlg.FindName("txtBiosVer").Text = $audit.BiosVersion
+    $dlg.FindName("txtCpu").Text = $audit.CpuName
+    $dlg.FindName("txtRam").Text = "$($audit.RamGb) GB"
+
+    # Kopiowanie pojedynczych wartości (np. numeru seryjnego BIOS) do schowka jednym kliknięciem -
+    # z krótkim wizualnym potwierdzeniem ("✅ Skopiowano!") zamiast modalnego okienka.
+    # UWAGA: Tick NIE zatrzymuje się przez $script:CopyFeedbackTimer (ten zasięg rozwiązuje się na
+    # żywo, a nie jest "zamrożony" przez .GetNewClosure()) - jeśli okno zostanie zamknięte i
+    # otwarte ponownie zanim poprzedni timer wygaśnie, zmienna skryptowa zostaje nadpisana/
+    # wyzerowana i osierocony timer wywołuje Stop() na $null. Zamiast tego używamy parametru
+    # "sender" samego zdarzenia Tick - to zawsze dokładnie TEN konkretny timer, bez dwuznaczności.
+    $script:CopyFeedbackTimer = $null
+    $copyTextWithFeedback = {
+        param([System.Windows.Controls.TextBlock]$TextBlock, [string]$Value)
+        if ([string]::IsNullOrWhiteSpace($Value)) { return }
+        try { Set-Clipboard -Value $Value } catch { return }
+
+        if ($null -ne $script:CopyFeedbackTimer) { try { $script:CopyFeedbackTimer.Stop() } catch {} }
+        $originalText = $TextBlock.Text
+        $TextBlock.Text = "✅ Skopiowano!"
+        $timer = New-Object System.Windows.Threading.DispatcherTimer
+        $timer.Interval = [TimeSpan]::FromMilliseconds(900)
+        $timer.Add_Tick({
+            param($senderObj, $tickArgs)
+            $TextBlock.Text = $originalText
+            $senderObj.Stop()
+        }.GetNewClosure())
+        $script:CopyFeedbackTimer = $timer
+        $timer.Start()
+    }
+
+    foreach ($pair in @(
+        @{ Chip = "chipOs"; Value = "txtOs" }
+        @{ Chip = "chipBiosSn"; Value = "txtBiosSn" }
+        @{ Chip = "chipBiosVer"; Value = "txtBiosVer" }
+        @{ Chip = "chipCpu"; Value = "txtCpu" }
+        @{ Chip = "chipRam"; Value = "txtRam" }
+    )) {
+        $chip = $dlg.FindName($pair.Chip)
+        $valueBlock = $dlg.FindName($pair.Value)
+        $chip.Add_MouseLeftButtonUp({ & $copyTextWithFeedback -TextBlock $valueBlock -Value $valueBlock.Text }.GetNewClosure())
+    }
+
+    $icDisks = $dlg.FindName("icDisks")
+    $diskLines = if ($audit.Disks.Count -gt 0) {
+        @($audit.Disks | ForEach-Object {
+            $snPart = if ($_.SerialNumber) { " — SN: $($_.SerialNumber)" } else { "" }
+            "• $($_.Model) — $($_.SizeGb) GB$snPart"
+        })
+    } else { @("Brak danych") }
+    $icDisks.ItemsSource = $diskLines
+
+    $icNets = $dlg.FindName("icNets")
+    $netLines = if ($audit.Networks.Count -gt 0) { @($audit.Networks | ForEach-Object { "• $($_.Description) — $($_.Mac) — $($_.Ip)" }) } else { @("Brak aktywnych kart sieciowych") }
+    $icNets.ItemsSource = $netLines
+
+    # Klik na dowolną linię dysku/karty sieciowej kopiuje jej pełną treść (m.in. numer seryjny
+    # dysku, adres MAC) - jeden wspólny handler na ItemsControl zamiast po jednym na wpis.
+    foreach ($ic in @($icDisks, $icNets)) {
+        $ic.AddHandler(
+            [System.Windows.UIElement]::MouseLeftButtonUpEvent,
+            [System.Windows.Input.MouseButtonEventHandler]{
+                param($senderObj, $e)
+                $tb = $e.OriginalSource -as [System.Windows.Controls.TextBlock]
+                if ($null -ne $tb -and $tb.Text -ne "Brak danych" -and $tb.Text -ne "Brak aktywnych kart sieciowych") {
+                    & $copyTextWithFeedback -TextBlock $tb -Value ($tb.Text -replace '^•\s*', '')
+                }
+            }.GetNewClosure()
+        )
+    }
+
+    $txtAppsHeader = $dlg.FindName("txtAppsHeader")
+    $txtSearch = $dlg.FindName("txtSearch")
+    $lvApps = $dlg.FindName("lvApps")
+
+    $allApps = @($audit.InstalledApps)
+    $script:SysInfoSortColumn = "Nazwa programu"
+    $script:SysInfoSortAscending = $true
+
+    $renderApps = {
+        $term = $txtSearch.Text
+        $filtered = if ([string]::IsNullOrWhiteSpace($term)) { $allApps } else { @($allApps | Where-Object { $_.DisplayName -like "*$term*" }) }
+
+        $sortProp = if ($script:SysInfoSortColumn -eq "Wersja") { "DisplayVersion" } else { "DisplayName" }
+        $sorted = @($filtered | Sort-Object -Property @{Expression = $sortProp; Descending = (-not $script:SysInfoSortAscending)})
+
+        $lvApps.ItemsSource = $sorted
+        $txtAppsHeader.Text = if ($audit.AppError) { "📦 Zainstalowane oprogramowanie - błąd odczytu" } else { "📦 Zainstalowane oprogramowanie ($($sorted.Count) z $($allApps.Count))" }
+
+        try {
+            $arrow = if ($script:SysInfoSortAscending) { " ▲" } else { " ▼" }
+            foreach ($col in $lvApps.View.Columns) {
+                $clean = [string]$col.Header -replace ' [▲▼]', ''
+                $col.Header = if ($clean -eq $script:SysInfoSortColumn) { "$clean$arrow" } else { $clean }
+            }
+        } catch {}
+    }
+
+    $txtSearch.Add_TextChanged({ & $renderApps })
+
+    $lvApps.AddHandler(
+        [System.Windows.Controls.Primitives.ButtonBase]::ClickEvent,
+        [System.Windows.RoutedEventHandler]{
+            param($senderObj, $e)
+            if ($e.OriginalSource -isnot [System.Windows.Controls.GridViewColumnHeader]) { return }
+            $header = $e.OriginalSource
+            if ($header.Role -eq [System.Windows.Controls.GridViewColumnHeaderRole]::Padding) { return }
+            if ($null -eq $header.Column) { return }
+            $colName = ([string]$header.Column.Header) -replace ' [▲▼]', ''
+            if ($script:SysInfoSortColumn -eq $colName) {
+                $script:SysInfoSortAscending = -not $script:SysInfoSortAscending
+            } else {
+                $script:SysInfoSortColumn = $colName
+                $script:SysInfoSortAscending = $true
+            }
+            & $renderApps
+        }
+    )
+
+    & $renderApps
+
+    $dlg.FindName("btnCopy").Add_Click({
+        try {
+            Set-Clipboard -Value (Get-HardwareAudit)
+            Show-ThemedMessageBox -Message "Skopiowano do schowka!" -Title "Informacja" -Button "OK" -Image "Information" | Out-Null
+        } catch {}
+    })
+
+    $dlg.FindName("btnExportHtml").Add_Click({
+        $sfd = New-Object Microsoft.Win32.SaveFileDialog
+        $sfd.Filter = "Pliki HTML (*.html)|*.html|Wszystkie pliki (*.*)|*.*"
+        $sfd.FileName = "RaportSystemowy_$($audit.ComputerName)_$(Get-Date -Format 'yyyyMMdd_HHmmss').html"
+        if ($sfd.ShowDialog() -eq $true) {
+            try {
+                Get-HardwareAudit -AsHtml | Set-Content -Path $sfd.FileName -Encoding UTF8
+                Show-ThemedMessageBox -Message "Zapisano raport do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
+                Start-Process $sfd.FileName
+            } catch {
+                Show-ThemedMessageBox -Message "Błąd podczas zapisywania: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
+            }
+        }
+    })
+
+    $dlg.FindName("btnClose").Add_Click({ $dlg.Close() })
     $dlg.ShowDialog() | Out-Null
 }
 
@@ -3084,12 +4190,18 @@ function Show-SoftwareUninstaller {
         }
     })
 
+    $uninstWindow.Add_Closing({
+        param($sender, $e)
+        # Ustaw flagę, aby przerwać pętlę deinstalacji, jeśli okno jest zamykane
+        $script:isCancelledFromUninstall = $true
+    })
+
     $btnKill.Add_Click({
         if ($null -ne $script:uninstProc -and -not $script:uninstProc.HasExited) {
             if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz wymusić zamknięcie procesu deinstalatora?" -Title "Zabij proces" -Button [System.Windows.MessageBoxButton]::YesNo -Image [System.Windows.MessageBoxImage]::Warning) -eq [System.Windows.MessageBoxResult]::Yes) {
                 try {
                     Start-Process -FilePath "taskkill.exe" -ArgumentList "/PID $($script:uninstProc.Id) /T /F" -WindowStyle Hidden -Wait
-                    Write-Log "Wymuszono zamknięcie procesu deinstalatora (drzewo procesów)."
+                    Write-Log "Wymuszono zamknięcie procesu deinstalatora (drzewo procesów)." -Context "Użytkownik"
                 } catch {
                     Show-ThemedMessageBox -Message "Błąd podczas zamykania procesu: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
                 }
@@ -3133,13 +4245,15 @@ function Show-SoftwareUninstaller {
                 $pbUninstall.Maximum = $selectedApps.Count
                 $pbUninstall.Value = 0
                 $uninstWindow.Cursor = [System.Windows.Input.Cursors]::AppStarting
+                $script:isCancelledFromUninstall = $false
                 
                 $currentAppIndex = 0
                 foreach ($app in $selectedApps) {
-                    while ($script:isUninstallPaused) {
+                    while ($script:isUninstallPaused -and -not $script:isCancelledFromUninstall) {
                         Do-WpfEvents
                         Start-Sleep -Milliseconds 100
                     }
+                    if ($script:isCancelledFromUninstall) { break }
 
                     $currentAppIndex++
                     $uninstWindow.Dispatcher.Invoke([Action]{ 
@@ -3147,11 +4261,15 @@ function Show-SoftwareUninstaller {
                     }) | Out-Null
 
                     $cmd = $app.QuietUninstallString
+                    $isOfficeClickToRun = $false
+
                     if ([string]::IsNullOrWhiteSpace($cmd)) {
                         $cmd = $app.UninstallString
                         if (-not [string]::IsNullOrWhiteSpace($cmd)) {
                             if ($cmd -match "(?i)msiexec") {
                                 $cmd = ($cmd -replace "(?i)/I", "/X") + " /qn /norestart"
+                            } elseif ($cmd -match 'OfficeClickToRun\.exe') {
+                                $isOfficeClickToRun = $true
                             } else {
                                 $cmd = "$cmd /S /quiet /silent /norestart"
                             }
@@ -3172,27 +4290,44 @@ function Show-SoftwareUninstaller {
                     }
 
                     Write-Log "Uruchamianie deinstalatora dla $($app.DisplayName)..."
-                    $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c $cmd" -PassThru -WindowStyle Hidden
-                    $script:uninstProc = $proc
-                    
-                    $pidStr = if ($null -ne $proc -and $null -ne $proc.Id) { $proc.Id } else { "Brak" }
-                    $uninstWindow.Dispatcher.Invoke([Action]{
-                        $lblUninstallStatus.Text = "Odinstalowywanie: $($app.DisplayName) | PID: $pidStr | Cmd: $cmd"
-                    }) | Out-Null
+                    $exitCode = -1
+                    try {
+                        if ($isOfficeClickToRun) {
+                            $c2rInfo = Resolve-OfficeClickToRunUninstallInfo -Cmd $cmd
+                            $productId = $c2rInfo.ProductId
+                            $c2rPath = $c2rInfo.ExePath
 
-                    while (-not $proc.HasExited) {
-                        Do-WpfEvents
-                        Start-Sleep -Milliseconds 100
+                            if ($productId -and $c2rPath -and (Test-Path -LiteralPath $c2rPath)) {
+                                $xmlPath = Join-Path $env:TEMP "uninstall_office_config.xml"
+                                $xmlContent = "<Configuration><Remove><Product ID=`"$productId`" /></Remove><Display Level=`"None`" AcceptEULA=`"True`" /></Configuration>"
+                                $xmlContent | Set-Content -Path $xmlPath -Encoding UTF8
+                                $arguments = "/configure `"$xmlPath`""
+                                $finalCmdForLog = "`"$c2rPath`" $arguments"
+                                $uninstWindow.Dispatcher.Invoke([Action]{ $lblUninstallStatus.Text = "Odinstalowywanie: $($app.DisplayName) | Cmd: $finalCmdForLog" }) | Out-Null
+                                Write-Log "Uruchamianie deinstalatora Office: `"$c2rPath`" z argumentami: $arguments"
+                                $exitCode = Start-UninstallProcessWithCancel -FilePath $c2rPath -ArgumentList $arguments -LogContext $app.DisplayName
+                                $script:uninstProc = $null
+                                if (Test-Path $xmlPath) { Remove-Item $xmlPath -Force -ErrorAction SilentlyContinue }
+                            } else {
+                                Write-Log "Nie udało się wyodrębnić ProductID lub ścieżki OfficeClickToRun.exe dla $($app.DisplayName)" -IsError
+                                $exitCode = -1
+                            }
+                        } else {
+                            $uninstWindow.Dispatcher.Invoke([Action]{ $lblUninstallStatus.Text = "Odinstalowywanie: $($app.DisplayName) | Cmd: $cmd" }) | Out-Null
+                            $exitCode = Start-UninstallProcessWithCancel -FilePath "cmd.exe" -ArgumentList "/c $cmd" -LogContext $app.DisplayName
+                            $script:uninstProc = $null
+                        }
+                    } catch {
+                        Write-Log "Błąd wykonania deinstalatora dla $($app.DisplayName): $_" -IsError
+                        $exitCode = -1
                     }
-                    $exitCode = if ($null -ne $proc.ExitCode) { $proc.ExitCode } else { 0 }
-                    $script:uninstProc = $null
 
                     $uninstWindow.Dispatcher.Invoke([Action]{
                         if ($exitCode -eq 0 -or $exitCode -eq 3010) {
                             $app.StatusText = "✔️ SUKCES"
                             $app.StatusColor = "#FF107C10"
                         } else {
-                            $app.StatusText = "❌ BŁĄD ($exitCode)"
+                            $app.StatusText = "❌ BŁĄD (kod: $exitCode)"
                             $app.StatusColor = "#FFC50F1F"
                         }
                         $lvApps.Items.Refresh()
@@ -4413,6 +5548,7 @@ function Show-ConfigEditor {
         <Style TargetType="TextBlock">
             <Setter Property="Margin" Value="0,0,0,5"/>
             <Setter Property="VerticalAlignment" Value="Bottom"/>
+            <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
         </Style>
         <Style TargetType="ComboBox">
             <Setter Property="Background" Value="{DynamicResource ThemeTextBoxBg}"/>
@@ -4471,73 +5607,160 @@ function Show-ConfigEditor {
         </Grid.RowDefinitions>
         <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,0,0,10" Padding="0,0,10,0">
             <StackPanel>
-                <TextBlock Text="Główne ustawienia źródeł instalacji" Margin="0,0,0,10" FontWeight="Bold" FontSize="15" Foreground="#FF0078D7"/>
-                <TextBlock Text="Domyślne źródło (DefaultInstallSource):"/>
-                <ComboBox Name="cmbSrc" Height="28" Margin="0,0,0,10" Padding="5,2" Background="{DynamicResource ThemeTextBoxBg}" Foreground="{DynamicResource ThemeText}" BorderBrush="{DynamicResource ThemeBorder}"/>
-                <TextBlock Text="Ścieżka sieciowa [network] (UNC):"/>
-                <TextBox Name="txtNet" Margin="0,0,0,10"/>
-                <TextBlock Text="Ścieżka sieciowa [web] (URL):"/>
-                <Grid Margin="0,0,0,15">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBox Name="txtWeb" Grid.Column="0" Margin="0,0,10,0"/>
-                    <Button Name="btnTestWeb" Content="Testuj" Grid.Column="1" Width="70" Height="28" Foreground="White" Background="#FF0078D7"/>
-                </Grid>
-                <TextBlock Text="Niestandardowe dane (CustomWebDataLocation URL):"/>
-                <TextBox Name="txtCwd" Margin="0,0,0,15"/>
-                
-                <TextBlock Text="Uwierzytelnianie sieciowe (WebAuth)" Margin="0,0,0,10" FontWeight="Bold" FontSize="15" Foreground="#FF0078D7"/>
-                <TextBlock Text="Konto logowania po HTTP/HTTPS (Username):"/>
-                <TextBox Name="txtWebUser" Margin="0,0,0,10"/>
-                <TextBlock Text="Hasło do konta po HTTP/HTTPS (Password):"/>
-                <TextBox Name="txtWebPass" Margin="0,0,0,25"/>
+                <Border Background="{DynamicResource ThemeTextBoxBg}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="1" CornerRadius="6" Margin="0,0,0,12">
+                    <StackPanel>
+                        <Button Name="btnToggleSrc" HorizontalContentAlignment="Stretch" Height="42" Background="#FF0078D7" Foreground="White">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="📡 Źródła instalacji i uwierzytelnianie sieciowe" FontWeight="Bold" FontSize="15"/>
+                                <TextBlock Name="chevronSrc" Grid.Column="1" Text="▾" FontSize="14"/>
+                            </Grid>
+                        </Button>
+                        <StackPanel Name="panelSrc" Margin="14,14,14,16" Visibility="Visible">
+                            <TextBlock Text="Domyślne źródło (DefaultInstallSource):"/>
+                            <ComboBox Name="cmbSrc" Height="28" Margin="0,0,0,10" Padding="5,2" Background="{DynamicResource ThemeTextBoxBg}" Foreground="{DynamicResource ThemeText}" BorderBrush="{DynamicResource ThemeBorder}"/>
+                            <TextBlock Text="Ścieżka sieciowa [network] (UNC):"/>
+                            <TextBox Name="txtNet" Margin="0,0,0,10"/>
+                            <TextBlock Text="Ścieżka sieciowa [web] (URL):"/>
+                            <Grid Margin="0,0,0,15">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox Name="txtWeb" Grid.Column="0" Margin="0,0,10,0"/>
+                                <Button Name="btnTestWeb" Content="Testuj" Grid.Column="1" Width="70" Height="28" Foreground="White" Background="#FF0078D7"/>
+                            </Grid>
+                            <TextBlock Text="Niestandardowe dane (CustomWebDataLocation URL):"/>
+                            <TextBox Name="txtCwd" Margin="0,0,0,15"/>
+                            <TextBlock Text="Konto logowania po HTTP/HTTPS (WebAuth Username):"/>
+                            <TextBox Name="txtWebUser" Margin="0,0,0,10"/>
+                            <TextBlock Text="Hasło do konta po HTTP/HTTPS (WebAuth Password):"/>
+                            <TextBox Name="txtWebPass"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
 
-                <TextBlock Text="Konfiguracja usług (Domena i Konta)" Margin="0,0,0,10" FontWeight="Bold" FontSize="15" Foreground="#FF0078D7"/>
-                <TextBlock Text="Nazwa domeny (DomainName):"/>
-                <TextBox Name="txtDom" Margin="0,0,0,10"/>
-                <TextBlock Text="Konto uprawnione do podłączenia (Username):"/>
-                <TextBox Name="txtDomUser" Margin="0,0,0,10"/>
-                <TextBlock Text="Nazwa domyślnego konta lokalnego (LocalAdmin Username):"/>
-                <TextBox Name="txtLoc" Margin="0,0,0,25"/>
+                <Border Background="{DynamicResource ThemeTextBoxBg}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="1" CornerRadius="6" Margin="0,0,0,12">
+                    <StackPanel>
+                        <Button Name="btnToggleDom" HorizontalContentAlignment="Stretch" Height="42" Background="#FF2E5AAC" Foreground="White">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="🏢 Domena i konto lokalne" FontWeight="Bold" FontSize="15"/>
+                                <TextBlock Name="chevronDom" Grid.Column="1" Text="▾" FontSize="14"/>
+                            </Grid>
+                        </Button>
+                        <StackPanel Name="panelDom" Margin="14,14,14,16" Visibility="Visible">
+                            <TextBlock Text="Nazwa domeny (DomainName):"/>
+                            <TextBox Name="txtDom" Margin="0,0,0,10"/>
+                            <TextBlock Text="Konto uprawnione do podłączenia (Username):"/>
+                            <TextBox Name="txtDomUser" Margin="0,0,0,10"/>
+                            <TextBlock Text="Nazwa domyślnego konta lokalnego (LocalAdmin Username):"/>
+                            <TextBox Name="txtLoc"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
 
-                <TextBlock Text="Zewnętrzne aplikacje specjalne" Margin="0,0,0,10" FontWeight="Bold" FontSize="15" Foreground="#FF0078D7"/>
-                <TextBlock Text="TeamViewer - Nazwa pliku / Winget ID:" FontWeight="SemiBold"/>
-                <TextBox Name="txtTvFile" Margin="0,0,0,10"/>
-                <TextBlock Text="TeamViewer - Argumenty instalacji:" FontWeight="SemiBold"/>
-                <TextBox Name="txtTvArgs" Margin="0,0,0,15"/>
-                
-                <TextBlock Text="AntyVirus - Nazwa pliku / Winget ID:" FontWeight="SemiBold"/>
-                <TextBox Name="txtAvFile" Margin="0,0,0,10"/>
-                <TextBlock Text="AntyVirus - Domyślne źródło instalacji:" FontWeight="SemiBold"/>
-                <ComboBox Name="cmbAvSrc" Height="28" Margin="0,0,0,10" Padding="5,2" Background="{DynamicResource ThemeTextBoxBg}" Foreground="{DynamicResource ThemeText}" BorderBrush="{DynamicResource ThemeBorder}"/>
-                <TextBlock Text="AntyVirus - Ścieżka sieciowa [network] (UNC):" FontWeight="SemiBold"/>
-                <TextBox Name="txtAvNet" Margin="0,0,0,10"/>
-                <TextBlock Text="AntyVirus - Ścieżka sieciowa [web] (URL):" FontWeight="SemiBold"/>
-                <TextBox Name="txtAvWeb" Margin="0,0,0,10"/>
-                <TextBlock Text="AntyVirus - Użytkownik WebAuth:" FontWeight="SemiBold"/>
-                <TextBox Name="txtAvUser" Margin="0,0,0,10"/>
-                <TextBlock Text="AntyVirus - Hasło WebAuth:" FontWeight="SemiBold"/>
-                <TextBox Name="txtAvPass" Margin="0,0,0,15"/>
+                <Border Background="{DynamicResource ThemeTextBoxBg}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="1" CornerRadius="6" Margin="0,0,0,12">
+                    <StackPanel>
+                        <Button Name="btnToggleTv" HorizontalContentAlignment="Stretch" Height="42" Background="#FF5C2D91" Foreground="White">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="📺 TeamViewer" FontWeight="Bold" FontSize="15"/>
+                                <TextBlock Name="chevronTv" Grid.Column="1" Text="▸" FontSize="14"/>
+                            </Grid>
+                        </Button>
+                        <StackPanel Name="panelTv" Margin="14,14,14,16" Visibility="Collapsed">
+                            <TextBlock Text="Nazwa pliku / Winget ID:"/>
+                            <TextBox Name="txtTvFile" Margin="0,0,0,10"/>
+                            <TextBlock Text="Argumenty instalacji:"/>
+                            <TextBox Name="txtTvArgs"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
 
-                <TextBlock Text="Profile Wi-Fi - Nazwy plików (po przecinku):" FontWeight="SemiBold"/>
-                <TextBox Name="txtWifiFile" Margin="0,0,0,25"/>
-                
-                <Button Name="btnManageApps" Content="Zarządzaj programami..." Height="35" HorizontalAlignment="Left" Width="260" Foreground="White" Background="#FF0078D7" FontWeight="SemiBold" Margin="0,0,0,10"/>
-                <Button Name="btnManageProfiles" Content="Zarządzaj profilami wdrożeniowymi..." Height="35" HorizontalAlignment="Left" Width="260" Foreground="White" Background="#FFD83B01" FontWeight="SemiBold" Margin="0,0,0,10"/>
-                <Button Name="btnManageRegistry" Content="Zarządzaj niestandardowym rejestrem..." Height="35" HorizontalAlignment="Left" Width="260" Foreground="White" Background="#FF0E639C" FontWeight="SemiBold" Margin="0,0,0,10"/>
-                <Button Name="btnManageDefaults" Content="Zarządzaj domyślnymi zadaniami..." Height="35" HorizontalAlignment="Left" Width="260" Foreground="White" Background="#FF107C10" FontWeight="SemiBold" Margin="0,0,0,25"/>
-                <Button Name="btnManageScripts" Content="Zarządzaj skryptami Post-Install..." Height="35" HorizontalAlignment="Left" Width="260" Foreground="White" Background="#FFC50F1F" FontWeight="SemiBold" Margin="0,0,0,25"/>
-                
-                <TextBlock Text="Kopie zapasowe konfiguracji"/>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,15">
-                    <Button Name="btnExportConfig" Content="Eksportuj..." Height="35" Width="125" Foreground="White" Background="#FF7A3E9D" FontWeight="SemiBold" Margin="0,0,10,0"/>
-                    <Button Name="btnImportConfig" Content="Importuj..." Height="35" Width="125" Foreground="White" Background="#FFB7472A" FontWeight="SemiBold"/>
-                </StackPanel>
+                <Border Background="{DynamicResource ThemeTextBoxBg}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="1" CornerRadius="6" Margin="0,0,0,12">
+                    <StackPanel>
+                        <Button Name="btnToggleAv" HorizontalContentAlignment="Stretch" Height="42" Background="#FF0E7490" Foreground="White">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="🛡️ Antywirus" FontWeight="Bold" FontSize="15"/>
+                                <TextBlock Name="chevronAv" Grid.Column="1" Text="▸" FontSize="14"/>
+                            </Grid>
+                        </Button>
+                        <StackPanel Name="panelAv" Margin="14,14,14,16" Visibility="Collapsed">
+                            <TextBlock Text="Nazwa pliku / Winget ID:"/>
+                            <TextBox Name="txtAvFile" Margin="0,0,0,10"/>
+                            <TextBlock Text="Domyślne źródło instalacji:"/>
+                            <ComboBox Name="cmbAvSrc" Height="28" Margin="0,0,0,10" Padding="5,2" Background="{DynamicResource ThemeTextBoxBg}" Foreground="{DynamicResource ThemeText}" BorderBrush="{DynamicResource ThemeBorder}"/>
+                            <TextBlock Text="Ścieżka sieciowa [network] (UNC):"/>
+                            <TextBox Name="txtAvNet" Margin="0,0,0,10"/>
+                            <TextBlock Text="Ścieżka sieciowa [web] (URL):"/>
+                            <TextBox Name="txtAvWeb" Margin="0,0,0,10"/>
+                            <TextBlock Text="Użytkownik WebAuth:"/>
+                            <TextBox Name="txtAvUser" Margin="0,0,0,10"/>
+                            <TextBlock Text="Hasło WebAuth:"/>
+                            <TextBox Name="txtAvPass"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border Background="{DynamicResource ThemeTextBoxBg}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="1" CornerRadius="6" Margin="0,0,0,12">
+                    <StackPanel>
+                        <Button Name="btnToggleWifi" HorizontalContentAlignment="Stretch" Height="42" Background="#FF3D5A80" Foreground="White">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="📶 Profil Wi-Fi" FontWeight="Bold" FontSize="15"/>
+                                <TextBlock Name="chevronWifi" Grid.Column="1" Text="▸" FontSize="14"/>
+                            </Grid>
+                        </Button>
+                        <StackPanel Name="panelWifi" Margin="14,14,14,16" Visibility="Collapsed">
+                            <TextBlock Text="Nazwy plików (po przecinku, jeśli kilka):"/>
+                            <TextBox Name="txtWifiFile"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border Background="{DynamicResource ThemeTextBoxBg}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="1" CornerRadius="6" Padding="14" Margin="0,4,0,12">
+                    <StackPanel>
+                        <TextBlock Text="🛠️ Zarządzanie" FontWeight="Bold" FontSize="14" Foreground="#FF4A9EFF" Margin="0,0,0,10"/>
+                        <UniformGrid Columns="2" Rows="3">
+                            <Button Name="btnManageApps" Content="📦 Programy" Height="38" Margin="4" Foreground="White" Background="#FF0078D7" FontWeight="SemiBold"/>
+                            <Button Name="btnManageProfiles" Content="🗂️ Profile wdrożeniowe" Height="38" Margin="4" Foreground="White" Background="#FF2E5AAC" FontWeight="SemiBold"/>
+                            <Button Name="btnManageRegistry" Content="🧩 Rejestr niestandardowy" Height="38" Margin="4" Foreground="White" Background="#FF5C2D91" FontWeight="SemiBold"/>
+                            <Button Name="btnManageDefaults" Content="☑️ Domyślne zadania" Height="38" Margin="4" Foreground="White" Background="#FF0E7490" FontWeight="SemiBold"/>
+                            <Button Name="btnManageScripts" Content="📜 Skrypty Post-Install" Height="38" Margin="4" Foreground="White" Background="#FF3D5A80" FontWeight="SemiBold"/>
+                            <Button Name="btnCheckUpdate" Content="🔄 Aktualizacje narzędzia" Height="38" Margin="4" Foreground="White" Background="#FF7A3E9D" FontWeight="SemiBold"/>
+                        </UniformGrid>
+                    </StackPanel>
+                </Border>
+
+                <Border Background="{DynamicResource ThemeTextBoxBg}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="1" CornerRadius="6" Padding="14" Margin="0,0,0,10">
+                    <StackPanel>
+                        <TextBlock Text="💾 Kopia zapasowa konfiguracji" FontWeight="Bold" FontSize="14" Foreground="#FF4A9EFF" Margin="0,0,0,10"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Name="btnExportConfig" Content="⬆️ Eksportuj..." Height="36" Width="150" Foreground="White" Background="#FF0E639C" FontWeight="SemiBold" Margin="0,0,10,0"/>
+                            <Button Name="btnImportConfig" Content="⬇️ Importuj..." Height="36" Width="150" Foreground="White" Background="#FF4A5568" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </ScrollViewer>
-        
+
         <Border Grid.Row="1" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Margin="-20,0,-20,0" Padding="20,15,20,0">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Name="btnSave" Content="Zapisz" Width="110" Height="35" Margin="0,0,15,0" Foreground="White" Background="#FF0E639C" IsDefault="True"/>
@@ -4575,11 +5798,36 @@ function Show-ConfigEditor {
     $btnManageRegistry = $dlg.FindName("btnManageRegistry")
     $btnManageDefaults = $dlg.FindName("btnManageDefaults")
     $btnManageScripts = $dlg.FindName("btnManageScripts")
+    $btnCheckUpdate = $dlg.FindName("btnCheckUpdate")
     $btnExportConfig = $dlg.FindName("btnExportConfig")
     $btnImportConfig = $dlg.FindName("btnImportConfig")
     $btnSave = $dlg.FindName("btnSave")
     $btnCancel = $dlg.FindName("btnCancel")
-    
+
+    # Zwijanie/rozwijanie sekcji - zwykłe przyciski (sprawdzony, już wszędzie indziej działający
+    # wzorzec) zamiast natywnego Expandera, którego nagłówek w tym oknie nie łapał poprawnie
+    # motywu (mały, czarny tekst w trybie ciemnym).
+    foreach ($section in @(
+        @{ Button = "btnToggleSrc"; Panel = "panelSrc"; Chevron = "chevronSrc" }
+        @{ Button = "btnToggleDom"; Panel = "panelDom"; Chevron = "chevronDom" }
+        @{ Button = "btnToggleTv"; Panel = "panelTv"; Chevron = "chevronTv" }
+        @{ Button = "btnToggleAv"; Panel = "panelAv"; Chevron = "chevronAv" }
+        @{ Button = "btnToggleWifi"; Panel = "panelWifi"; Chevron = "chevronWifi" }
+    )) {
+        $btn = $dlg.FindName($section.Button)
+        $panel = $dlg.FindName($section.Panel)
+        $chevron = $dlg.FindName($section.Chevron)
+        $btn.Add_Click({
+            if ($panel.Visibility -eq [System.Windows.Visibility]::Visible) {
+                $panel.Visibility = [System.Windows.Visibility]::Collapsed
+                $chevron.Text = "▸"
+            } else {
+                $panel.Visibility = [System.Windows.Visibility]::Visible
+                $chevron.Text = "▾"
+            }
+        }.GetNewClosure())
+    }
+
     [void]$cmbAvSrc.Items.Add("network")
     [void]$cmbAvSrc.Items.Add("web")
     [void]$cmbAvSrc.Items.Add("winget")
@@ -4632,7 +5880,8 @@ function Show-ConfigEditor {
     $btnManageRegistry.Add_Click({ Show-RegistryManager -config $config })
     $btnManageDefaults.Add_Click({ Show-DefaultTasksEditor -config $config })
     $btnManageScripts.Add_Click({ Show-PostInstallScriptsManager -config $config })
-    
+    $btnCheckUpdate.Add_Click({ Test-ForAppUpdate })
+
     $btnExportConfig.Add_Click({
         $sfd = New-Object Microsoft.Win32.SaveFileDialog
         $sfd.Filter = "Pliki JSON (*.json)|*.json|Wszystkie pliki (*.*)|*.*"
@@ -5174,11 +6423,7 @@ $btnSysProps.Add_Click({ Start-Process "systempropertiesadvanced" })
 $btnCompMgmt.Add_Click({ Start-Process "compmgmt.msc" })
 $btnRegEdit.Add_Click({ Start-Process "regedit" })
 $btnPrinters.Add_Click({ Start-Process "explorer.exe" -ArgumentList "shell:::{2227A280-3AEA-1069-A2DE-08002B30309D}" })
-$btnSysInfo.Add_Click({
-    $infoText = Get-HardwareAudit
-    $infoHtml = Get-HardwareAudit -AsHtml
-    Show-CustomInfoDialog -Title "Informacje o systemie" -Message $infoText -ShowCopy -HtmlData $infoHtml
-})
+$btnSysInfo.Add_Click({ Show-SystemInfoWindow })
 $btnUninstaller.Add_Click({ Show-SoftwareUninstaller })
 $btnStart.Add_Click({ Start-Deployment })
 
@@ -5189,14 +6434,14 @@ $btnPause.Add_Click({
         $btnPause.Background = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("#FFE6A100")
         $script:stopwatchStartTime = Get-Date
         $script:stopwatchTimer.Start()
-        Write-Log "Wznowiono wdrożenie."
+        Write-Log "Wznowiono wdrożenie." -Context "Użytkownik"
     } else {
         $script:isPaused = $true
         $btnPause.Content = "Wznów"
         $btnPause.Background = (New-Object System.Windows.Media.BrushConverter).ConvertFromString("#FF107C10")
         $script:stopwatchTimer.Stop()
         $script:stopwatchAccumulated += (Get-Date) - $script:stopwatchStartTime
-        Write-Log "Wdrożenie wstrzymane (Pauza). Oczekiwanie na interakcję..."
+        Write-Log "Wdrożenie wstrzymane (Pauza). Oczekiwanie na interakcję..." -Context "Użytkownik"
     }
 })
 
@@ -5204,7 +6449,7 @@ $btnCancelDeploy.Add_Click({
     if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz przerwać wdrożenie?" -Title "Przerwij" -Button [System.Windows.MessageBoxButton]::YesNo -Image [System.Windows.MessageBoxImage]::Warning) -eq [System.Windows.MessageBoxResult]::Yes) {
         $script:isCancelled = $true
         $script:isPaused = $false
-        Write-Log "Wdrożenie przerwane przez użytkownika!" -IsError
+        Write-Log "Wdrożenie przerwane przez użytkownika!" -IsError -Context "Użytkownik"
         $btnCancelDeploy.IsEnabled = $false
     }
 })

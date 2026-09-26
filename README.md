@@ -6,6 +6,7 @@
 
 - **Zabezpieczenie logowaniem:** Dostęp do uruchomienia narzędzia oraz zmian w oknie `Ustawień` chroniony jest kodem PIN (domyślnie: `2137`).
 - **Nowoczesny interfejs GUI (WPF):** Spójny i responsywny układ z obsługą motywu Jasnego (☀️) i Ciemnego (🌙). Wszystkie komunikaty, komunikaty o błędach i prośby o potwierdzenie są renderowane w natywnym motywie aplikacji.
+- **Czytelna Przeglądarka Logów (widok tabelaryczny):** Każdy wpis loguje pełną datę i godzinę, poziom (`INFO`/`ERROR`) oraz kontekst (`System`/`Automat`/`Użytkownik`). Przeglądarka logów prezentuje to w tabeli z sortowalnymi (kliknięcie nagłówka) i filtrowalnymi kolumnami **Rodzaj | Data zdarzenia | Kontekst | Informacja** - z kolorami/ikonami wg rodzaju zdarzenia (błąd, sukces, ostrzeżenie, Dry-Run), wyszukiwarką na żywo oraz eksportem czytelnego **raportu HTML** (do wysłania klientowi/dołączenia do zgłoszenia).
 - **Monitorowanie połączenia (Dynamiczny Status Sieci):** Działająca w tle (nie obciążająca interfejsu) pulsująca kropka wizualnie informująca o poprawności adresu IP oraz natychmiastowej weryfikacji poprawności repozytorium WWW (żądania HTTP HEAD).
 - **Zarządzanie Oprogramowaniem:**
   - Automatyczna, cicha instalacja wybranych aplikacji z różnych źródeł (ścieżki sieciowe UNC, zasoby Web/HTTP(S), oraz pakiety **Winget**).
@@ -20,6 +21,9 @@
 - **Szyfrowanie BitLocker:** Zautomatyzowany mechanizm szyfrowania sprzętowego dysku systemowego z automatycznym generowaniem i eksportem bezpiecznego klucza odzyskiwania na serwer.
 - **System Tweaks i Bloatware:** Moduły wymuszające optymalizację Windows, usuwające śmieciowe aplikacje (TikTok, Xbox itp.), wyłączające usługi zbierające dane telemetryczne czy Cortanę.
 - **Szybkie Narzędzia (Quick Tools):** Błyskawiczny dostęp do najważniejszych konsol Windows (Zarządzanie komputerem, Edytor Rejestru) oraz szczegółowych *Informacji o systemie* z opcją kopiowania prosto do schowka.
+- **Tryb testowy (Dry-Run):** Opcjonalny checkbox na ekranie głównym pozwala zasymulować pełne wdrożenie - narzędzie loguje, co zostałoby zrobione (instalacje, deinstalacje, zmiany rejestru, dołączenie do domeny, BitLocker itd.), ale nie wprowadza żadnej rzeczywistej zmiany w systemie. Przydatne do weryfikacji poprawności konfiguracji przed wdrożeniem na realnej stacji.
+- **Punkt przywracania i checkpoint wdrożenia:** Opcjonalny checkbox tworzy punkt przywracania systemu Windows tuż przed startem wdrożenia (System Restore). Niezależnie od tego, postęp każdego wdrożenia jest na bieżąco zapisywany do `C:\deploy-checkpoint.json`, co ułatwia diagnozę, na którym kroku wdrożenie zostało przerwane w razie awarii.
+- **Aktualizacje narzędzia:** Przycisk *"Sprawdź aktualizacje narzędzia..."* w oknie Ustawień porównuje lokalną wersję z plikiem `std_version.json` publikowanym pod skonfigurowaną ścieżką (`AutoUpdate.VersionCheckPath` w `config.json` - UNC lub URL) i, po potwierdzeniu, pobiera oraz podmienia plik `.ps1`, po czym uruchamia narzędzie ponownie.
 
 ## Wymagania
 
@@ -35,7 +39,7 @@
 3. Przy pierwszym uruchomieniu, jeśli brakuje pliku konfiguracyjnego, narzędzie zaproponuje wygenerowanie podstawowego szablonu `config.json`.
 4. Skonfiguruj ścieżki sieciowe i pakiety klikając **Ustawienia...**.
 5. Zaznacz pożądane zadania instalacyjne na głównym ekranie, wybierz aplikacje z listy.
-6. Kliknij zielony przycisk **"ROZPOCZNIJ KONFIGURACJĘ"** i śledź logi oraz pasek postępu. Wszystkie operacje będą też na bieżąco zapisywane na dysku (`C:\deploy-log.txt`).
+6. Kliknij zielony przycisk **"ROZPOCZNIJ KONFIGURACJĘ"** i śledź logi oraz pasek postępu. Wszystkie operacje będą też na bieżąco zapisywane na dysku (`C:\deploy-log.txt`, format `[yyyy-MM-dd HH:mm:ss] [INFO|ERROR] [Kontekst] treść`) i dostępne w tabelarycznej **Przeglądarce Logów** (przycisk *"Logi..."*) - sortowalne kolumny Rodzaj/Data/Kontekst/Informacja, filtry, wyszukiwarka i eksport raportu HTML.
 
 ## Przykładowa struktura `config.json`
 
@@ -101,7 +105,13 @@ Plik generuje się i jest zarządzany automatycznie przez aplikację, lecz możn
         "WaitForNetwork": true,
         "RemoveBloatware": true,
         "InstallApplications": true,
-        "RunPostInstallScripts": false
+        "RunPostInstallScripts": false,
+        "DryRun": false,
+        "CreateRestorePoint": false
+    },
+    "AutoUpdate": {
+        "Enabled": false,
+        "VersionCheckPath": "\\\\SERWER\\Instalki\\STD\\"
     },
     "DarkTheme": true
 }
