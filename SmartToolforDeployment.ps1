@@ -1993,34 +1993,64 @@ function Enable-BitLockerEncryption {
             Write-Log "Moduł TPM nie jest dostępny lub gotowy! Pominięto szyfrowanie." -IsError
             return
         }
-        $bl = Get-BitLockerVolume -MountPoint "C:" -ErrorAction SilentlyContinue
+        $bl = Get-BitLockerVolume -MountPoint "C:" -ErrorAction Stop
         if ($bl.VolumeStatus -eq "FullyEncrypted" -or $bl.VolumeStatus -eq "EncryptionInProgress") {
             Write-Log "Dysk C: jest już zaszyfrowany lub proces jest w toku."
+            return
+        }
+        if ($bl.VolumeStatus -ne "FullyDecrypted") {
+            # Np. EncryptionPaused / DecryptionInProgress - dysk jest częściowo zaszyfrowany, więc nie
+            # ruszamy automatycznie jego protektorów. To wymaga decyzji administratora.
+            Write-Log "Dysk C: jest w stanie '$($bl.VolumeStatus)' - pomijam automatyczne szyfrowanie, sprawdź stan ręcznie (manage-bde -status C:)." -IsError
             return
         }
         if ($script:DryRun) {
             Write-Log "[DRY-RUN] Zaszyfrowano by dysk C: (BitLocker XTS-AES 256) i wyeksportowano klucz odzyskiwania."
             return
         }
-        Write-Log "Generowanie klucza odzyskiwania..."
-        Add-BitLockerKeyProtector -MountPoint "C:" -TpmProtector -ErrorAction Stop | Out-Null
-        $recovery = Add-BitLockerKeyProtector -MountPoint "C:" -RecoveryPasswordProtector -ErrorAction Stop
-        $recPassword = ($recovery.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' }).RecoveryPassword
-        Write-Log "Rozpoczynanie szyfrowania dysku C: (XTS-AES 256)..."
-        Enable-BitLocker -MountPoint "C:" -EncryptionMethod XtsAes256 -UsedSpaceOnly -SkipHardwareTest -ErrorAction Stop | Out-Null
-        Write-Log "Szyfrowanie zostało zainicjowane pomyślnie."
-        
+
+        # 1. Ustalamy katalog na klucz odzyskiwania ZANIM cokolwiek zmienimy na dysku.
         $config = Get-Content $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $exportDir = "C:\Audit\"
-        if ($null -ne $config.HardwareAudit -and -not [string]::IsNullOrWhiteSpace($config.HardwareAudit.ExportPath)) { 
+        if ($null -ne $config.HardwareAudit -and -not [string]::IsNullOrWhiteSpace($config.HardwareAudit.ExportPath)) {
             $exportDir = [System.Environment]::ExpandEnvironmentVariables($config.HardwareAudit.ExportPath)
         }
-        if (-not (Test-Path $exportDir)) { New-Item -ItemType Directory -Path $exportDir -Force | Out-Null }
+        if ($exportDir -notmatch '^\\\\') {
+            Write-Log "Uwaga: klucz odzyskiwania zostanie zapisany lokalnie ($exportDir), czyli na szyfrowanym dysku. Zalecana jest ścieżka sieciowa (UNC) w HardwareAudit.ExportPath." -IsError
+        }
+        if (-not (Test-Path $exportDir)) { New-Item -ItemType Directory -Path $exportDir -Force -ErrorAction Stop | Out-Null }
+
+        # 2. Hasło odzyskiwania: używamy istniejącego (np. z wcześniejszej nieudanej próby), inaczej dodajemy nowe.
+        Write-Log "Generowanie klucza odzyskiwania..."
+        $recProtector = @($bl.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' }) | Select-Object -First 1
+        if ($null -eq $recProtector) {
+            Add-BitLockerKeyProtector -MountPoint "C:" -RecoveryPasswordProtector -ErrorAction Stop | Out-Null
+            $bl = Get-BitLockerVolume -MountPoint "C:" -ErrorAction Stop
+            $recProtector = @($bl.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' }) | Select-Object -First 1
+        }
+        $recPassword = $recProtector.RecoveryPassword
+        if ([string]::IsNullOrWhiteSpace($recPassword)) { throw "Nie udało się odczytać hasła odzyskiwania BitLocker." }
+
+        # 3. Zapis klucza PRZED włączeniem szyfrowania. Jeśli zapis się nie uda (-ErrorAction Stop),
+        #    szyfrowanie w ogóle nie wystartuje - nie zostaniemy z zaszyfrowanym dyskiem bez kopii klucza.
         $fileName = "BitLocker_Recovery_$($env:COMPUTERNAME)_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt"
         $fullPath = Join-Path $exportDir $fileName
-        $info = "Komputer: $($env:COMPUTERNAME)`r`nData: $(Get-Date)`r`nKlucz odzyskiwania: $recPassword"
-        $info | Out-File -FilePath $fullPath -Encoding UTF8 -Force
+        $info = "Komputer: $($env:COMPUTERNAME)`r`nData: $(Get-Date)`r`nID protektora: $($recProtector.KeyProtectorId)`r`nKlucz odzyskiwania: $recPassword"
+        $info | Out-File -FilePath $fullPath -Encoding UTF8 -Force -ErrorAction Stop
         Write-Log "Klucz odzyskiwania zapisano w: $fullPath"
+
+        # 4. Protektor TPM pozostawiony przez wcześniejszą wersję narzędzia (dodawała go, a potem
+        #    Enable-BitLocker padał) usuwamy - Enable-BitLocker -TpmProtector doda własny. Dysk jest
+        #    w stanie FullyDecrypted (sprawdzone wyżej), więc usunięcie protektora niczego nie odsłania.
+        foreach ($tpmProtector in @($bl.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'Tpm' })) {
+            Remove-BitLockerKeyProtector -MountPoint "C:" -KeyProtectorId $tpmProtector.KeyProtectorId -ErrorAction Stop | Out-Null
+        }
+
+        # 5. Enable-BitLocker MUSI dostać protektor (-TpmProtector, -RecoveryPasswordProtector itd.).
+        #    Wcześniej wywołanie bez niego zawsze kończyło się błędem "Parameter set cannot be resolved".
+        Write-Log "Rozpoczynanie szyfrowania dysku C: (XTS-AES 256)..."
+        Enable-BitLocker -MountPoint "C:" -EncryptionMethod XtsAes256 -UsedSpaceOnly -SkipHardwareTest -TpmProtector -ErrorAction Stop | Out-Null
+        Write-Log "Szyfrowanie zostało zainicjowane pomyślnie."
     } catch { Write-Log "Wystąpił błąd podczas aktywacji BitLockera: $_" -IsError }
 }
 
