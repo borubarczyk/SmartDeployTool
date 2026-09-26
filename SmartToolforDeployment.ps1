@@ -161,11 +161,16 @@ function global:Show-ThemedMessageBox {
     elseif ($Button -match 'YesNo') { $btnStr = 'YesNo' }
     else { $btnStr = 'OK' }
     
+    # UWAGA: wartości enum MUSZĄ być w nawiasach. Przy wywołaniu polecenia (& $AddBtn ...) PowerShell
+    # działa w "trybie argumentów", w którym [System.Windows.MessageBoxResult]::Yes bez nawiasów NIE
+    # jest wyliczane, tylko przekazywane jako zwykły napis "[System.Windows.MessageBoxResult]::Yes".
+    # Porównanie takiego napisu z enumem (-eq [System.Windows.MessageBoxResult]::Yes) zawsze dawało
+    # $false, więc każde "Tak" działało jak "Nie". Nawias wymusza wyliczenie wyrażenia.
     switch ($btnStr) {
-        "OKCancel" { & $AddBtn "OK" [System.Windows.MessageBoxResult]::OK $true $false "#FF0078D7"; & $AddBtn "Anuluj" [System.Windows.MessageBoxResult]::Cancel $false $true $null }
-        "YesNo" { & $AddBtn "Tak" [System.Windows.MessageBoxResult]::Yes $true $false "#FF0078D7"; & $AddBtn "Nie" [System.Windows.MessageBoxResult]::No $false $true $null }
-        "YesNoCancel" { & $AddBtn "Tak" [System.Windows.MessageBoxResult]::Yes $true $false "#FF0078D7"; & $AddBtn "Nie" [System.Windows.MessageBoxResult]::No $false $false $null; & $AddBtn "Anuluj" [System.Windows.MessageBoxResult]::Cancel $false $true $null }
-        default { & $AddBtn "OK" [System.Windows.MessageBoxResult]::OK $true $false "#FF0078D7" }
+        "OKCancel" { & $AddBtn "OK" ([System.Windows.MessageBoxResult]::OK) $true $false "#FF0078D7"; & $AddBtn "Anuluj" ([System.Windows.MessageBoxResult]::Cancel) $false $true $null }
+        "YesNo" { & $AddBtn "Tak" ([System.Windows.MessageBoxResult]::Yes) $true $false "#FF0078D7"; & $AddBtn "Nie" ([System.Windows.MessageBoxResult]::No) $false $true $null }
+        "YesNoCancel" { & $AddBtn "Tak" ([System.Windows.MessageBoxResult]::Yes) $true $false "#FF0078D7"; & $AddBtn "Nie" ([System.Windows.MessageBoxResult]::No) $false $false $null; & $AddBtn "Anuluj" ([System.Windows.MessageBoxResult]::Cancel) $false $true $null }
+        default { & $AddBtn "OK" ([System.Windows.MessageBoxResult]::OK) $true $false "#FF0078D7" }
     }
     if ($null -ne $Window -and $Window.IsLoaded) { $dlg.Owner = $Window; $dlg.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterOwner }
     $dlg.ShowDialog() | Out-Null
@@ -253,11 +258,11 @@ $btnLoginAuth.Add_Click({
     } else {
         $script:failedAttempts++
         if ($script:failedAttempts -ge 3) {
-            Show-ThemedMessageBox -Message "Przekroczono limit błędnych prób (3). Aplikacja zostanie zamknięta." -Title "Blokada" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+            Show-ThemedMessageBox -Message "Przekroczono limit błędnych prób (3). Aplikacja zostanie zamknięta." -Title "Blokada" -Button "OK" -Image "Error" | Out-Null
             $authWindow.Close()
         } else {
             $pozostalo = 3 - $script:failedAttempts
-            Show-ThemedMessageBox -Message "Nieprawidłowy login lub PIN.`nPozostało prób: $pozostalo" -Title "Błąd autoryzacji" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+            Show-ThemedMessageBox -Message "Nieprawidłowy login lub PIN.`nPozostało prób: $pozostalo" -Title "Błąd autoryzacji" -Button "OK" -Image "Error" | Out-Null
             $txtPin.Clear()
         }
     }
@@ -1005,11 +1010,11 @@ function Test-BeforeRun {
     foreach ($w in $warnings) { Write-Log $w }
 
     if ($errors.Count -gt 0) {
-        Show-ThemedMessageBox -Message ("Wykryto bledy walidacji:`r`n- " + ($errors -join "`r`n- ")) -Title "Walidacja" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+        Show-ThemedMessageBox -Message ("Wykryto bledy walidacji:`r`n- " + ($errors -join "`r`n- ")) -Title "Walidacja" -Button "OK" -Image "Error" | Out-Null
         return $false
     }
     if ($warnings.Count -gt 0) {
-        Show-ThemedMessageBox -Message ("Uwaga:`r`n- " + ($warnings -join "`r`n- ")) -Title "Walidacja" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+        Show-ThemedMessageBox -Message ("Uwaga:`r`n- " + ($warnings -join "`r`n- ")) -Title "Walidacja" -Button "OK" -Image "Warning" | Out-Null
     }
     return $true
 }
@@ -1177,7 +1182,7 @@ function Install-TeamViewer {
         }
         else {
             Write-Log "TeamViewer nie jest zainstalowany, przechodzę do instalacji."
-        if ( (Show-ThemedMessageBox -Message "Nie wykryto instalacji TeamViewer. Czy chcesz kontynuować instalację? (Jeśli istnieje proces TeamViewera zostanie on ubity)" -Title "Potwierdzenie" -Button [System.Windows.MessageBoxButton]::YesNo -Image [System.Windows.MessageBoxImage]::Question) -ne [System.Windows.MessageBoxResult]::Yes ) {
+        if ( (Show-ThemedMessageBox -Message "Nie wykryto instalacji TeamViewer. Czy chcesz kontynuować instalację? (Jeśli istnieje proces TeamViewera zostanie on ubity)" -Title "Potwierdzenie" -Button "YesNo" -Image "Question") -ne [System.Windows.MessageBoxResult]::Yes ) {
                 Write-Log "Instalacja anulowana przez użytkownika." -IsError
                 return
             }
@@ -2404,11 +2409,11 @@ function Start-Deployment {
             }
     
             if ($CheckboxControls.ContainsKey("AutoReboot") -and $CheckboxControls["AutoReboot"].IsChecked -eq $true) {
-                Show-ThemedMessageBox -Message "Konfiguracja zakończona! Komputer uruchomi się ponownie po zamknięciu tego okna." -Title "Zakończono" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+                Show-ThemedMessageBox -Message "Konfiguracja zakończona! Komputer uruchomi się ponownie po zamknięciu tego okna." -Title "Zakończono" -Button "OK" -Image "Information" | Out-Null
                 Write-Log "Wymuszono ponowne uruchomienie systemu..."
                 Restart-Computer -Force
             } else {
-                Show-ThemedMessageBox -Message "Gotowe!" -Title "Zakończono" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+                Show-ThemedMessageBox -Message "Gotowe!" -Title "Zakończono" -Button "OK" -Image "Information" | Out-Null
             }
         }
     } catch {
@@ -3152,9 +3157,9 @@ function Show-LogWindow {
         if ($sfd.ShowDialog() -eq $true) {
             try {
                 $script:rawLogText | Set-Content -Path $sfd.FileName -Encoding UTF8
-                Show-ThemedMessageBox -Message "Zapisano logi do $($sfd.FileName)" -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+                Show-ThemedMessageBox -Message "Zapisano logi do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
             } catch {
-                Show-ThemedMessageBox -Message "Błąd podczas zapisywania: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+                Show-ThemedMessageBox -Message "Błąd podczas zapisywania: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             }
         }
     })
@@ -3163,7 +3168,7 @@ function Show-LogWindow {
         if (Test-Path "C:\deploy-log.txt") {
             Start-Process "notepad.exe" -ArgumentList "C:\deploy-log.txt"
         } else {
-            Show-ThemedMessageBox -Message "Plik C:\deploy-log.txt nie istnieje." -Title "Informacja" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            Show-ThemedMessageBox -Message "Plik C:\deploy-log.txt nie istnieje." -Title "Informacja" -Button "OK" -Image "Information" | Out-Null
         }
     })
 
@@ -3178,7 +3183,7 @@ function Show-LogWindow {
     $btnZipLogs.Add_Click({
         $logFiles = @("C:\deploy-log.txt", "C:\deploy-error-log.txt") | Where-Object { Test-Path $_ }
         if ($logFiles.Count -eq 0) {
-            Show-ThemedMessageBox -Message "Brak plików logów do spakowania." -Title "Informacja" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            Show-ThemedMessageBox -Message "Brak plików logów do spakowania." -Title "Informacja" -Button "OK" -Image "Information" | Out-Null
             return
         }
         
@@ -3188,9 +3193,9 @@ function Show-LogWindow {
         if ($sfd.ShowDialog() -eq $true) {
             try {
                 Compress-Archive -Path $logFiles -DestinationPath $sfd.FileName -Force
-                Show-ThemedMessageBox -Message "Spakowano logi do $($sfd.FileName)" -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+                Show-ThemedMessageBox -Message "Spakowano logi do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
             } catch {
-                Show-ThemedMessageBox -Message "Błąd podczas pakowania: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+                Show-ThemedMessageBox -Message "Błąd podczas pakowania: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             }
         }
     })
@@ -3347,7 +3352,7 @@ function Show-CustomInfoDialog {
         $btnCopy.Visibility = [System.Windows.Visibility]::Visible
         $btnCopy.Add_Click({
             Set-Clipboard -Value $Message
-            Show-ThemedMessageBox -Message "Skopiowano do schowka!" -Title "Informacja" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            Show-ThemedMessageBox -Message "Skopiowano do schowka!" -Title "Informacja" -Button "OK" -Image "Information" | Out-Null
         })
     }
     
@@ -3361,9 +3366,9 @@ function Show-CustomInfoDialog {
             if ($sfd.ShowDialog() -eq $true) {
                 try {
                     $HtmlData | Set-Content -Path $sfd.FileName -Encoding UTF8
-                    Show-ThemedMessageBox -Message "Zapisano raport do $($sfd.FileName)" -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+                    Show-ThemedMessageBox -Message "Zapisano raport do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
                 } catch {
-                    Show-ThemedMessageBox -Message "Błąd podczas zapisywania: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+                    Show-ThemedMessageBox -Message "Błąd podczas zapisywania: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
                 }
             }
         })
@@ -4020,7 +4025,7 @@ function Show-SoftwareUninstaller {
     $btnExportCSV.Add_Click({
         $itemsToExport = @($lvApps.Items)
         if ($itemsToExport.Count -eq 0) {
-            Show-ThemedMessageBox -Message "Brak programów do wyeksportowania na widocznej liście." -Title "Informacja" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            Show-ThemedMessageBox -Message "Brak programów do wyeksportowania na widocznej liście." -Title "Informacja" -Button "OK" -Image "Information" | Out-Null
             return
         }
         
@@ -4030,9 +4035,9 @@ function Show-SoftwareUninstaller {
         if ($sfd.ShowDialog() -eq $true) {
             try {
                 $itemsToExport | Select-Object DisplayName, DisplayVersion, InstallDate, Publisher | Export-Csv -Path $sfd.FileName -NoTypeInformation -Encoding UTF8 -Delimiter ";"
-                Show-ThemedMessageBox -Message "Wyeksportowano pomyślnie do $($sfd.FileName)" -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+                Show-ThemedMessageBox -Message "Wyeksportowano pomyślnie do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
             } catch {
-                Show-ThemedMessageBox -Message "Błąd eksportu: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+                Show-ThemedMessageBox -Message "Błąd eksportu: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             }
         }
     })
@@ -4040,7 +4045,7 @@ function Show-SoftwareUninstaller {
     $btnExportHTML.Add_Click({
         $itemsToExport = @($lvApps.Items)
         if ($itemsToExport.Count -eq 0) {
-            Show-ThemedMessageBox -Message "Brak programów do wyeksportowania na widocznej liście." -Title "Informacja" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            Show-ThemedMessageBox -Message "Brak programów do wyeksportowania na widocznej liście." -Title "Informacja" -Button "OK" -Image "Information" | Out-Null
             return
         }
         
@@ -4084,9 +4089,9 @@ function Show-SoftwareUninstaller {
 </html>
 "@
                 $html | Set-Content -Path $sfd.FileName -Encoding UTF8
-                Show-ThemedMessageBox -Message "Wyeksportowano pomyślnie do $($sfd.FileName)" -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+                Show-ThemedMessageBox -Message "Wyeksportowano pomyślnie do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
             } catch {
-                Show-ThemedMessageBox -Message "Błąd eksportu: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+                Show-ThemedMessageBox -Message "Błąd eksportu: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             }
         }
     })
@@ -4161,7 +4166,7 @@ function Show-SoftwareUninstaller {
             if (-not [string]::IsNullOrWhiteSpace($path) -and (Test-Path -LiteralPath $path)) {
                 Start-Process "explorer.exe" -ArgumentList "`"$path`""
             } else {
-            Show-ThemedMessageBox -Message "Nie udało się automatycznie ustalić ścieżki instalacji dla tego programu." -Title "Brak ścieżki" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+            Show-ThemedMessageBox -Message "Nie udało się automatycznie ustalić ścieżki instalacji dla tego programu." -Title "Brak ścieżki" -Button "OK" -Image "Warning" | Out-Null
             }
         }
     })
@@ -4182,10 +4187,10 @@ function Show-SoftwareUninstaller {
                 try {
                     Start-Process -FilePath "cmd.exe" -ArgumentList "/c $cmd"
                 } catch {
-                Show-ThemedMessageBox -Message "Błąd uruchamiania deinstalatora: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+                Show-ThemedMessageBox -Message "Błąd uruchamiania deinstalatora: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
                 }
             } else {
-            Show-ThemedMessageBox -Message "Brak ścieżki deinstalatora w rejestrze." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+            Show-ThemedMessageBox -Message "Brak ścieżki deinstalatora w rejestrze." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
             }
         }
     })
@@ -4198,12 +4203,12 @@ function Show-SoftwareUninstaller {
 
     $btnKill.Add_Click({
         if ($null -ne $script:uninstProc -and -not $script:uninstProc.HasExited) {
-            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz wymusić zamknięcie procesu deinstalatora?" -Title "Zabij proces" -Button [System.Windows.MessageBoxButton]::YesNo -Image [System.Windows.MessageBoxImage]::Warning) -eq [System.Windows.MessageBoxResult]::Yes) {
+            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz wymusić zamknięcie procesu deinstalatora?" -Title "Zabij proces" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
                 try {
                     Start-Process -FilePath "taskkill.exe" -ArgumentList "/PID $($script:uninstProc.Id) /T /F" -WindowStyle Hidden -Wait
                     Write-Log "Wymuszono zamknięcie procesu deinstalatora (drzewo procesów)." -Context "Użytkownik"
                 } catch {
-                    Show-ThemedMessageBox -Message "Błąd podczas zamykania procesu: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+                    Show-ThemedMessageBox -Message "Błąd podczas zamykania procesu: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
                 }
             }
         }
@@ -4226,7 +4231,7 @@ function Show-SoftwareUninstaller {
     $btnUninstall.Add_Click({
         $selectedApps = @($script:uninstAllApps | Where-Object { $_.IsChecked })
         if ($selectedApps.Count -eq 0) { 
-            Show-ThemedMessageBox -Message "Wybierz co najmniej jeden program z listy (zaznacz pole)." -Title "Informacja" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            Show-ThemedMessageBox -Message "Wybierz co najmniej jeden program z listy (zaznacz pole)." -Title "Informacja" -Button "OK" -Image "Information" | Out-Null
             return 
         }
 
@@ -4354,7 +4359,7 @@ function Show-SoftwareUninstaller {
                 }
                 Show-CustomInfoDialog -Title "Zakończono" -Message "Przetwarzanie deinstalacji zakończone.`n`nPoprawnie odinstalowane aplikacje zostały automatycznie usunięte z listy.`nJeśli instalator zwrócił błąd, aplikacja pozostała na liście oznaczona krzyżykiem (❌)."
             } catch {
-            Show-ThemedMessageBox -Message "Wystąpił błąd podczas uruchamiania deinstalatora:`n$($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+            Show-ThemedMessageBox -Message "Wystąpił błąd podczas uruchamiania deinstalatora:`n$($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             } finally {
                 $script:uninstProc = $null
                 $btnUninstall.IsEnabled = $true
@@ -4485,7 +4490,7 @@ function Show-ProgramEditDialog {
     
     $btnSave.Add_Click({
         if ([string]::IsNullOrWhiteSpace($txtName.Text)) {
-            Show-ThemedMessageBox -Message "Identyfikator nie może być pusty." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+            Show-ThemedMessageBox -Message "Identyfikator nie może być pusty." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
             return
         }
         $script:progEditResult = @{
@@ -4583,7 +4588,7 @@ function Show-ProgramsManager {
                 $config | Add-Member -NotePropertyName Programs -NotePropertyValue (New-Object PSObject) -Force
             }
             if ($config.Programs.PSObject.Properties.Name -contains $res.Name) {
-                Show-ThemedMessageBox -Message "Program o tym identyfikatorze już istnieje." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+                Show-ThemedMessageBox -Message "Program o tym identyfikatorze już istnieje." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
                 return
             }
             Add-Member -InputObject $config.Programs -NotePropertyName $res.Name -NotePropertyValue $res.Data -Force
@@ -4617,7 +4622,7 @@ function Show-ProgramsManager {
                     $config | Add-Member -NotePropertyName Programs -NotePropertyValue (New-Object PSObject) -Force
                 }
                 if ($config.Programs.PSObject.Properties.Name -contains $res.Name) {
-                Show-ThemedMessageBox -Message "Program o tym identyfikatorze już istnieje." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+                Show-ThemedMessageBox -Message "Program o tym identyfikatorze już istnieje." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
                     return
                 }
                 Add-Member -InputObject $config.Programs -NotePropertyName $res.Name -NotePropertyValue $res.Data -Force
@@ -4629,7 +4634,7 @@ function Show-ProgramsManager {
     $btnRemove.Add_Click({
         if ($lbPrograms.SelectedItem) {
             $pName = $lbPrograms.SelectedItem
-            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć program $pName?" -Title "Potwierdzenie" -Button [System.Windows.MessageBoxButton]::YesNo -Image [System.Windows.MessageBoxImage]::Warning) -eq [System.Windows.MessageBoxResult]::Yes) {
+            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć program $pName?" -Title "Potwierdzenie" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
                 $config.Programs.PSObject.Properties.Remove($pName)
                 & $RefreshList
             }
@@ -4817,11 +4822,11 @@ function Show-RegistryEditDialog {
     $btnSave.Add_Click({
         $subKey = $txtSubKey.Text.Trim() -replace '^[\\/]+', ''
         if ([string]::IsNullOrWhiteSpace($subKey) -or [string]::IsNullOrWhiteSpace($txtName.Text)) {
-            Show-ThemedMessageBox -Message "Ścieżka i nazwa nie mogą być puste." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+            Show-ThemedMessageBox -Message "Ścieżka i nazwa nie mogą być puste." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
             return
         }
         if ($subKey -match "^(?i)HK(LM|CU|CR|U|CC)") {
-            Show-ThemedMessageBox -Message "Wpisz tylko ścieżkę podrzędną (np. Software\MójKlucz). Główny klucz wybierasz z listy." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+            Show-ThemedMessageBox -Message "Wpisz tylko ścieżkę podrzędną (np. Software\MójKlucz). Główny klucz wybierasz z listy." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
             return
         }
         
@@ -4941,7 +4946,7 @@ function Show-RegistryManager {
     $btnRemove.Add_Click({
         $idx = $lbRegistry.SelectedIndex
         if ($idx -ge 0) {
-            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć ten wpis rejestru?" -Title "Potwierdzenie" -Button [System.Windows.MessageBoxButton]::YesNo -Image [System.Windows.MessageBoxImage]::Warning) -eq [System.Windows.MessageBoxResult]::Yes) {
+            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć ten wpis rejestru?" -Title "Potwierdzenie" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
                 $regList.RemoveAt($idx)
                 & $RefreshList
             }
@@ -5103,7 +5108,7 @@ function Show-ScriptEditDialog {
     
     $btnSave.Add_Click({
         if ([string]::IsNullOrWhiteSpace($txtPath.Text)) {
-            Show-ThemedMessageBox -Message "Ścieżka skryptu nie może być pusta." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+            Show-ThemedMessageBox -Message "Ścieżka skryptu nie może być pusta." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
             return
         }
         $script:scriptEditResult = $txtPath.Text.Trim()
@@ -5196,7 +5201,7 @@ function Show-PostInstallScriptsManager {
     $btnRemove.Add_Click({
         $idx = $lbScripts.SelectedIndex
         if ($idx -ge 0) {
-            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć ten skrypt z listy?" -Title "Potwierdzenie" -Button [System.Windows.MessageBoxButton]::YesNo -Image [System.Windows.MessageBoxImage]::Warning) -eq [System.Windows.MessageBoxResult]::Yes) {
+            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć ten skrypt z listy?" -Title "Potwierdzenie" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
                 $scriptList.RemoveAt($idx)
                 & $RefreshList
             }
@@ -5299,7 +5304,7 @@ function Show-ProfileEditDialog {
     
     $btnSave.Add_Click({
         if ([string]::IsNullOrWhiteSpace($txtName.Text)) {
-            Show-ThemedMessageBox -Message "Nazwa profilu nie może być pusta." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+            Show-ThemedMessageBox -Message "Nazwa profilu nie może być pusta." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
             return
         }
         $selectedApps = @()
@@ -5394,7 +5399,7 @@ function Show-ProfilesManager {
                 $config | Add-Member -NotePropertyName Profiles -NotePropertyValue (New-Object PSObject) -Force
             }
             if ($config.Profiles.PSObject.Properties.Name -contains $res.Name) {
-                Show-ThemedMessageBox -Message "Profil o tej nazwie już istnieje." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+                Show-ThemedMessageBox -Message "Profil o tej nazwie już istnieje." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
                 return
             }
             Add-Member -InputObject $config.Profiles -NotePropertyName $res.Name -NotePropertyValue $res.Apps -Force
@@ -5421,7 +5426,7 @@ function Show-ProfilesManager {
     $btnRemove.Add_Click({
         if ($lbProfiles.SelectedItem) {
             $pName = $lbProfiles.SelectedItem
-            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć profil '$pName'?" -Title "Potwierdzenie" -Button [System.Windows.MessageBoxButton]::YesNo -Image [System.Windows.MessageBoxImage]::Warning) -eq [System.Windows.MessageBoxResult]::Yes) {
+            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć profil '$pName'?" -Title "Potwierdzenie" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
                 $config.Profiles.PSObject.Properties.Remove($pName)
                 & $RefreshList
             }
@@ -5499,7 +5504,7 @@ function Show-PinPrompt {
             $dlg.Close()
         } else {
             Write-Log "[Autoryzacja] Błędny PIN przy próbie wejścia w ustawienia!" -IsError
-            Show-ThemedMessageBox -Message "Nieprawidłowy PIN." -Title "Błąd autoryzacji" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+            Show-ThemedMessageBox -Message "Nieprawidłowy PIN." -Title "Błąd autoryzacji" -Button "OK" -Image "Error" | Out-Null
             $txtPin.Clear()
         }
     })
@@ -5889,9 +5894,9 @@ function Show-ConfigEditor {
         if ($sfd.ShowDialog() -eq $true) {
             try {
                 $config | ConvertTo-Json -Depth 10 | Set-Content -Path $sfd.FileName -Encoding UTF8
-                Show-ThemedMessageBox -Message "Eksport zakończony pomyślnie." -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+                Show-ThemedMessageBox -Message "Eksport zakończony pomyślnie." -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
             } catch {
-                Show-ThemedMessageBox -Message "Błąd eksportu: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+                Show-ThemedMessageBox -Message "Błąd eksportu: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             }
         }
     })
@@ -5907,10 +5912,10 @@ function Show-ConfigEditor {
                         $config | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
                     }
                     & $UpdateUIFields $config
-                    Show-ThemedMessageBox -Message "Konfiguracja została zaimportowana. Kliknij 'Zapisz', aby ją trwale zachować w aplikacji." -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+                    Show-ThemedMessageBox -Message "Konfiguracja została zaimportowana. Kliknij 'Zapisz', aby ją trwale zachować w aplikacji." -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
                 }
             } catch {
-                Show-ThemedMessageBox -Message "Błąd importu: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+                Show-ThemedMessageBox -Message "Błąd importu: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             }
         }
     })
@@ -5918,11 +5923,11 @@ function Show-ConfigEditor {
     $btnTestWeb.Add_Click({
         $url = $txtWeb.Text.Trim()
         if ([string]::IsNullOrWhiteSpace($url)) {
-            Show-ThemedMessageBox -Message "Proszę wpisać adres URL do przetestowania." -Title "Informacja" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            Show-ThemedMessageBox -Message "Proszę wpisać adres URL do przetestowania." -Title "Informacja" -Button "OK" -Image "Information" | Out-Null
             return
         }
         if (-not (Test-UrlValid -Url $url)) {
-            Show-ThemedMessageBox -Message "Niepoprawny format adresu URL. Pamiętaj o dodaniu http:// lub https://" -Title "Ostrzeżenie" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+            Show-ThemedMessageBox -Message "Niepoprawny format adresu URL. Pamiętaj o dodaniu http:// lub https://" -Title "Ostrzeżenie" -Button "OK" -Image "Warning" | Out-Null
             return
         }
         $dlg.Cursor = [System.Windows.Input.Cursors]::Wait
@@ -5930,11 +5935,11 @@ function Show-ConfigEditor {
             $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
             $statusMsg = if ($null -ne $response.StatusCode) { "$($response.StatusCode) $($response.StatusDescription)" } else { "OK" }
             Write-Log "[Ustawienia] Test połączenia z URL '$url' zakończony sukcesem: $statusMsg"
-            Show-ThemedMessageBox -Message "Host odpowiada poprawnie!`n`nKod statusu: $statusMsg" -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            Show-ThemedMessageBox -Message "Host odpowiada poprawnie!`n`nKod statusu: $statusMsg" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
         }
         catch {
             Write-Log "[Ustawienia] Test połączenia z URL '$url' zakończony błędem: $($_.Exception.Message)" -IsError
-            Show-ThemedMessageBox -Message "Host nie odpowiada lub wystąpił błąd komunikacji:`n`n$($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+            Show-ThemedMessageBox -Message "Host nie odpowiada lub wystąpił błąd komunikacji:`n`n$($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
         }
         finally {
             $dlg.Cursor = [System.Windows.Input.Cursors]::Arrow
@@ -5946,7 +5951,7 @@ function Show-ConfigEditor {
         try {
             $src = [string]$cmbSrc.SelectedItem
             if ([string]::IsNullOrWhiteSpace($src) -or ($src -notin @('network', 'web', 'winget'))) {
-                Show-ThemedMessageBox -Message "Wybierz poprawne źródło (network/web/winget)." -Title "Ostrzeżenie" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+                Show-ThemedMessageBox -Message "Wybierz poprawne źródło (network/web/winget)." -Title "Ostrzeżenie" -Button "OK" -Image "Warning" | Out-Null
                 return
             }
             $net = $txtNet.Text.Trim()
@@ -5959,7 +5964,7 @@ function Show-ConfigEditor {
             if ($web -and $web[-1] -ne '/') { $web += '/' }
             if ($cwd -and $cwd[-1] -ne '/') { $cwd += '/' }
             if ($net -and $net -notmatch '^\\\\') {
-                Show-ThemedMessageBox -Message "Ścieżka network musi być w formacie UNC (\\server\share\)." -Title "Ostrzeżenie" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+                Show-ThemedMessageBox -Message "Ścieżka network musi być w formacie UNC (\\server\share\)." -Title "Ostrzeżenie" -Button "OK" -Image "Warning" | Out-Null
                 return
             }
 
@@ -6007,12 +6012,12 @@ function Show-ConfigEditor {
             } else { $config.WiFiProfile.FileName = $wifiStr }
 
             Save-Config $config
-            Show-ThemedMessageBox -Message "Zapisano konfigurację." -Title "Sukces" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Information | Out-Null
+            Show-ThemedMessageBox -Message "Zapisano konfigurację." -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
             Get-AppSelection
             $dlg.Close()
         }
         catch {
-            Show-ThemedMessageBox -Message "Błąd zapisu: $($_.Exception.Message)" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+            Show-ThemedMessageBox -Message "Błąd zapisu: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
         }
     })
 
@@ -6385,7 +6390,7 @@ $btnEditConfig.Add_Click({
         if (Test-Path $configPath) {
             Start-Process "notepad.exe" -ArgumentList "`"$configPath`""
         } else {
-            Show-ThemedMessageBox -Message "Plik config.json nie istnieje pod ścieżką: $configPath" -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Warning | Out-Null
+            Show-ThemedMessageBox -Message "Plik config.json nie istnieje pod ścieżką: $configPath" -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
         }
     }
 })
@@ -6415,7 +6420,7 @@ $btnReloadConfig.Add_Click({
         Write-Log "Pomyślnie przeładowano plik config.json i zaktualizowano GUI."
     } catch {
         Write-Log "Błąd przeładowania config.json: $_" -IsError
-        Show-ThemedMessageBox -Message "Nie udało się przeładować config.json.`nSprawdź poprawność składni JSON w pliku." -Title "Błąd" -Button [System.Windows.MessageBoxButton]::OK -Image [System.Windows.MessageBoxImage]::Error | Out-Null
+        Show-ThemedMessageBox -Message "Nie udało się przeładować config.json.`nSprawdź poprawność składni JSON w pliku." -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
     }
 })
 $btnLogs.Add_Click({ Show-LogWindow })
@@ -6446,7 +6451,7 @@ $btnPause.Add_Click({
 })
 
 $btnCancelDeploy.Add_Click({
-    if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz przerwać wdrożenie?" -Title "Przerwij" -Button [System.Windows.MessageBoxButton]::YesNo -Image [System.Windows.MessageBoxImage]::Warning) -eq [System.Windows.MessageBoxResult]::Yes) {
+    if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz przerwać wdrożenie?" -Title "Przerwij" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
         $script:isCancelled = $true
         $script:isPaused = $false
         Write-Log "Wdrożenie przerwane przez użytkownika!" -IsError -Context "Użytkownik"
