@@ -400,7 +400,7 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
     }
 
     Context "Nazwa komputera (Get-DefaultComputerName, Test-ComputerNameValid)" {
-        It "Buduje nazwę PC-<numer seryjny> bez niedozwolonych znaków i przycina do 15 znaków" {
+        It "Buduje nazwę PC-NumerSeryjny bez niedozwolonych znaków i przycina do 15 znaków" {
             Get-DefaultComputerName -SerialNumber "5CG1234XYZ" | Should -Be "PC-5CG1234XYZ"
             Get-DefaultComputerName -SerialNumber "To Be Filled By O.E.M." | Should -Be "PC-ToBeFilledBy"
             Get-DefaultComputerName -SerialNumber "" | Should -Be "PC-NOSERIAL"
