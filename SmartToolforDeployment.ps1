@@ -1071,7 +1071,8 @@ function Test-BeforeRun {
             $wifiProfiles = $config.WiFiProfile.FileName
             if ($null -ne $wifiProfiles) {
                 foreach ($wifi in @($wifiProfiles)) {
-                    if ([string]::IsNullOrWhiteSpace($wifi) -or -not (Test-Path -LiteralPath $wifi)) { $errors.Add("Brak pliku profilu Wi-Fi: $wifi") | Out-Null }
+                    $wifiPath = Resolve-ConfigFilePath -Path $wifi
+                    if ([string]::IsNullOrWhiteSpace($wifi) -or -not (Test-Path -LiteralPath $wifiPath)) { $errors.Add("Brak pliku profilu Wi-Fi: $wifiPath") | Out-Null }
                 }
             } else { $errors.Add("Brak konfiguracji WiFiProfile.FileName.") | Out-Null }
         }
@@ -1418,6 +1419,14 @@ function Install-AV {
     }
 }
 
+# Pliki z config.json (np. "WiFiProfile.xml") podane bez pełnej ścieżki szukamy obok skryptu, a nie
+# w bieżącym katalogu procesu - po uruchomieniu "jako administrator" jest nim zwykle C:\Windows\System32.
+function Resolve-ConfigFilePath {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path) -or [System.IO.Path]::IsPathRooted($Path)) { return $Path }
+    return (Join-Path $ScriptDir $Path)
+}
+
 function Import-WiFiProfile {
     if (-not (Test-Path $configPath)) {
         Write-Log "Brak pliku config.json" -IsError
@@ -1425,13 +1434,22 @@ function Import-WiFiProfile {
     }
     $config = Get-Content $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $wifiProfiles = $config.WiFiProfile.FileName
-    
+
     if ($null -ne $wifiProfiles) {
-        foreach ($wifiProfile in @($wifiProfiles)) {
-            if (Test-Path $wifiProfile) {
+        foreach ($wifiEntry in @($wifiProfiles)) {
+            $wifiProfile = Resolve-ConfigFilePath -Path $wifiEntry
+            if (-not [string]::IsNullOrWhiteSpace($wifiProfile) -and (Test-Path -LiteralPath $wifiProfile)) {
+                if ($script:DryRun) {
+                    Write-Log "[DRY-RUN] Zaimportowano by profil Wi-Fi z pliku: $wifiProfile"
+                    continue
+                }
                 Write-Log "Import profilu Wi-Fi z pliku: $wifiProfile..."
-                Start-ProcessWithEvents -FilePath "netsh" -ArgumentList "wlan add profile filename=`"$wifiProfile`"" | Out-Null
-                Write-Log "Profil Wi-Fi '$wifiProfile' zaimportowany."
+                $exitCode = Start-ProcessWithEvents -FilePath "netsh" -ArgumentList "wlan add profile filename=`"$wifiProfile`""
+                if ($exitCode -eq 0) {
+                    Write-Log "Profil Wi-Fi '$wifiProfile' zaimportowany."
+                } else {
+                    Write-Log "Nie udało się zaimportować profilu Wi-Fi '$wifiProfile' (netsh, kod: $exitCode)." -IsError
+                }
             }
             else {
                 Write-Log "Brak pliku profilu Wi-Fi: $wifiProfile" -IsError
@@ -2432,7 +2450,7 @@ function Join-Intune {
 
 function Show-AppSelectionWindow {
     if (-not (Test-Path $configPath)) {
-        Write-Log "Brak pliku config.json" -Color "Red"
+        Write-Log "Brak pliku config.json" -IsError
         return
     }
 
@@ -2821,6 +2839,11 @@ function Start-Deployment {
         $btnPause.IsEnabled = $false
         $btnCancelDeploy.IsEnabled = $false
         $wasCancelled = $script:isCancelled
+        # Przy przerwaniu (return w środku try) krok "Przywracanie ustawień hibernacji" był pomijany,
+        # więc blokada usypiania zostawała włączona aż do zamknięcia aplikacji.
+        if ($wasCancelled -and $CheckboxControls.ContainsKey("SuspendHibernation") -and $CheckboxControls["SuspendHibernation"].IsChecked -eq $true) {
+            Resume-Hibernation
+        }
         $script:isPaused = $false
         $script:isCancelled = $false
         $script:DryRun = $false
@@ -3710,7 +3733,7 @@ function Show-CustomInfoDialog {
     param($Title, $Message, [switch]$ShowCopy, [string]$HtmlData)
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Title="$Title" Width="450" SizeToContent="Height" WindowStartupLocation="CenterOwner"
+        Width="450" SizeToContent="Height" WindowStartupLocation="CenterOwner"
         Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize" Topmost="True">
     <Window.Resources>
         <Style TargetType="Button">
@@ -3752,6 +3775,9 @@ function Show-CustomInfoDialog {
     $reader = New-Object System.Xml.XmlNodeReader $xaml
     $dlg = [Windows.Markup.XamlReader]::Load($reader)
     Apply-ThemeToWindow $dlg
+    # Tytuł ustawiamy po wczytaniu XAML - wklejony wprost do XAML (Title="$Title") tekst ze znakiem
+    # & albo " psuł XML i okno w ogóle się nie otwierało.
+    $dlg.Title = $Title
     
     $txtMessage = $dlg.FindName("txtMessage")
     $txtMessage.Text = $Message
@@ -4087,7 +4113,7 @@ function Show-SystemInfoWindow {
 
     $renderApps = {
         $term = $txtSearch.Text
-        $filtered = if ([string]::IsNullOrWhiteSpace($term)) { $allApps } else { @($allApps | Where-Object { $_.DisplayName -like "*$term*" }) }
+        $filtered = if ([string]::IsNullOrWhiteSpace($term)) { $allApps } else { @($allApps | Where-Object { ([string]$_.DisplayName).IndexOf($term, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 }) }
 
         $sortProp = if ($script:SysInfoSortColumn -eq "Wersja") { "DisplayVersion" } else { "DisplayName" }
         $sorted = @($filtered | Sort-Object -Property @{Expression = $sortProp; Descending = (-not $script:SysInfoSortAscending)})
@@ -4590,7 +4616,7 @@ function Show-SoftwareUninstaller {
 
             if (-not [string]::IsNullOrWhiteSpace($cmd)) {
                 if ($cmd -match "(?i)msiexec") {
-                    $cmd = $cmd -replace "(?i)/I", "/X"
+                    $cmd = $cmd -replace '(?i)/I(?=\{)', '/X'
                 }
                 Write-Log "Uruchamianie interaktywnego deinstalatora dla $($app.DisplayName)..."
                 try {
@@ -4681,7 +4707,7 @@ function Show-SoftwareUninstaller {
                         $cmd = $app.UninstallString
                         if (-not [string]::IsNullOrWhiteSpace($cmd)) {
                             if ($cmd -match "(?i)msiexec") {
-                                $cmd = ($cmd -replace "(?i)/I", "/X") + " /qn /norestart"
+                                $cmd = ($cmd -replace '(?i)/I(?=\{)', '/X') + " /qn /norestart"
                             } elseif ($cmd -match 'OfficeClickToRun\.exe') {
                                 $isOfficeClickToRun = $true
                             } else {
@@ -5924,7 +5950,7 @@ function Show-PinPrompt {
 }
 
 function Show-ConfigEditor {
-    try { $config = Get-Config } catch { Write-Log $_ -Color Red; return }
+    try { $config = Get-Config } catch { Write-Log "Nie udało się wczytać config.json: $_" -IsError; return }
 
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -6765,7 +6791,7 @@ $cmbProfiles.Add_SelectionChanged({
                     if ($null -ne $matchedKey) {
                         $script:SelectedApps[$matchedKey] = $true
                     } else {
-                        Write-Log "Nie znaleziono programu '$app' (profil '$profName') w konfiguracji." -Color "Yellow"
+                        Write-Log "Nie znaleziono programu '$app' (profil '$profName') w konfiguracji." -IsError
                     }
                 }
             }
@@ -6777,13 +6803,13 @@ $cmbProfiles.Add_SelectionChanged({
                 $CheckboxControls["InstallApplications"].IsChecked = ($count -gt 0)
                 $btnChooseApps.IsEnabled = ($count -gt 0)
             }
-            Write-Log "Zastosowano profil wdrożenia: $profName (Wybrano programów: $count)" -Color "Green"
+            Write-Log "Zastosowano profil wdrożenia: $profName (Wybrano programów: $count)" -Context "Użytkownik"
         } catch {
-            Write-Log "Błąd podczas ładowania profilu: $_" -Color "Red" -IsError
+            Write-Log "Błąd podczas ładowania profilu: $_" -IsError
         }
     } elseif ($cmbProfiles.SelectedIndex -eq 0) {
         # Gdy użytkownik celowo kliknie powrót na wybór niestandardowy - ładujemy domyślne z config.json
-        Write-Log "Przełączono na wybór niestandardowy - wczytywanie domyślnych aplikacji z pliku config." -Color "Blue"
+        Write-Log "Przełączono na wybór niestandardowy - wczytywanie domyślnych aplikacji z pliku config." -Context "Użytkownik"
         Get-AppSelection
     }
 })
