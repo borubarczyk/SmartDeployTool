@@ -1442,6 +1442,117 @@ function Import-WiFiProfile {
     }
 }
 
+# Proste, ostylowane okno do wpisania tekstu albo hasła. Zastępuje Read-Host, który w aplikacji
+# okienkowej pyta w oknie konsoli (zwykle schowanym pod GUI albo niewidocznym w wersji .exe) -
+# interfejs wyglądał wtedy na zawieszony.
+# -Validate: scriptblock dostający wpisaną wartość; zwraca tekst błędu albo $null, gdy jest OK.
+# Zwraca: string, SecureString (z -Password) albo $null po anulowaniu.
+function Show-InputDialog {
+    param(
+        [string]$Title,
+        [string]$Message,
+        [string]$DefaultText = "",
+        [switch]$Password,
+        [scriptblock]$Validate
+    )
+    [xml]$xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        Width="420" SizeToContent="Height" WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize" Topmost="True" WindowStyle="ToolWindow">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource ThemeButton}"/>
+            <Setter Property="Foreground" Value="{DynamicResource ThemeButtonText}"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True"><Setter Property="Opacity" Value="0.8"/></Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="{DynamicResource ThemeTextBoxBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+            <Setter Property="Padding" Value="5,2"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="PasswordBox">
+            <Setter Property="Background" Value="{DynamicResource ThemeTextBoxBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+            <Setter Property="Padding" Value="5,2"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+    </Window.Resources>
+    <StackPanel Margin="20">
+        <TextBlock Name="txtMessage" TextWrapping="Wrap" FontSize="13" Margin="0,0,0,10"/>
+        <TextBox Name="txtInput" Margin="0,0,0,10"/>
+        <PasswordBox Name="pwdInput" Margin="0,0,0,10" Visibility="Collapsed"/>
+        <TextBlock Name="lblConfirm" Text="Powtórz hasło:" Margin="0,0,0,5" Visibility="Collapsed"/>
+        <PasswordBox Name="pwdConfirm" Margin="0,0,0,10" Visibility="Collapsed"/>
+        <TextBlock Name="txtError" Foreground="#FFC50F1F" TextWrapping="Wrap" Margin="0,0,0,10" Visibility="Collapsed"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Name="btnOk" Content="OK" Width="90" Height="32" Margin="0,0,10,0" Background="#FF0E639C" Foreground="White" IsDefault="True"/>
+            <Button Name="btnCancel" Content="Anuluj" Width="90" Height="32" IsCancel="True"/>
+        </StackPanel>
+    </StackPanel>
+</Window>
+"@
+    $reader = New-Object System.Xml.XmlNodeReader $xaml
+    $dlg = [Windows.Markup.XamlReader]::Load($reader)
+    Apply-ThemeToWindow $dlg
+    # Tytuł i treść ustawiamy po wczytaniu XAML, a nie przez wklejenie do XAML - znak & albo "
+    # w tekście nie zepsuje wtedy XML-a.
+    $dlg.Title = $Title
+    $dlg.FindName("txtMessage").Text = $Message
+    $txtInput = $dlg.FindName("txtInput")
+    $pwdInput = $dlg.FindName("pwdInput")
+    $pwdConfirm = $dlg.FindName("pwdConfirm")
+    $txtError = $dlg.FindName("txtError")
+
+    if ($Password) {
+        $txtInput.Visibility = [System.Windows.Visibility]::Collapsed
+        $pwdInput.Visibility = [System.Windows.Visibility]::Visible
+        $pwdConfirm.Visibility = [System.Windows.Visibility]::Visible
+        $dlg.FindName("lblConfirm").Visibility = [System.Windows.Visibility]::Visible
+    } else {
+        $txtInput.Text = $DefaultText
+    }
+
+    $script:inputDialogResult = $null
+    $dlg.FindName("btnOk").Add_Click({
+        $value = if ($Password) { $pwdInput.Password } else { $txtInput.Text.Trim() }
+        $err = $null
+        if ($Password -and $pwdInput.Password -ne $pwdConfirm.Password) { $err = "Hasła nie są identyczne." }
+        elseif ($Validate) { $err = & $Validate $value }
+        if ($err) {
+            $txtError.Text = $err
+            $txtError.Visibility = [System.Windows.Visibility]::Visible
+            return
+        }
+        $script:inputDialogResult = if ($Password) { $pwdInput.SecurePassword } else { $value }
+        $dlg.DialogResult = $true
+        $dlg.Close()
+    })
+    $dlg.FindName("btnCancel").Add_Click({ $dlg.DialogResult = $false; $dlg.Close() })
+    $dlg.Add_Loaded({ if ($Password) { $pwdInput.Focus() | Out-Null } else { $txtInput.Focus() | Out-Null; $txtInput.SelectAll() } })
+
+    if ($dlg.ShowDialog() -eq $true) { return $script:inputDialogResult }
+    return $null
+}
+
 function New-LocalAdmin {
     if (-not (Test-Path $configPath)) {
         Write-Log "Brak pliku config.json" -IsError
@@ -1454,20 +1565,22 @@ function New-LocalAdmin {
             Write-Log "[DRY-RUN] Utworzono by lokalne konto administratora: '$username'."
             return
         }
-        $PasswordSecure = Read-Host "Wprowadź hasło dla konta $username" -AsSecureString
-        if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
-            if ($null -ne $PasswordSecure -and $PasswordSecure.Length -ge 8) {
-                New-LocalUser -Name $username -Password $PasswordSecure -PasswordNeverExpires -AccountNeverExpires
-                Add-LocalGroupMember -SID S-1-5-32-544 -Member $username
-                Write-Log "Utworzono lokalne konto '$username' w grupie 'Administratorzy'."
-            }
-            else {
-                Write-Log "Nie podano hasła dla konta $username lub hasło jest zbyt krótkie." -IsError
-            }
+        # Najpierw sprawdzamy, czy konto istnieje - wcześniej hasło było wpisywane niepotrzebnie.
+        if (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) {
+            Write-Log "Pominięto tworzenie konta: użytkownik '$username' już istnieje."
+            return
         }
-        else {
-            Write-Log "Użytkownik '$username' już istnieje  pomijam." -IsError
+        $PasswordSecure = Show-InputDialog -Title "Konto lokalnego administratora" -Message "Podaj hasło dla nowego konta '$username' (co najmniej 8 znaków):" -Password -Validate {
+            param($value)
+            if ($value.Length -lt 8) { "Hasło musi mieć co najmniej 8 znaków." }
         }
+        if ($null -eq $PasswordSecure) {
+            Write-Log "Pominięto tworzenie konta '$username' - anulowano wpisywanie hasła."
+            return
+        }
+        New-LocalUser -Name $username -Password $PasswordSecure -PasswordNeverExpires -AccountNeverExpires -ErrorAction Stop | Out-Null
+        Add-LocalGroupMember -SID S-1-5-32-544 -Member $username -ErrorAction Stop
+        Write-Log "Utworzono lokalne konto '$username' w grupie 'Administratorzy'."
     }
     catch {
         Write-Log "Błąd tworzenia konta: $_" -IsError
@@ -1511,18 +1624,55 @@ function Join-Domain {
     }
 }
 
+# Domyślna nazwa komputera "PC-<numer seryjny>" przycięta do zasad nazw NetBIOS: tylko litery
+# łacińskie, cyfry i myślnik, maksymalnie 15 znaków. Numer seryjny potrafi zawierać spacje, kropki
+# albo być dłuższy (np. "To Be Filled By O.E.M.") i wtedy Rename-Computer odrzucał nazwę.
+function Get-DefaultComputerName {
+    param([string]$SerialNumber = [string](Get-CimInstance -ClassName Win32_BIOS -ErrorAction SilentlyContinue).SerialNumber)
+    $clean = $SerialNumber -replace '[^A-Za-z0-9-]', ''
+    if ([string]::IsNullOrWhiteSpace($clean)) { $clean = "NOSERIAL" }
+    $name = "PC-$clean"
+    if ($name.Length -gt 15) { $name = $name.Substring(0, 15) }
+    return $name.TrimEnd('-')
+}
+
+# Zwraca opis błędu, gdy nazwa komputera jest niepoprawna, albo $null, gdy jest OK.
+function Test-ComputerNameValid {
+    param([string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return "Nazwa nie może być pusta." }
+    if ($Name.Length -gt 15) { return "Nazwa może mieć maksymalnie 15 znaków (ograniczenie NetBIOS)." }
+    if ($Name -notmatch '^[A-Za-z0-9-]+$') { return "Dozwolone są tylko litery bez polskich znaków, cyfry i myślnik." }
+    if ($Name -match '^\d+$') { return "Nazwa nie może składać się wyłącznie z cyfr." }
+    if ($Name.StartsWith('-') -or $Name.EndsWith('-')) { return "Nazwa nie może zaczynać się ani kończyć myślnikiem." }
+    return $null
+}
+
 function Set-NewComputerName {
+    $defaultName = Get-DefaultComputerName
     if ($script:DryRun) {
-        $previewName = "PC-$((Get-CimInstance -ClassName Win32_BIOS -ErrorAction SilentlyContinue).SerialNumber)"
-        Write-Log "[DRY-RUN] Zmieniono by nazwę komputera (domyślnie '$previewName')."
+        Write-Log "[DRY-RUN] Zmieniono by nazwę komputera (domyślnie '$defaultName')."
         return
     }
-    Read-Host "Podaj nową nazwę komputera (domyślnie 'PC-SERIAL_NUMBER'): " -OutVariable NewName
-    if ([string]::IsNullOrWhiteSpace($NewName)) {
-        $NewName = "PC-$((Get-CimInstance -ClassName Win32_BIOS).SerialNumber)"
+    try {
+        # Wcześniej: Read-Host -OutVariable NewName - OutVariable zapisuje wynik jako KOLEKCJĘ, a nie
+        # tekst, i w dodatku Read-Host pytał w oknie konsoli, a nie w GUI.
+        $newName = Show-InputDialog -Title "Zmiana nazwy komputera" -Message "Podaj nową nazwę komputera (maks. 15 znaków). Obecna nazwa: $env:COMPUTERNAME" -DefaultText $defaultName -Validate {
+            param($value)
+            Test-ComputerNameValid -Name $value
+        }
+        if ($null -eq $newName) {
+            Write-Log "Pominięto zmianę nazwy komputera (anulowano)."
+            return
+        }
+        if ($newName -eq $env:COMPUTERNAME) {
+            Write-Log "Pominięto zmianę nazwy - komputer już nazywa się '$newName'."
+            return
+        }
+        Rename-Computer -NewName $newName -Force -ErrorAction Stop
+        Write-Log "Zmieniono nazwę komputera na '$newName'. Zmiana zadziała po ponownym uruchomieniu."
+    } catch {
+        Write-Log "Błąd zmiany nazwy komputera: $_" -IsError
     }
-    Rename-Computer -NewName $NewName -Force
-    Write-Log "Zmieniono nazwę komputera na '$NewName'."
 }
 
 function Set-RegistryDword {
