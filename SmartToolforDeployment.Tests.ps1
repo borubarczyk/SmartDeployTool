@@ -379,7 +379,7 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             Mock Write-Log {}
             Write-InstallResult -Name "Chrome" -ExitCode 1603 | Should -Be $false
             Should -Invoke Write-Log -ParameterFilter { $IsError -and $Text -match "kod wyjścia: 1603" } -Times 1
-            Should -Invoke Write-Log -ParameterFilter { $Text -match "zainstalowany\." } -Times 0
+            Should -Invoke Write-Log -ParameterFilter { $Text -match "zainstalowany\." } -Times 0 -Exactly
         }
     }
 
