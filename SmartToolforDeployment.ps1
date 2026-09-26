@@ -2861,6 +2861,27 @@ function Get-Config {
     return (Get-Content $configPath -Raw -Encoding UTF8 | ConvertFrom-Json)
 }
 
+# Ustawia pole w obiekcie konfiguracji niezależnie od tego, czy już istnieje. Obiekt z ConvertFrom-Json
+# to PSCustomObject: przypisanie $obj.Pole = ... do NIEISTNIEJĄCEGO pola rzuca wyjątek "The property
+# 'Pole' cannot be found on this object", dlatego brakujące pole dodajemy przez Add-Member.
+function Set-ConfigValue {
+    param($Object, [string]$Name, $Value)
+    if ($Object -is [System.Collections.IDictionary]) { $Object[$Name] = $Value; return }
+    if ($null -ne $Object.PSObject.Properties[$Name]) { $Object.$Name = $Value }
+    else { $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value }
+}
+
+# Zwraca sekcję konfiguracji (np. DomainJoin), a gdy jej brakuje - tworzy pustą i dodaje do obiektu.
+function Get-ConfigSection {
+    param($Object, [string]$Name)
+    $section = if ($Object -is [System.Collections.IDictionary]) { $Object[$Name] } else { $Object.$Name }
+    if ($null -eq $section) {
+        $section = [PSCustomObject]@{}
+        Set-ConfigValue -Object $Object -Name $Name -Value $section
+    }
+    return $section
+}
+
 function Save-Config($config) {
     $json = $config | ConvertTo-Json -Depth 10
     $json | Set-Content -Path $configPath -Encoding UTF8
@@ -6325,48 +6346,45 @@ function Show-ConfigEditor {
                 return
             }
 
-            $config.DefaultInstallSource = $src
-            if (-not $config.InstallSourcePaths) { $config | Add-Member -NotePropertyName InstallSourcePaths -NotePropertyValue (@{}) -Force }
-            $config.InstallSourcePaths.network = $net
-            $config.InstallSourcePaths.web = $web
+            # Set-ConfigValue / Get-ConfigSection zamiast "$config.Sekcja.Pole = ...": przypisanie do pola,
+            # którego nie ma w obiekcie z ConvertFrom-Json, rzuca wyjątek i cały zapis się nie udawał
+            # (np. gdy w config.json była sekcja InstallSourcePaths tylko z "web", bez "network").
+            Set-ConfigValue $config 'DefaultInstallSource' $src
+            $paths = Get-ConfigSection $config 'InstallSourcePaths'
+            Set-ConfigValue $paths 'network' $net
+            Set-ConfigValue $paths 'web' $web
 
-            if (-not $config.CustomWebDataLocation) { $config | Add-Member -NotePropertyName CustomWebDataLocation -NotePropertyValue (@{}) -Force }
-            $config.CustomWebDataLocation.URL = $cwd
+            Set-ConfigValue (Get-ConfigSection $config 'CustomWebDataLocation') 'URL' $cwd
 
-            if (-not $config.DomainJoin) { $config | Add-Member -NotePropertyName DomainJoin -NotePropertyValue (@{}) -Force }
-            $config.DomainJoin.DomainName = $dom
-            $config.DomainJoin.Username = $domUser
+            $domainSection = Get-ConfigSection $config 'DomainJoin'
+            Set-ConfigValue $domainSection 'DomainName' $dom
+            Set-ConfigValue $domainSection 'Username' $domUser
 
-            if (-not $config.LocalAdmin) { $config | Add-Member -NotePropertyName LocalAdmin -NotePropertyValue (@{}) -Force }
-            $config.LocalAdmin.Username = $locUser
+            Set-ConfigValue (Get-ConfigSection $config 'LocalAdmin') 'Username' $locUser
 
-            if (-not $config.WebAuth) { $config | Add-Member -NotePropertyName WebAuth -NotePropertyValue (@{}) -Force }
-            $config.WebAuth.Username = $txtWebUser.Text.Trim()
-            $config.WebAuth.Password = $txtWebPass.Text.Trim()
+            $webAuth = Get-ConfigSection $config 'WebAuth'
+            Set-ConfigValue $webAuth 'Username' $txtWebUser.Text.Trim()
+            Set-ConfigValue $webAuth 'Password' $txtWebPass.Text.Trim()
 
-            if (-not $config.TeamViewer) { $config | Add-Member -NotePropertyName TeamViewer -NotePropertyValue (@{}) -Force }
-            $config.TeamViewer.FileName = $txtTvFile.Text.Trim()
-            $config.TeamViewer.Arguments = $txtTvArgs.Text.Trim()
+            $tv = Get-ConfigSection $config 'TeamViewer'
+            Set-ConfigValue $tv 'FileName' $txtTvFile.Text.Trim()
+            Set-ConfigValue $tv 'Arguments' $txtTvArgs.Text.Trim()
 
-            if (-not $config.AntyVirus) { $config | Add-Member -NotePropertyName AntyVirus -NotePropertyValue (@{}) -Force }
-            $config.AntyVirus.FileName = $txtAvFile.Text.Trim()
+            $av = Get-ConfigSection $config 'AntyVirus'
+            Set-ConfigValue $av 'FileName' $txtAvFile.Text.Trim()
             $avSrcVal = [string]$cmbAvSrc.SelectedItem
             if ([string]::IsNullOrWhiteSpace($avSrcVal)) { $avSrcVal = "network" }
-            $config.AntyVirus.DefaultInstallSource = $avSrcVal
+            Set-ConfigValue $av 'DefaultInstallSource' $avSrcVal
+            $avPaths = Get-ConfigSection $av 'InstallSourcePaths'
+            Set-ConfigValue $avPaths 'network' $txtAvNet.Text.Trim()
+            Set-ConfigValue $avPaths 'web' $txtAvWeb.Text.Trim()
+            $avCred = Get-ConfigSection $av 'Credentials'
+            Set-ConfigValue $avCred 'Username' $txtAvUser.Text.Trim()
+            Set-ConfigValue $avCred 'Password' $txtAvPass.Text.Trim()
 
-            if (-not $config.AntyVirus.InstallSourcePaths) { $config.AntyVirus | Add-Member -NotePropertyName InstallSourcePaths -NotePropertyValue (@{}) -Force }
-            $config.AntyVirus.InstallSourcePaths.network = $txtAvNet.Text.Trim()
-            $config.AntyVirus.InstallSourcePaths.web = $txtAvWeb.Text.Trim()
-
-            if (-not $config.AntyVirus.Credentials) { $config.AntyVirus | Add-Member -NotePropertyName Credentials -NotePropertyValue (@{}) -Force }
-            $config.AntyVirus.Credentials.Username = $txtAvUser.Text.Trim()
-            $config.AntyVirus.Credentials.Password = $txtAvPass.Text.Trim()
-
-            if (-not $config.WiFiProfile) { $config | Add-Member -NotePropertyName WiFiProfile -NotePropertyValue (@{}) -Force }
             $wifiStr = $txtWifiFile.Text.Trim()
-            if ($wifiStr -match ",") {
-                $config.WiFiProfile.FileName = @($wifiStr -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" })
-            } else { $config.WiFiProfile.FileName = $wifiStr }
+            $wifiValue = if ($wifiStr -match ",") { @($wifiStr -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }) } else { $wifiStr }
+            Set-ConfigValue (Get-ConfigSection $config 'WiFiProfile') 'FileName' $wifiValue
 
             Save-Config $config
             Show-ThemedMessageBox -Message "Zapisano konfigurację." -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
