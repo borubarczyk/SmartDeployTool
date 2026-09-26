@@ -767,22 +767,34 @@ function Start-ProcessWithEvents {
         return 0
     }
     try {
-        $proc = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru -NoNewWindow -ErrorAction Stop
+        # -ArgumentList przekazujemy tylko, gdy nie jest pusty: w Windows PowerShell 5.1 parametr ma
+        # [ValidateNotNullOrEmpty], więc -ArgumentList "" (np. antywirus bez argumentów) kończył się
+        # błędem "Cannot validate argument on parameter 'ArgumentList'".
+        $startParams = @{ FilePath = $FilePath; PassThru = $true; NoNewWindow = $true; ErrorAction = 'Stop' }
+        if (-not [string]::IsNullOrWhiteSpace($ArgumentList)) { $startParams.ArgumentList = $ArgumentList }
+        $proc = Start-Process @startParams
         if ($null -ne $proc) {
+            # Odczyt Handle zaraz po starcie "przypina" uchwyt procesu - bez tego w PS 5.1 ExitCode
+            # po zakończeniu procesu bywa pusty ($null).
+            $null = $proc.Handle
             while (-not $proc.HasExited) {
                 Do-WpfEvents
                 if ($script:isCancelled) {
                     try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+                    # Czekamy chwilę na faktyczne zakończenie, inaczej odczyt ExitCode rzuca wyjątek.
+                    try { $proc.WaitForExit(3000) | Out-Null } catch {}
                     Write-Log "Proces przerwany." -IsError
                     break
                 }
                 Start-Sleep -Milliseconds 100
             }
-            return $proc.ExitCode
+            if ($proc.HasExited) { return $proc.ExitCode }
+            return $null
         }
     } catch {
         Write-Log "Błąd uruchamiania procesu: $_" -IsError
     }
+    return $null
 }
 
 function Start-UninstallProcessWithCancel {
@@ -792,11 +804,16 @@ function Start-UninstallProcessWithCancel {
         [string]$LogContext
     )
     try {
-        $proc = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru -WindowStyle Hidden -ErrorAction Stop
+        $startParams = @{ FilePath = $FilePath; PassThru = $true; WindowStyle = 'Hidden'; ErrorAction = 'Stop' }
+        if (-not [string]::IsNullOrWhiteSpace($ArgumentList)) { $startParams.ArgumentList = $ArgumentList }
+        $proc = Start-Process @startParams
     } catch {
         Write-Log "Błąd uruchamiania deinstalatora ($LogContext): $_" -IsError
         return -1
     }
+    # Bez tego odczytu ExitCode procesu uruchomionego z -WindowStyle Hidden w PS 5.1 często jest
+    # pusty, a wtedy poprawna deinstalacja była pokazywana jako "BŁĄD (kod: -1)".
+    try { $null = $proc.Handle } catch {}
     $script:uninstProc = $proc
     while (-not $proc.HasExited) {
         Do-WpfEvents
@@ -875,7 +892,9 @@ function Invoke-DownloadFile {
             if ($script:isCancelled) {
                 $webClient.CancelAsync()
                 Write-Log "Pobieranie przerwane." -IsError
-                break
+                # Rzucamy wyjątek, żeby wywołujący NIE uruchomił niepełnego pliku instalatora
+                # (wcześniej funkcja po prostu wracała i kod szedł dalej, jakby pobieranie się udało).
+                throw "Pobieranie przerwane przez użytkownika."
             }
             Start-Sleep -Milliseconds 50
         }
@@ -899,6 +918,49 @@ function Test-UrlValid {
         }
         return $false
     } catch { return $false }
+}
+
+# Łączy źródło instalacji (URL albo ścieżka UNC/lokalna) z nazwą pliku. Dla URL pilnuje dokładnie
+# jednego "/" między częściami (wcześniej "https://x/Data" + "a.exe" dawało "https://x/Dataa.exe"),
+# dla ścieżek plikowych używa Join-Path.
+function Join-InstallSource {
+    param([string]$BasePath, [string]$FileName)
+    if ($BasePath -match '^https?://') {
+        return "$($BasePath.TrimEnd('/'))/$($FileName.TrimStart('/'))"
+    }
+    return (Join-Path $BasePath $FileName)
+}
+
+# Kody wyjścia instalatorów uznawane za sukces:
+#   0    - sukces
+#   1641 - sukces, instalator MSI sam zainicjował restart
+#   3010 - sukces, wymagany restart (MSI)
+# Dla winget dodatkowo: 0x8A15002B (brak nowszej wersji) i 0x8A150061 (pakiet już zainstalowany).
+$script:InstallerSuccessExitCodes = @(0, 1641, 3010)
+$script:WingetAlreadyInstalledExitCodes = @(-1978335189, -1978335135)
+
+function Test-InstallerExitCode {
+    param($ExitCode, [switch]$Winget)
+    if ($null -eq $ExitCode) { return $false }
+    if ($script:InstallerSuccessExitCodes -contains [int]$ExitCode) { return $true }
+    if ($Winget -and $script:WingetAlreadyInstalledExitCodes -contains [int]$ExitCode) { return $true }
+    return $false
+}
+
+# Loguje wynik instalacji na podstawie kodu wyjścia (wcześniej "zainstalowany" było pisane zawsze,
+# nawet gdy instalator zwrócił błąd). Zwraca $true przy sukcesie.
+function Write-InstallResult {
+    param([string]$Name, $ExitCode, [switch]$Winget)
+    if (Test-InstallerExitCode -ExitCode $ExitCode -Winget:$Winget) {
+        $suffix = ""
+        if ([int]$ExitCode -in 1641, 3010) { $suffix = " Wymagany restart komputera." }
+        elseif ($Winget -and $script:WingetAlreadyInstalledExitCodes -contains [int]$ExitCode) { $suffix = " Był już zainstalowany wcześniej." }
+        Write-Log "$Name zainstalowany.$suffix"
+        return $true
+    }
+    $codeText = if ($null -eq $ExitCode) { "brak - proces nie wystartował lub został przerwany" } else { "$ExitCode" }
+    Write-Log "Instalator $Name zakończył się błędem (kod wyjścia: $codeText)." -IsError
+    return $false
 }
 
 function Test-BeforeRun {
@@ -959,6 +1021,11 @@ function Test-BeforeRun {
                 foreach ($appName in $SelectedApps.Keys) {
                     $app = $config.Programs.$appName
                     if ($null -eq $app) { $errors.Add("Brak konfiguracji dla aplikacji '$appName'.") | Out-Null; continue }
+                    # Własny adres URL programu (DownloadUrl) nadpisuje globalne źródło - wtedy sprawdzamy tylko ten adres.
+                    if (-not [string]::IsNullOrWhiteSpace([string]$app.DownloadUrl)) {
+                        if (-not (Test-UrlValid -Url ([string]$app.DownloadUrl))) { $errors.Add("Niepoprawny własny URL (DownloadUrl) dla '$appName': $($app.DownloadUrl)") | Out-Null }
+                        continue
+                    }
                     if ([string]::IsNullOrWhiteSpace($app.FileName)) { $errors.Add("Brak 'FileName' dla '$appName'.") | Out-Null; continue }
                     if ($source -eq 'network') {
                         $full = Join-Path $sourcePath $app.FileName
@@ -1037,27 +1104,36 @@ function Install-SelectedApps {
         Set-ProgressText "Instalacja aplikacji $currentAppIdx/$($totalApps): $appName..."
         
         $app = $config.Programs.${appName}
-        $fileName = $app.FileName
-        $silentArgs = $app.SilentArgs
+        $fileName = [string]$app.FileName
+        $silentArgs = [string]$app.SilentArgs
+        $downloadUrl = [string]$app.DownloadUrl
         $localPath = $null
 
         try {
-                if ($source -eq 'winget') {
-                    Write-Log "Instalacja $appName (Winget)..."
-                    $cmdArgs = "install --id `"$fileName`" -e --silent --accept-package-agreements --accept-source-agreements $silentArgs"
-                    Start-ProcessWithEvents -FilePath "winget.exe" -ArgumentList $cmdArgs | Out-Null
-                    Write-Log "$appName zainstalowany (Winget)."
+            # Własny adres URL programu (pole "Zawsze pobieraj z niestandardowego adresu URL" w edytorze)
+            # ma pierwszeństwo przed globalnym źródłem. Wcześniej był zapisywany, ale nigdy nieużywany.
+            $appSource = if (-not [string]::IsNullOrWhiteSpace($downloadUrl)) { 'url' } else { $source }
+
+            if ($appSource -eq 'winget') {
+                $cmdArgs = "install --id `"$fileName`" -e --silent --accept-package-agreements --accept-source-agreements $silentArgs"
+                if ($script:DryRun) {
+                    Write-Log "[DRY-RUN] Zainstalowano by $appName przez Winget: winget $cmdArgs"
                 } else {
-                    $fullPath = if ($sourcePath -like "http*") {
-                        "$sourcePath$fileName"
-                    }
-                    else {
-                        Join-Path $sourcePath $fileName
-                    }
+                    Write-Log "Instalacja $appName (Winget)..."
+                    $exitCode = Start-ProcessWithEvents -FilePath "winget.exe" -ArgumentList $cmdArgs
+                    Write-InstallResult -Name $appName -ExitCode $exitCode -Winget | Out-Null
+                }
+            } else {
+                $fullPath = if ($appSource -eq 'url') { $downloadUrl } else { Join-InstallSource -BasePath $sourcePath -FileName $fileName }
+                # Nazwa pliku lokalnego: z FileName, a gdy jest pusty (sam DownloadUrl) - z końcówki adresu URL.
+                $localName = if (-not [string]::IsNullOrWhiteSpace($fileName)) { Split-Path $fileName -Leaf } else { [System.IO.Path]::GetFileName(([uri]$downloadUrl).AbsolutePath) }
 
-                    $localPath = "$env:TEMP\$fileName"
-
-                    Write-Log "Pobieranie $appName"
+                if ($script:DryRun) {
+                    # W trybie testowym nic nie pobieramy - wcześniej Dry-Run ściągał wszystkie instalatory.
+                    Write-Log "[DRY-RUN] Pobrano by $appName z $fullPath i uruchomiono instalator $localName (argumenty: $silentArgs)."
+                } else {
+                    $localPath = Join-Path $env:TEMP $localName
+                    Write-Log "Pobieranie $appName z $fullPath..."
 
                     $cred = $null
                     if ($config.WebAuth.Username -and $config.WebAuth.Password) {
@@ -1068,16 +1144,13 @@ function Install-SelectedApps {
                     Invoke-DownloadFile -Uri $fullPath -OutFile $localPath -Credential $cred
 
                     Write-Log "Instalacja $appName..."
-
-                    if ($fileName -like "*.msi") {
-                        $cmdArgs = "/i `"$localPath`" $silentArgs"
-                        Start-ProcessWithEvents -FilePath "msiexec.exe" -ArgumentList $cmdArgs | Out-Null
+                    if ($localName -like "*.msi") {
+                        $exitCode = Start-ProcessWithEvents -FilePath "msiexec.exe" -ArgumentList "/i `"$localPath`" $silentArgs"
+                    } else {
+                        $exitCode = Start-ProcessWithEvents -FilePath $localPath -ArgumentList $silentArgs
                     }
-                    else {
-                        Start-ProcessWithEvents -FilePath $localPath -ArgumentList $silentArgs | Out-Null
-                    }
-
-                    Write-Log "$appName zainstalowany."
+                    Write-InstallResult -Name $appName -ExitCode $exitCode | Out-Null
+                }
             }
         }
         catch {
@@ -1127,6 +1200,10 @@ function Resume-Hibernation {
 }
 
 function Install-TeamViewer {
+    # Ścieżka pliku pobranego przez nas do %TEMP%. TYLKO ten plik wolno usunąć w bloku finally.
+    # Wcześniej używana była jedna zmienna $localPath, która przy źródle "network" wskazywała
+    # instalator na udziale (\\serwer\...\TeamViewer_Host.msi) - i finally kasował go z serwera.
+    $downloadedFile = $null
     try {
         if (-not (Test-Path $configPath)) {
             Write-Log "Brak pliku config.json" -IsError
@@ -1138,7 +1215,6 @@ function Install-TeamViewer {
         $sourcePath = $config.InstallSourcePaths.$source
         $msiArgs = $config.TeamViewer.Arguments
         $fileName = $config.TeamViewer.FileName
-        $localPath = "$env:TEMP\$fileName"
 
         $regPaths = @(
             "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
@@ -1148,6 +1224,7 @@ function Install-TeamViewer {
 
         $isInstalled = $false
         $uninstallString = $null
+        $isQuietUninstall = $false
 
         foreach ($path in $regPaths) {
             $items = Get-ItemProperty -Path $path -ErrorAction SilentlyContinue
@@ -1155,6 +1232,7 @@ function Install-TeamViewer {
                 if ($item.DisplayName -like "*TeamViewer*") {
                     $isInstalled = $true
                     $uninstallString = $item.QuietUninstallString
+                    $isQuietUninstall = [bool]$uninstallString
                     if (-not $uninstallString) { $uninstallString = $item.UninstallString }
 
                     Write-Log "Znaleziono wpis TeamViewer: $($item.DisplayName)"
@@ -1164,16 +1242,34 @@ function Install-TeamViewer {
             if ($isInstalled) { break }
         }
 
+        if ($script:DryRun) {
+            if ($isInstalled) { Write-Log "[DRY-RUN] Zamknięto by procesy TeamViewer i odinstalowano go poleceniem: $uninstallString" }
+            Write-Log "[DRY-RUN] Zainstalowano by TeamViewer ze źródła '$source' (plik/ID: $fileName, argumenty: $msiArgs)."
+            return
+        }
 
         if ($isInstalled) {
             Write-Log "TeamViewer już zainstalowany, odinstalowuję..."
             if ($uninstallString) {
-                $uninstallCommand = ($uninstallString -replace "/I", "/X") + " /qn"
+                $uninstallCommand = $uninstallString
+                if ($uninstallString -match '(?i)msiexec') {
+                    # Zamieniamy tylko przełącznik instalacji "/I{GUID}" na deinstalację "/X{GUID}".
+                    # Stare -replace "/I" podmieniało KAŻDE "/i" (bez rozróżniania wielkości liter).
+                    $uninstallCommand = $uninstallString -replace '(?i)/I(?=\{)', '/X'
+                    if ($uninstallCommand -notmatch '(?i)/qn') { $uninstallCommand += " /qn /norestart" }
+                } elseif (-not $isQuietUninstall) {
+                    # Deinstalator TeamViewera w wersji .exe (NSIS) ma tryb cichy "/S" - "/qn" to przełącznik msiexec.
+                    $uninstallCommand += " /S"
+                }
                 Get-Process -Name "*TeamViewer*" -ErrorAction SilentlyContinue | Stop-Process -Force
                 Start-Sleep -Seconds 5
                 Write-Log "Uruchamiam odinstalowanie: $uninstallCommand"
-                Start-ProcessWithEvents -FilePath "cmd.exe" -ArgumentList "/c $uninstallCommand" | Out-Null
-                Write-Log "TeamViewer odinstalowany."
+                $uninstallExit = Start-ProcessWithEvents -FilePath "cmd.exe" -ArgumentList "/c $uninstallCommand"
+                if (Test-InstallerExitCode -ExitCode $uninstallExit) {
+                    Write-Log "TeamViewer odinstalowany."
+                } else {
+                    Write-Log "Deinstalacja TeamViewer zwróciła kod $uninstallExit - próbuję mimo to zainstalować ponownie." -IsError
+                }
             }
             else {
                 Write-Log "Nie znaleziono polecenia odinstalowania TeamViewer." -IsError
@@ -1191,33 +1287,36 @@ function Install-TeamViewer {
 
         if ($source -eq 'winget') {
             Write-Log "Instalacja TeamViewer przez Winget..."
-            Start-ProcessWithEvents -FilePath "winget.exe" -ArgumentList "install --id `"$fileName`" -e --silent --accept-package-agreements --accept-source-agreements $msiArgs" | Out-Null
-            Write-Log "TeamViewer zainstalowany (Winget)."
+            $exitCode = Start-ProcessWithEvents -FilePath "winget.exe" -ArgumentList "install --id `"$fileName`" -e --silent --accept-package-agreements --accept-source-agreements $msiArgs"
+            Write-InstallResult -Name "TeamViewer" -ExitCode $exitCode -Winget | Out-Null
         } else {
-            if ($sourcePath -like "http*") {
-                $DownloadPathOrUrl = "$sourcePath$fileName"
-                Write-Log "Pobieranie TeamViewer z $DownloadPathOrUrl..."
-                Invoke-DownloadFile -Uri $DownloadPathOrUrl -OutFile $localPath
-                Write-Log "Pobrano TeamViewer do: $localPath"
+            $sourceFile = Join-InstallSource -BasePath $sourcePath -FileName $fileName
+            if ($sourceFile -match '^https?://') {
+                $downloadedFile = Join-Path $env:TEMP (Split-Path $fileName -Leaf)
+                Write-Log "Pobieranie TeamViewer z $sourceFile..."
+                Invoke-DownloadFile -Uri $sourceFile -OutFile $downloadedFile
+                Write-Log "Pobrano TeamViewer do: $downloadedFile"
+                $installerPath = $downloadedFile
             }
             else {
-                $localPath = Join-Path $sourcePath $fileName
-                Write-Log "Instalacja TeamViewer z lokalnej ścieżki: $localPath"
+                # Instalujemy bezpośrednio z udziału/ścieżki lokalnej - tego pliku NIE usuwamy.
+                $installerPath = $sourceFile
+                Write-Log "Instalacja TeamViewer ze ścieżki: $installerPath"
             }
 
             Write-Log "Instalacja TeamViewer..."
             Write-Log "Używam argumentów MSI: $msiArgs"
-            Start-ProcessWithEvents -FilePath "msiexec.exe" -ArgumentList "/i `"$localPath`" $msiArgs" | Out-Null
-            Write-Log "TeamViewer zainstalowany."
+            $exitCode = Start-ProcessWithEvents -FilePath "msiexec.exe" -ArgumentList "/i `"$installerPath`" $msiArgs"
+            Write-InstallResult -Name "TeamViewer" -ExitCode $exitCode | Out-Null
         }
     }
     catch {
         Write-Log "Błąd podczas instalacji TeamViewer: $_" -IsError
     }
     finally {
-        if (Test-Path $localPath) {
-            Remove-Item -Path $localPath -Force -ErrorAction SilentlyContinue
-            Write-Log "Usunięto plik instalacyjny TeamViewer: $localPath"
+        if (-not [string]::IsNullOrWhiteSpace($downloadedFile) -and (Test-Path -LiteralPath $downloadedFile)) {
+            Remove-Item -LiteralPath $downloadedFile -Force -ErrorAction SilentlyContinue
+            Write-Log "Usunięto pobrany plik instalacyjny TeamViewer: $downloadedFile"
         }
     }
 }
@@ -1249,17 +1348,25 @@ function Install-AV {
             return
         }
 
+        if ($script:DryRun) {
+            Write-Log "[DRY-RUN] Zainstalowano by antywirusa ze źródła '$source' (plik/ID: $fileName, ścieżka: $sourcePath)."
+            return
+        }
+
         if ($source -eq 'winget') {
             Write-Log "Instalacja antywirusa przez Winget..."
-            Start-ProcessWithEvents -FilePath "winget.exe" -ArgumentList "install --id `"$fileName`" -e --silent --accept-package-agreements --accept-source-agreements" | Out-Null
-            Write-Log "Antywirus zainstalowany (Winget)."
+            $exitCode = Start-ProcessWithEvents -FilePath "winget.exe" -ArgumentList "install --id `"$fileName`" -e --silent --accept-package-agreements --accept-source-agreements"
+            Write-InstallResult -Name "Antywirus" -ExitCode $exitCode -Winget | Out-Null
             return
         }
 
         if ($source -eq "web") {
-            # Używamy krótkiej nazwy docelowej, aby uniknąć problemów z długimi nazwami plików (MAX_PATH)
-            $avPath = Join-Path $env:TEMP "setup_av_temp.exe"
-            $avUrl = if ($sourcePath -match "/$") { "$sourcePath$fileName" } else { "$sourcePath/$fileName" }
+            # Używamy krótkiej nazwy docelowej, aby uniknąć problemów z długimi nazwami plików (MAX_PATH),
+            # ale zachowujemy rozszerzenie oryginału (wcześniej nawet .msi było zapisywane jako .exe).
+            $avExtension = [System.IO.Path]::GetExtension($fileName)
+            if ([string]::IsNullOrWhiteSpace($avExtension)) { $avExtension = ".exe" }
+            $avPath = Join-Path $env:TEMP "setup_av_temp$avExtension"
+            $avUrl = Join-InstallSource -BasePath $sourcePath -FileName $fileName
             Write-Log "Pobieranie antywirusa z $avUrl..."
 
             $cred = $null
@@ -1280,8 +1387,12 @@ function Install-AV {
         }
 
         Write-Log "Instalacja antywirusa z $avPath..."
-        Start-ProcessWithEvents -FilePath $avPath -ArgumentList "" | Out-Null
-        Write-Log "Instalacja antywirusa zakończona"
+        if ($avPath -like "*.msi") {
+            $exitCode = Start-ProcessWithEvents -FilePath "msiexec.exe" -ArgumentList "/i `"$avPath`""
+        } else {
+            $exitCode = Start-ProcessWithEvents -FilePath $avPath
+        }
+        Write-InstallResult -Name "Antywirus" -ExitCode $exitCode | Out-Null
     }
     catch {
         Write-Log "Błąd podczas instalacji antywirusa: $_" -IsError
