@@ -274,15 +274,24 @@ $authWindow.Add_KeyDown({
     }
 })
 
-$authWindow.ShowDialog() | Out-Null
+# W testach Pester (skrypt jest wczytywany przez dot-sourcing) okna logowania i powitania NIE mogą
+# się pokazać - ShowDialog() czekałby w nieskończoność na kliknięcie, a brak logowania kończył się
+# "exit", który zamykał cały proces Invoke-Pester.
+if ($null -eq $global:PesterTesting) {
+    $authWindow.ShowDialog() | Out-Null
 
-if (-not $script:authSuccess) {
-    exit
+    if (-not $script:authSuccess) {
+        exit
+    }
+
+    # Zapisz login od razu do logów po pomyślnej autoryzacji - w tym samym formacie co Write-Log
+    # (data, poziom, kontekst), żeby przeglądarka logów pokazała datę i kontekst tego wpisu.
+    $authLogLine = "[$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))] [INFO] [Użytkownik] Zalogowano operatora narzędzia STD: $($script:OperatorLogin)"
+    Add-Content -Path "C:\deploy-log.txt" -Value $authLogLine -Encoding UTF8 -ErrorAction SilentlyContinue
+} else {
+    $script:authSuccess = $true
+    $script:OperatorLogin = "Pester"
 }
-
-# Zapisz login od razu do logów po pomyślnej autoryzacji
-$authLogLine = "[$((Get-Date).ToString('HH:mm:ss'))] Zalogowano operatora narzędzia STD: $($script:OperatorLogin)"
-Add-Content -Path "C:\deploy-log.txt" -Value $authLogLine -Encoding UTF8 -ErrorAction SilentlyContinue
 
 
 # ---------- Utworzenie formularza (WPF) ----------
@@ -399,10 +408,14 @@ $btnCancel.Add_Click({
     $welcomeWindow.Close()
 })
 
-$result = $welcomeWindow.ShowDialog()
+if ($null -eq $global:PesterTesting) {
+    $result = $welcomeWindow.ShowDialog()
 
-if ($result -ne $true) {
-    exit
+    if ($result -ne $true) {
+        exit
+    }
+} else {
+    $timer.Stop()
 }
 
 $ScriptDir = $PSScriptRoot
@@ -6218,7 +6231,10 @@ function Show-ConfigEditor {
     $dlg.ShowDialog() | Out-Null
 }
 
-Ensure-Configuration
+# W testach nie tworzymy/nie sprawdzamy config.json interaktywnie (okno komunikatu zablokowałoby testy).
+if ($null -eq $global:PesterTesting) {
+    Ensure-Configuration
+}
 
 [xml]$mainXaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
