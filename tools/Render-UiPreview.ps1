@@ -204,7 +204,7 @@ function global:Save-UiWindowShot {
         $queue.Enqueue($root)
         while ($queue.Count -gt 0) {
             $v = $queue.Dequeue()
-            if ($v -is [System.Windows.Controls.ScrollViewer] -and $v.ExtentHeight -gt ($v.ViewportHeight + 1) -and $v.ViewportHeight -gt 0 -and $v.TemplatedParent -isnot [System.Windows.Controls.TextBoxBase] -and $v.TemplatedParent -isnot [System.Windows.Controls.ItemsControl]) {
+            if ($v -is [System.Windows.Controls.ScrollViewer] -and $v.ExtentHeight -gt ($v.ViewportHeight + 1) -and $v.ViewportHeight -gt 0 -and $v.TemplatedParent -isnot [System.Windows.Controls.Primitives.TextBoxBase] -and $v.TemplatedParent -isnot [System.Windows.Controls.ItemsControl]) {
                 # Zawartość dłuższa niż widoczny obszar = trzeba przewijać (np. lista zadań w oknie głównym).
                 Write-Host ("SCROLL {0} | {1} | zawartość {2:N0}px w widoku {3:N0}px" -f $name, (Get-UiElementLabel $v.Content), $v.ExtentHeight, $v.ViewportHeight)
             }

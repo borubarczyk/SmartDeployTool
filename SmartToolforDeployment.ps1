@@ -275,7 +275,7 @@ $script:ThemeStylesXaml = @'
         <Setter Property="Foreground" Value="{DynamicResource ThemeButtonText}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource ThemeFieldBorder}"/>
         <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="Padding" Value="14,6"/>
+        <Setter Property="Padding" Value="14,7"/>
         <Setter Property="HorizontalContentAlignment" Value="Center"/>
         <Setter Property="VerticalContentAlignment" Value="Center"/>
         <Setter Property="Cursor" Value="Hand"/>
@@ -624,6 +624,54 @@ $script:ThemeStylesXaml = @'
         </Setter>
     </Style>
 
+    <!-- ===== Zakładki (jak w NPS Event Viewer: podkreślona aktywna zakładka) ===== -->
+    <Style TargetType="TabControl">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TabControl">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Border BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,0,0,1" Margin="0,0,0,14">
+                            <TabPanel IsItemsHost="True"/>
+                        </Border>
+                        <ContentPresenter Grid.Row="1" ContentSource="SelectedContent"/>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="TabItem">
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TabItem">
+                    <Border x:Name="bd" Background="Transparent" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="14,8" Margin="0,0,4,-1">
+                        <ContentPresenter x:Name="hdr" ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True"
+                                          TextElement.FontSize="13.5" TextElement.FontWeight="SemiBold" TextElement.Foreground="{DynamicResource ThemeMuted}"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="hdr" Property="TextElement.Foreground" Value="{DynamicResource ThemeText}"/></Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource ThemeFocus}"/>
+                            <Setter TargetName="hdr" Property="TextElement.Foreground" Value="{DynamicResource ThemeText}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <!-- Podpis + pole (jak "FieldBox" w NPS): StackPanel z Caption i kontrolką, układany w WrapPanel. -->
+    <Style x:Key="FieldBox" TargetType="StackPanel">
+        <Setter Property="Margin" Value="0,0,14,12"/>
+    </Style>
+
     <!-- ===== Pasek postępu ===== -->
     <Style TargetType="ProgressBar">
         <Setter Property="Background" Value="{DynamicResource ThemeTrack}"/>
@@ -788,6 +836,8 @@ function global:New-ThemedWindow {
 
     $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $Xaml))
     $win.UseLayoutRounding = $true
+    # Czcionka 13 px jak w ServerReview / NPS Event Viewer, chyba że XAML okna podaje własną.
+    if ($win.ReadLocalValue([System.Windows.Controls.Control]::FontSizeProperty) -eq [System.Windows.DependencyProperty]::UnsetValue) { $win.FontSize = 13 }
     # Okno nigdy większe niż obszar roboczy ekranu. Narzędzie działa na świeżo zainstalowanych
     # komputerach - często jeszcze bez sterownika grafiki (1024x768) albo na laptopach ze
     # skalowaniem 125-150% - i wtedy dół okna (np. przyciski Start/Pauza) wychodził poza ekran.
