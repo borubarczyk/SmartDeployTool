@@ -417,6 +417,32 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             Test-ComputerNameValid -Name "-PC" | Should -Match "myślnikiem"
             Test-ComputerNameValid -Name "" | Should -Match "pusta"
         }
+
+        It "Przy dołączaniu do domeny odkłada nazwę zamiast Rename-Computer, a Join-Domain nadaje ją przez Add-Computer -NewName" {
+            $script:DryRun = $false
+            $script:PendingComputerName = $null
+            $oldConfigPath = $configPath
+            $configPath = Join-Path $TestDrive "config-domain.json"
+            '{ "DomainJoin": { "DomainName": "firma.local", "Username": "FIRMA\\admin" } }' | Set-Content -Path $configPath -Encoding UTF8
+            try {
+                Mock Get-DefaultComputerName { "PC-TEST" }
+                Mock Show-InputDialog { "PC-NOWY" }
+                Mock Rename-Computer { }
+                Mock Get-Credential { New-Object System.Management.Automation.PSCredential("FIRMA\admin", (ConvertTo-SecureString "x" -AsPlainText -Force)) }
+                Mock Add-Computer { }
+
+                Set-NewComputerName -DeferToDomainJoin
+                $script:PendingComputerName | Should -Be "PC-NOWY"
+                Should -Invoke Rename-Computer -Times 0 -Exactly
+
+                Join-Domain
+                Should -Invoke Add-Computer -Times 1 -Exactly -ParameterFilter { $NewName -eq "PC-NOWY" -and $DomainName -eq "firma.local" }
+                $script:PendingComputerName | Should -BeNullOrEmpty
+            } finally {
+                $configPath = $oldConfigPath
+                $script:PendingComputerName = $null
+            }
+        }
     }
 
     Context "Zapis ustawień (Set-ConfigValue, Get-ConfigSection)" {

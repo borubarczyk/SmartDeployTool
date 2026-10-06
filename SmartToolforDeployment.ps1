@@ -2293,6 +2293,7 @@ function Join-Domain {
         $DomainName = ($config.DomainJoin.DomainName).Trim()
         $UserForJoin = $config.DomainJoin.Username
         $ComputerName = $env:COMPUTERNAME
+        if (-not [string]::IsNullOrWhiteSpace($script:PendingComputerName)) { $ComputerName = $script:PendingComputerName }
 
         if ($script:DryRun) {
             Write-Log "[DRY-RUN] Dołączono by do domeny '$DomainName' jako '$UserForJoin' (komputer: $ComputerName)."
@@ -2306,7 +2307,13 @@ function Join-Domain {
             return
         }
 
-        Add-Computer -DomainName $DomainName -Credential $Credential -Force -ErrorAction Stop
+        # Zmiana nazwy i dołączenie do domeny w jednym kroku (Add-Computer -NewName). Osobny
+        # Rename-Computer PO dołączeniu zmieniał nazwę tylko lokalnie - konto komputera w AD
+        # zostawało ze starą nazwą, a bez restartu między krokami drugi z nich kończył się błędem.
+        $addParams = @{ DomainName = $DomainName; Credential = $Credential; Force = $true; ErrorAction = 'Stop' }
+        if (-not [string]::IsNullOrWhiteSpace($script:PendingComputerName)) { $addParams['NewName'] = $script:PendingComputerName }
+        Add-Computer @addParams
+        $script:PendingComputerName = $null
         Write-Log "Dołączono do domeny $DomainName z nazwą '$ComputerName'"
         Write-Log "Wymagane jest ponowne uruchomienie komputera, aby zmiany zaczęły obowiązywać."
     }
@@ -2338,7 +2345,10 @@ function Test-ComputerNameValid {
     return $null
 }
 
+# -DeferToDomainJoin: gdy w tym samym wdrożeniu jest dołączanie do domeny, nazwa jest tylko
+# zapamiętywana i nadawana przez Join-Domain (Add-Computer -NewName), a nie przez Rename-Computer.
 function Set-NewComputerName {
+    param([switch]$DeferToDomainJoin)
     $defaultName = Get-DefaultComputerName
     if ($script:DryRun) {
         Write-Log "[DRY-RUN] Zmieniono by nazwę komputera (domyślnie '$defaultName')."
@@ -2357,6 +2367,11 @@ function Set-NewComputerName {
         }
         if ($newName -eq $env:COMPUTERNAME) {
             Write-Log "Pominięto zmianę nazwy - komputer już nazywa się '$newName'."
+            return
+        }
+        if ($DeferToDomainJoin) {
+            $script:PendingComputerName = $newName
+            Write-Log "Nazwa '$newName' zostanie nadana razem z dołączeniem do domeny."
             return
         }
         Rename-Computer -NewName $newName -Force -ErrorAction Stop
@@ -3344,7 +3359,11 @@ function Start-Deployment {
         if ($CheckboxControls.ContainsKey("EnableBitLocker") -and $CheckboxControls["EnableBitLocker"].IsChecked -eq $true) { $script:TotalDeploymentSteps++ }
     
         $script:CurrentDeploymentStep = 0
+        $script:PendingComputerName = $null
     
+        # Profil Wi-Fi przed czekaniem na sieć - na laptopie bez kabla to właśnie on daje połączenie.
+        if ($CheckboxControls["ImportWiFiProfile"].IsChecked -eq $true) { Set-ProgressText "Importowanie profilu Wi-Fi..."; Import-WiFiProfile; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "ImportWiFiProfile" }
+
         if ($CheckboxControls.ContainsKey("WaitForNetwork") -and $CheckboxControls["WaitForNetwork"].IsChecked -eq $true) { Set-ProgressText "Oczekiwanie na sieć..."; Wait-ForNetwork; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "WaitForNetwork" }
 
         if ($CheckboxControls.ContainsKey("SuspendHibernation") -and $CheckboxControls["SuspendHibernation"].IsChecked -eq $true) { Set-ProgressText "Wstrzymywanie hibernacji..."; Suspend-Hibernation; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "SuspendHibernation" }
@@ -3359,11 +3378,29 @@ function Start-Deployment {
 
         if ($CheckboxControls["InstallAV"].IsChecked -eq $true) { Set-ProgressText "Instalacja: AntyVirus..."; Install-AV; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "InstallAV" }
 
-        if ($CheckboxControls["ImportWiFiProfile"].IsChecked -eq $true) { Set-ProgressText "Importowanie profilu Wi-Fi..."; Import-WiFiProfile; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "ImportWiFiProfile" }
-
         if ($CheckboxControls["CreateLocalAdmin"].IsChecked -eq $true) { Set-ProgressText "Tworzenie konta lokalnego administratora..."; New-LocalAdmin; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "CreateLocalAdmin" }
 
-        if ($CheckboxControls["JoinDomain"].IsChecked -eq $true) { Set-ProgressText "Dołączanie do domeny..."; Join-Domain; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "JoinDomain" }
+        # Zmiana nazwy przed domeną: przy obu zadaniach nazwa idzie do Add-Computer -NewName.
+        $joinDomainChecked = ($CheckboxControls["JoinDomain"].IsChecked -eq $true)
+        if ($CheckboxControls.ContainsKey("ChangeComputerName") -and $CheckboxControls["ChangeComputerName"].IsChecked -eq $true) { Set-ProgressText "Zmiana nazwy komputera..."; Set-NewComputerName -DeferToDomainJoin:$joinDomainChecked; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "ChangeComputerName" }
+
+        if ($joinDomainChecked) {
+            Set-ProgressText "Dołączanie do domeny..."
+            Join-Domain
+            if ($script:isCancelled) { return }
+            # Dołączenie nie doszło do skutku (anulowane poświadczenia, błąd) - nazwa i tak ma się zmienić.
+            if (-not [string]::IsNullOrWhiteSpace($script:PendingComputerName)) {
+                try {
+                    Rename-Computer -NewName $script:PendingComputerName -Force -ErrorAction Stop
+                    Write-Log "Zmieniono nazwę komputera na '$($script:PendingComputerName)' (bez domeny). Zmiana zadziała po ponownym uruchomieniu."
+                } catch {
+                    Write-Log "Błąd zmiany nazwy komputera: $_" -IsError
+                }
+                $script:PendingComputerName = $null
+            }
+            Step-DeploymentProgress
+            Save-DeploymentCheckpointStep "JoinDomain"
+        }
 
         if ($CheckboxControls["InstallApplications"].IsChecked -eq $true -and $script:SelectedApps.Count -gt 0) {
             Install-SelectedApps
@@ -3373,8 +3410,6 @@ function Start-Deployment {
         else {
             Write-Log "Instalacja aplikacji pominięta."
         }
-
-        if ($CheckboxControls.ContainsKey("ChangeComputerName") -and $CheckboxControls["ChangeComputerName"].IsChecked -eq $true) { Set-ProgressText "Zmiana nazwy komputera..."; Set-NewComputerName; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "ChangeComputerName" }
 
         if ($CheckboxControls.ContainsKey("JoinIntune") -and $CheckboxControls["JoinIntune"].IsChecked -eq $true) { Set-ProgressText "Dołączanie do Intune..."; Join-Intune; if ($script:isCancelled) { return }; Step-DeploymentProgress; Save-DeploymentCheckpointStep "JoinIntune" }
 
