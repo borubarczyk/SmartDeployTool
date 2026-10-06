@@ -582,6 +582,20 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             { & $script:LoadAllThemedWindows } | Should -Not -Throw
         }
 
+        It "Pola tekstowe mają pojedynczy odstęp wewnętrzny (ok. 31 px wysokości, jak przyciski)" {
+            # Padding pola przekazuje do środka sam TextBox/PasswordBox - szablon nie może go dublować
+            # (wcześniej pole miało 43 px, a przy sztywnej wysokości tekst był ucinany w połowie).
+            [xml]$xaml = '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><StackPanel><TextBox Name="t" Text="Abc"/><PasswordBox Name="p"/><Button Name="b" Content="OK"/></StackPanel></Window>'
+            $w = New-ThemedWindow -Xaml $xaml -NoOwner
+            $w.Content.Measure((New-Object System.Windows.Size 400, 400))
+            $w.Content.Arrange((New-Object System.Windows.Rect 0, 0, 400, 400))
+            foreach ($name in 't', 'p') {
+                $h = $w.FindName($name).ActualHeight
+                $h | Should -BeGreaterThan 26
+                $h | Should -BeLessThan 36
+            }
+        }
+
         It "Przełączenie motywu podmienia kolory w już otwartym oknie" {
             $script:isDarkTheme = $true
             [xml]$xaml = '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Background="{DynamicResource ThemeBackground}"><Grid/></Window>'

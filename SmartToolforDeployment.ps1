@@ -363,12 +363,17 @@ $script:ThemeStylesXaml = @'
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TextBox">
+                    <!-- Padding NIE jest tu nakładany na PART_ContentHost: TextBox sam przekazuje swój Padding
+                         do wewnętrznego ScrollViewera. Wcześniej Margin="{TemplateBinding Padding}" dublował
+                         odstęp (pole 43 px zamiast 31 px), a przy sztywnej wysokości tekst był ucinany w połowie. -->
                     <Border x:Name="b" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7" SnapsToDevicePixels="True">
-                        <Grid Margin="{TemplateBinding Padding}">
+                        <Grid>
                             <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" Focusable="False"
                                           HorizontalScrollBarVisibility="{TemplateBinding ScrollViewer.HorizontalScrollBarVisibility}" VerticalScrollBarVisibility="{TemplateBinding ScrollViewer.VerticalScrollBarVisibility}"/>
-                            <!-- Podpowiedź w pustym polu: tekst z Tag (np. Tag="Szukaj...") -->
-                            <TextBlock x:Name="wm" Text="{TemplateBinding Tag}" Foreground="{DynamicResource ThemeFaint}" Margin="2,0,0,0" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" IsHitTestVisible="False" Visibility="Collapsed"/>
+                            <!-- Podpowiedź w pustym polu: tekst z Tag (np. Tag="Szukaj..."), wyrównana do tekstu pola -->
+                            <Border Padding="{TemplateBinding Padding}" IsHitTestVisible="False">
+                                <TextBlock x:Name="wm" Text="{TemplateBinding Tag}" Foreground="{DynamicResource ThemeFaint}" Margin="2,0,0,0" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" Visibility="Collapsed"/>
+                            </Border>
                         </Grid>
                     </Border>
                     <ControlTemplate.Triggers>
@@ -394,8 +399,9 @@ $script:ThemeStylesXaml = @'
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="PasswordBox">
+                    <!-- Jak w TextBox: Padding przekazuje sam PasswordBox, bez dublowania przez Margin. -->
                     <Border x:Name="b" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7" SnapsToDevicePixels="True">
-                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" Focusable="False" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden"/>
+                        <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" Focusable="False" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden"/>
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="{DynamicResource ThemeFaint}"/></Trigger>
@@ -5526,7 +5532,7 @@ function Show-ProfileEditDialog {
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Edytuj profil wdrożeniowy" Width="660" Height="560" MinWidth="480" MinHeight="380" WindowStartupLocation="CenterOwner"
+        Title="Edytuj profil wdrożeniowy" Width="660" Height="600" MinWidth="480" MinHeight="380" WindowStartupLocation="CenterOwner"
         Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" FontSize="13">
     <Window.Resources>
         <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
