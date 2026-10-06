@@ -355,7 +355,7 @@ $script:ThemeStylesXaml = @'
         <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource ThemeFieldBorder}"/>
         <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="Padding" Value="8,5"/>
+        <Setter Property="Padding" Value="8,6"/>
         <Setter Property="CaretBrush" Value="{DynamicResource ThemeText}"/>
         <Setter Property="SelectionBrush" Value="{DynamicResource AccentColor}"/>
         <Setter Property="VerticalContentAlignment" Value="Center"/>
@@ -380,7 +380,7 @@ $script:ThemeStylesXaml = @'
         <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource ThemeFieldBorder}"/>
         <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="Padding" Value="8,5"/>
+        <Setter Property="Padding" Value="8,6"/>
         <Setter Property="CaretBrush" Value="{DynamicResource ThemeText}"/>
         <Setter Property="SelectionBrush" Value="{DynamicResource AccentColor}"/>
         <Setter Property="VerticalContentAlignment" Value="Center"/>
@@ -407,7 +407,6 @@ $script:ThemeStylesXaml = @'
         <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource ThemeFieldBorder}"/>
         <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="MinHeight" Value="28"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
         <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
@@ -430,7 +429,7 @@ $script:ThemeStylesXaml = @'
                                 </ControlTemplate>
                             </ToggleButton.Template>
                         </ToggleButton>
-                        <ContentPresenter IsHitTestVisible="False" Margin="10,0,28,0" VerticalAlignment="Center" HorizontalAlignment="Left"
+                        <ContentPresenter IsHitTestVisible="False" Margin="10,7,28,7" VerticalAlignment="Center" HorizontalAlignment="Left"
                                           Content="{TemplateBinding SelectionBoxItem}"
                                           ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
                                           ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"/>
@@ -996,12 +995,12 @@ try {
         <Border Style="{StaticResource Card}">
             <StackPanel>
                 <TextBlock Text="IDENTYFIKATOR / LOGIN" Style="{StaticResource Caption}"/>
-                <TextBox Name="txtLogin" Height="34" FontSize="14" Margin="0,0,0,14"/>
+                <TextBox Name="txtLogin" FontSize="14" Margin="0,0,0,14"/>
                 <TextBlock Text="PIN" Style="{StaticResource Caption}"/>
-                <PasswordBox Name="txtPin" Height="34" FontSize="14"/>
+                <PasswordBox Name="txtPin" FontSize="14"/>
             </StackPanel>
         </Border>
-        <Button Name="btnLogin" Content="Odblokuj narzędzie" Height="38" FontSize="14" Margin="0,18,0,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+        <Button Name="btnLogin" Content="Odblokuj narzędzie" FontSize="14" Margin="0,18,0,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
     </StackPanel>
 </Window>
 "@
@@ -1085,8 +1084,8 @@ if ($null -eq $global:PesterTesting) {
         </Border>
         <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="22,14">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnOk" Content="OK (3)" Width="120" Height="38" Margin="0,0,10,0" Style="{StaticResource PrimaryButton}" IsEnabled="False"/>
-                <Button Name="btnCancel" Content="Anuluj" Width="120" Height="38" IsEnabled="False" IsCancel="True"/>
+                <Button Name="btnOk" Content="OK (3)" MinWidth="120" Margin="0,0,10,0" Style="{StaticResource PrimaryButton}" IsEnabled="False"/>
+                <Button Name="btnCancel" Content="Anuluj" MinWidth="120" IsEnabled="False" IsCancel="True"/>
             </StackPanel>
         </Border>
     </Grid>
@@ -2189,16 +2188,16 @@ function Show-InputDialog {
         </Grid.RowDefinitions>
         <StackPanel Margin="22,20,22,18">
             <TextBlock Name="txtMessage" TextWrapping="Wrap" FontSize="13" Margin="0,0,0,12"/>
-            <TextBox Name="txtInput" Height="32"/>
-            <PasswordBox Name="pwdInput" Height="32" Visibility="Collapsed"/>
+            <TextBox Name="txtInput"/>
+            <PasswordBox Name="pwdInput" Visibility="Collapsed"/>
             <TextBlock Name="lblConfirm" Text="POWTÓRZ HASŁO" Style="{StaticResource Caption}" Margin="0,12,0,5" Visibility="Collapsed"/>
-            <PasswordBox Name="pwdConfirm" Height="32" Visibility="Collapsed"/>
+            <PasswordBox Name="pwdConfirm" Visibility="Collapsed"/>
             <TextBlock Name="txtError" Foreground="{DynamicResource ThemeDanger}" TextWrapping="Wrap" Margin="0,10,0,0" Visibility="Collapsed"/>
         </StackPanel>
         <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnOk" Content="OK" Width="90" Height="32" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                <Button Name="btnCancel" Content="Anuluj" Width="90" Height="32" IsCancel="True"/>
+                <Button Name="btnOk" Content="OK" MinWidth="90" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+                <Button Name="btnCancel" Content="Anuluj" MinWidth="90" IsCancel="True"/>
             </StackPanel>
         </Border>
     </Grid>
@@ -3155,7 +3154,7 @@ function Show-AppSelectionWindow {
 
         <StackPanel Grid.Row="0" Margin="20,18,20,12">
             <TextBlock Text="SZUKAJ APLIKACJI" Style="{StaticResource Caption}"/>
-            <TextBox Name="txtSearch" Height="34" FontSize="14"/>
+            <TextBox Name="txtSearch" FontSize="14"/>
         </StackPanel>
 
         <Border Grid.Row="1" Style="{StaticResource Card}" Margin="20,0,20,0" Padding="12,10">
@@ -3170,15 +3169,15 @@ function Show-AppSelectionWindow {
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <Button Name="btnSelectAll" Content="Zaznacz wszystko" Grid.Column="0" Margin="0,0,5,0" Height="34"/>
-            <Button Name="btnDeselectAll" Content="Odznacz wszystko" Grid.Column="1" Margin="5,0,5,0" Height="34"/>
-            <Button Name="btnInvertSelection" Content="Odwróć zaznaczenie" Grid.Column="2" Margin="5,0,0,0" Height="34"/>
+            <Button Name="btnSelectAll" Content="Zaznacz wszystko" Grid.Column="0" Margin="0,0,5,0"/>
+            <Button Name="btnDeselectAll" Content="Odznacz wszystko" Grid.Column="1" Margin="5,0,5,0"/>
+            <Button Name="btnInvertSelection" Content="Odwróć zaznaczenie" Grid.Column="2" Margin="5,0,0,0"/>
         </Grid>
 
         <Border Grid.Row="3" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,12">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnOk" Content="OK" Width="120" Height="36" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                <Button Name="btnCancel" Content="Anuluj" Width="120" Height="36" IsCancel="True"/>
+                <Button Name="btnOk" Content="OK" MinWidth="120" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+                <Button Name="btnCancel" Content="Anuluj" MinWidth="120" IsCancel="True"/>
             </StackPanel>
         </Border>
     </Grid>
@@ -3672,8 +3671,8 @@ function Show-LogEntryDetail {
         </Border>
         <Border Grid.Row="2" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,12" Margin="0,16,0,0">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnCopy" Content="Kopiuj" Width="100" Height="32" Margin="0,0,8,0"/>
-                <Button Name="btnClose" Content="Zamknij" Width="100" Height="32" IsCancel="True"/>
+                <Button Name="btnCopy" Content="Kopiuj" MinWidth="100" Margin="0,0,8,0"/>
+                <Button Name="btnClose" Content="Zamknij" MinWidth="100" IsCancel="True"/>
             </StackPanel>
         </Border>
     </Grid>
@@ -3738,8 +3737,8 @@ function Show-LogWindow {
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBox Name="txtSearch" Grid.Column="0" Height="32" Margin="0,0,10,0" ToolTip="Szukaj w treści wpisów..."/>
-            <ComboBox Name="cmbRodzajFilter" Grid.Column="1" Height="32" Margin="0,0,10,0" SelectedIndex="0">
+            <TextBox Name="txtSearch" Grid.Column="0" Margin="0,0,10,0" ToolTip="Szukaj w treści wpisów..."/>
+            <ComboBox Name="cmbRodzajFilter" Grid.Column="1" Margin="0,0,10,0" SelectedIndex="0">
                 <ComboBoxItem Content="Rodzaj: wszystkie"/>
                 <ComboBoxItem Content="❌ Błędy"/>
                 <ComboBoxItem Content="⚠️ Ostrzeżenia"/>
@@ -3747,14 +3746,14 @@ function Show-LogWindow {
                 <ComboBoxItem Content="🧪 Dry-Run"/>
                 <ComboBoxItem Content="ℹ️ Informacyjne"/>
             </ComboBox>
-            <ComboBox Name="cmbKontekstFilter" Grid.Column="2" Height="32" Margin="0,0,10,0" SelectedIndex="0">
+            <ComboBox Name="cmbKontekstFilter" Grid.Column="2" Margin="0,0,10,0" SelectedIndex="0">
                 <ComboBoxItem Content="Kontekst: wszystkie"/>
                 <ComboBoxItem Content="System"/>
                 <ComboBoxItem Content="Automat"/>
                 <ComboBoxItem Content="Użytkownik"/>
             </ComboBox>
             <CheckBox Name="chkAutoRefresh" Grid.Column="3" Content="Auto-odświeżanie" IsChecked="True" VerticalAlignment="Center" Margin="4,0,16,0"/>
-            <Button Name="btnRefresh" Grid.Column="4" Content="Odśwież" Width="100" Height="32"/>
+            <Button Name="btnRefresh" Grid.Column="4" Content="Odśwież" MinWidth="100"/>
         </Grid>
 
         <Border Grid.Row="2" Style="{StaticResource Card}" Margin="20,0,20,0" Padding="1">
@@ -3783,13 +3782,13 @@ function Show-LogWindow {
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal">
-                    <Button Name="btnExportHtml" Content="Eksportuj raport (HTML)" Width="190" Height="32" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}"/>
-                    <Button Name="btnSave" Content="Zapisz jako..." Width="120" Height="32" Margin="0,0,8,0"/>
-                    <Button Name="btnOpenLog" Content="Otwórz plik" Width="110" Height="32" Margin="0,0,8,0"/>
-                    <Button Name="btnOpenDir" Content="Otwórz folder" Width="120" Height="32" Margin="0,0,8,0"/>
-                    <Button Name="btnZipLogs" Content="Spakuj do ZIP" Width="130" Height="32"/>
+                    <Button Name="btnExportHtml" Content="Eksportuj raport (HTML)" MinWidth="190" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}"/>
+                    <Button Name="btnSave" Content="Zapisz jako..." MinWidth="120" Margin="0,0,8,0"/>
+                    <Button Name="btnOpenLog" Content="Otwórz plik" MinWidth="110" Margin="0,0,8,0"/>
+                    <Button Name="btnOpenDir" Content="Otwórz folder" MinWidth="120" Margin="0,0,8,0"/>
+                    <Button Name="btnZipLogs" Content="Spakuj do ZIP" MinWidth="130"/>
                 </StackPanel>
-                <Button Name="btnClearLogs" Grid.Column="1" Content="Wyczyść logi" Width="120" Height="32" Style="{StaticResource DangerButton}"/>
+                <Button Name="btnClearLogs" Grid.Column="1" Content="Wyczyść logi" MinWidth="120" Style="{StaticResource DangerButton}"/>
             </Grid>
         </Border>
     </Grid>
@@ -4139,8 +4138,8 @@ function Show-UninstallConfirmDialog {
         </StackPanel>
         <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnYes" Content="Tak, odinstaluj" Width="140" Height="34" Margin="0,0,8,0" Style="{StaticResource DangerButton}" IsDefault="True"/>
-                <Button Name="btnNo" Content="Anuluj" Width="100" Height="34" IsCancel="True"/>
+                <Button Name="btnYes" Content="Tak, odinstaluj" MinWidth="140" Margin="0,0,8,0" Style="{StaticResource DangerButton}" IsDefault="True"/>
+                <Button Name="btnNo" Content="Anuluj" MinWidth="100" IsCancel="True"/>
             </StackPanel>
         </Border>
     </Grid>
@@ -4189,9 +4188,9 @@ function Show-CustomInfoDialog {
         </ScrollViewer>
         <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnExportHTML" Content="Zapisz HTML" Width="110" Height="32" Margin="0,0,8,0" Visibility="Collapsed"/>
-                <Button Name="btnCopy" Content="Kopiuj do schowka" Width="140" Height="32" Margin="0,0,8,0" Visibility="Collapsed"/>
-                <Button Name="btnOk" Content="OK" Width="100" Height="32" Style="{StaticResource PrimaryButton}" IsDefault="True" IsCancel="True"/>
+                <Button Name="btnExportHTML" Content="Zapisz HTML" MinWidth="110" Margin="0,0,8,0" Visibility="Collapsed"/>
+                <Button Name="btnCopy" Content="Kopiuj do schowka" MinWidth="140" Margin="0,0,8,0" Visibility="Collapsed"/>
+                <Button Name="btnOk" Content="OK" MinWidth="100" Style="{StaticResource PrimaryButton}" IsDefault="True" IsCancel="True"/>
             </StackPanel>
         </Border>
     </Grid>
@@ -4364,7 +4363,7 @@ function Show-SystemInfoWindow {
                 <ColumnDefinition Width="260"/>
             </Grid.ColumnDefinitions>
             <TextBlock Name="txtAppsHeader" Grid.Column="0" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
-            <TextBox Name="txtSearch" Grid.Column="1" Height="32" ToolTip="Szukaj po nazwie programu..."/>
+            <TextBox Name="txtSearch" Grid.Column="1" ToolTip="Szukaj po nazwie programu..."/>
         </Grid>
 
         <Border Grid.Row="4" Style="{StaticResource Card}" Margin="20,0,20,0" Padding="1">
@@ -4380,9 +4379,9 @@ function Show-SystemInfoWindow {
 
         <Border Grid.Row="5" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,12" Margin="0,14,0,0">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnCopy" Content="Kopiuj do schowka" Width="150" Height="32" Margin="0,0,8,0"/>
-                <Button Name="btnExportHtml" Content="Zapisz jako HTML" Width="150" Height="32" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}"/>
-                <Button Name="btnClose" Content="Zamknij" Width="100" Height="32" IsCancel="True"/>
+                <Button Name="btnCopy" Content="Kopiuj do schowka" MinWidth="150" Margin="0,0,8,0"/>
+                <Button Name="btnExportHtml" Content="Zapisz jako HTML" MinWidth="150" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}"/>
+                <Button Name="btnClose" Content="Zamknij" MinWidth="100" IsCancel="True"/>
             </StackPanel>
         </Border>
     </Grid>
@@ -4574,12 +4573,12 @@ function Show-SoftwareUninstaller {
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBox Name="txtSearch" Grid.Column="0" Height="32" Margin="0,0,10,0" FontSize="13.5" ToolTip="Szukaj po nazwie programu lub wydawcy..."/>
-            <Button Name="btnSelectAllApps" Content="Zaznacz widoczne" Grid.Column="1" Width="130" Height="32" Margin="0,0,6,0"/>
-            <Button Name="btnDeselectAllApps" Content="Odznacz widoczne" Grid.Column="2" Width="130" Height="32" Margin="0,0,10,0"/>
-            <Button Name="btnExportCSV" Content="Eksportuj CSV" Grid.Column="3" Width="110" Height="32" Margin="0,0,6,0"/>
-            <Button Name="btnExportHTML" Content="Eksportuj HTML" Grid.Column="4" Width="120" Height="32" Margin="0,0,10,0"/>
-            <Button Name="btnRefresh" Content="Odśwież listę" Grid.Column="5" Width="110" Height="32"/>
+            <TextBox Name="txtSearch" Grid.Column="0" Margin="0,0,10,0" FontSize="13.5" ToolTip="Szukaj po nazwie programu lub wydawcy..."/>
+            <Button Name="btnSelectAllApps" Content="Zaznacz widoczne" Grid.Column="1" MinWidth="130" Margin="0,0,6,0"/>
+            <Button Name="btnDeselectAllApps" Content="Odznacz widoczne" Grid.Column="2" MinWidth="130" Margin="0,0,10,0"/>
+            <Button Name="btnExportCSV" Content="Eksportuj CSV" Grid.Column="3" MinWidth="110" Margin="0,0,6,0"/>
+            <Button Name="btnExportHTML" Content="Eksportuj HTML" Grid.Column="4" MinWidth="120" Margin="0,0,10,0"/>
+            <Button Name="btnRefresh" Content="Odśwież listę" Grid.Column="5" MinWidth="110"/>
         </Grid>
 
         <Border Grid.Row="2" Style="{StaticResource Card}" Margin="20,0,20,0" Padding="1">
@@ -4630,10 +4629,10 @@ function Show-SoftwareUninstaller {
                     <ProgressBar Name="pbUninstall" Height="8" Minimum="0" Maximum="100" Foreground="{DynamicResource ThemeDangerFill}" Visibility="Hidden"/>
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal">
-                    <Button Name="btnPauseUninstall" Content="Pauza" Width="90" Height="34" Margin="0,0,8,0" Style="{StaticResource WarningButton}" IsEnabled="False"/>
-                    <Button Name="btnKill" Content="Zabij proces" Width="120" Height="34" Margin="0,0,8,0" Style="{StaticResource WarningButton}" IsEnabled="False" ToolTip="Wymuś zamknięcie zawieszonego deinstalatora"/>
-                    <Button Name="btnUninstall" Content="Odinstaluj (Cicho)" Width="170" Height="34" Margin="0,0,8,0" Style="{StaticResource DangerButton}"/>
-                    <Button Name="btnClose" Content="Zamknij" Width="90" Height="34" IsCancel="True"/>
+                    <Button Name="btnPauseUninstall" Content="Pauza" MinWidth="90" Margin="0,0,8,0" Style="{StaticResource WarningButton}" IsEnabled="False"/>
+                    <Button Name="btnKill" Content="Zabij proces" MinWidth="120" Margin="0,0,8,0" Style="{StaticResource WarningButton}" IsEnabled="False" ToolTip="Wymuś zamknięcie zawieszonego deinstalatora"/>
+                    <Button Name="btnUninstall" Content="Odinstaluj (Cicho)" MinWidth="170" Margin="0,0,8,0" Style="{StaticResource DangerButton}"/>
+                    <Button Name="btnClose" Content="Zamknij" MinWidth="90" IsCancel="True"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -5151,19 +5150,19 @@ function Show-ProgramEditDialog {
         </Grid.RowDefinitions>
         <StackPanel Margin="22,20,22,18">
             <TextBlock Text="IDENTYFIKATOR (NP. CHROME)" Style="{StaticResource Caption}"/>
-            <TextBox Name="txtName" Height="32" Margin="0,0,0,14"/>
+            <TextBox Name="txtName" Margin="0,0,0,14"/>
             <TextBlock Text="NAZWA PLIKU / WINGET ID" Style="{StaticResource Caption}"/>
-            <TextBox Name="txtFile" Height="32" Margin="0,0,0,14"/>
+            <TextBox Name="txtFile" Margin="0,0,0,14"/>
             <TextBlock Text="ARGUMENTY CICHEJ INSTALACJI" Style="{StaticResource Caption}"/>
-            <TextBox Name="txtArgs" Height="32" Margin="0,0,0,16"/>
+            <TextBox Name="txtArgs" Margin="0,0,0,16"/>
             <CheckBox Name="chkForceUrl" Content="Zawsze pobieraj z niestandardowego adresu URL" Margin="0,0,0,8" FontSize="13.5" ToolTip="Nadpisuje globalne źródło instalacji dla tego konkretnego programu."/>
-            <TextBox Name="txtUrl" Height="32" Margin="0,0,0,16" IsEnabled="False" ToolTip="Pełny bezpośredni adres URL do instalatora (np. https://.../plik.exe)"/>
+            <TextBox Name="txtUrl" Margin="0,0,0,16" IsEnabled="False" ToolTip="Pełny bezpośredni adres URL do instalatora (np. https://.../plik.exe)"/>
             <CheckBox Name="chkEnabled" Content="Domyślnie zaznaczone do instalacji" FontSize="13.5"/>
         </StackPanel>
         <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnSave" Content="Zapisz" Width="90" Height="32" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                <Button Name="btnCancel" Content="Anuluj" Width="90" Height="32" IsCancel="True"/>
+                <Button Name="btnSave" Content="Zapisz" MinWidth="90" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+                <Button Name="btnCancel" Content="Anuluj" MinWidth="90" IsCancel="True"/>
             </StackPanel>
         </Border>
     </Grid>
@@ -5241,12 +5240,12 @@ function Show-ProgramsManager {
         <ListBox Name="lbPrograms" Grid.Column="0" Margin="0,0,14,0" FontSize="13.5"/>
         <DockPanel Grid.Column="1" LastChildFill="False">
             <StackPanel DockPanel.Dock="Top">
-                <Button Name="btnAdd" Content="Dodaj" Height="34" Margin="0,0,0,8" Style="{StaticResource PrimaryButton}"/>
-                <Button Name="btnEdit" Content="Edytuj" Height="34" Margin="0,0,0,8"/>
-                <Button Name="btnClone" Content="Powiel" Height="34" Margin="0,0,0,8"/>
-                <Button Name="btnRemove" Content="Usuń" Height="34" Margin="0,0,0,8" Style="{StaticResource DangerButton}"/>
+                <Button Name="btnAdd" Content="Dodaj" Margin="0,0,0,8" Style="{StaticResource PrimaryButton}"/>
+                <Button Name="btnEdit" Content="Edytuj" Margin="0,0,0,8"/>
+                <Button Name="btnClone" Content="Powiel" Margin="0,0,0,8"/>
+                <Button Name="btnRemove" Content="Usuń" Margin="0,0,0,8" Style="{StaticResource DangerButton}"/>
             </StackPanel>
-            <Button Name="btnClose" DockPanel.Dock="Bottom" Content="Zamknij" Height="34" IsCancel="True"/>
+            <Button Name="btnClose" DockPanel.Dock="Bottom" Content="Zamknij" IsCancel="True"/>
         </DockPanel>
     </Grid>
 </Window>
@@ -5354,18 +5353,18 @@ function Show-RegistryEditDialog {
                     <ColumnDefinition Width="96"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <ComboBox Name="cmbRoot" Grid.Column="0" Margin="0,0,8,0" Height="32">
+                <ComboBox Name="cmbRoot" Grid.Column="0" Margin="0,0,8,0">
                     <ComboBoxItem Content="HKLM:\"/>
                     <ComboBoxItem Content="HKCU:\"/>
                 </ComboBox>
-                <TextBox Name="txtSubKey" Grid.Column="1" Height="32"/>
+                <TextBox Name="txtSubKey" Grid.Column="1"/>
             </Grid>
             <TextBlock Text="NAZWA (NAME)" Style="{StaticResource Caption}"/>
-            <TextBox Name="txtName" Height="32" Margin="0,0,0,14"/>
+            <TextBox Name="txtName" Margin="0,0,0,14"/>
             <TextBlock Text="WARTOŚĆ (VALUE)" Style="{StaticResource Caption}"/>
-            <TextBox Name="txtValue" Height="32" Margin="0,0,0,14"/>
+            <TextBox Name="txtValue" Margin="0,0,0,14"/>
             <TextBlock Text="TYP DANYCH (PROPERTYTYPE)" Style="{StaticResource Caption}"/>
-            <ComboBox Name="cmbType" Height="32">
+            <ComboBox Name="cmbType">
                 <ComboBoxItem Content="String"/>
                 <ComboBoxItem Content="DWord"/>
                 <ComboBoxItem Content="QWord"/>
@@ -5376,8 +5375,8 @@ function Show-RegistryEditDialog {
         </StackPanel>
         <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnSave" Content="Zapisz" Width="90" Height="32" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                <Button Name="btnCancel" Content="Anuluj" Width="90" Height="32" IsCancel="True"/>
+                <Button Name="btnSave" Content="Zapisz" MinWidth="90" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+                <Button Name="btnCancel" Content="Anuluj" MinWidth="90" IsCancel="True"/>
             </StackPanel>
         </Border>
     </Grid>
@@ -5471,11 +5470,11 @@ function Show-RegistryManager {
         <ListBox Name="lbRegistry" Grid.Column="0" Margin="0,0,14,0" FontSize="13.5"/>
         <DockPanel Grid.Column="1" LastChildFill="False">
             <StackPanel DockPanel.Dock="Top">
-                <Button Name="btnAdd" Content="Dodaj" Height="34" Margin="0,0,0,8" Style="{StaticResource PrimaryButton}"/>
-                <Button Name="btnEdit" Content="Edytuj" Height="34" Margin="0,0,0,8"/>
-                <Button Name="btnRemove" Content="Usuń" Height="34" Margin="0,0,0,8" Style="{StaticResource DangerButton}"/>
+                <Button Name="btnAdd" Content="Dodaj" Margin="0,0,0,8" Style="{StaticResource PrimaryButton}"/>
+                <Button Name="btnEdit" Content="Edytuj" Margin="0,0,0,8"/>
+                <Button Name="btnRemove" Content="Usuń" Margin="0,0,0,8" Style="{StaticResource DangerButton}"/>
             </StackPanel>
-            <Button Name="btnClose" DockPanel.Dock="Bottom" Content="Zamknij" Height="34" IsCancel="True"/>
+            <Button Name="btnClose" DockPanel.Dock="Bottom" Content="Zamknij" IsCancel="True"/>
         </DockPanel>
     </Grid>
 </Window>
@@ -5565,8 +5564,8 @@ function Show-DefaultTasksEditor {
         </Border>
         <Border Grid.Row="2" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnSave" Content="Zapisz" Width="100" Height="32" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                <Button Name="btnCancel" Content="Anuluj" Width="100" Height="32" IsCancel="True"/>
+                <Button Name="btnSave" Content="Zapisz" MinWidth="100" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+                <Button Name="btnCancel" Content="Anuluj" MinWidth="100" IsCancel="True"/>
             </StackPanel>
         </Border>
     </Grid>
@@ -5622,12 +5621,12 @@ function Show-ScriptEditDialog {
         </Grid.RowDefinitions>
         <StackPanel Margin="22,20,22,18">
             <TextBlock Text="ŚCIEŻKA DO SKRYPTU (NAZWA PLIKU, UNC LUB URL)" Style="{StaticResource Caption}"/>
-            <TextBox Name="txtPath" Height="32"/>
+            <TextBox Name="txtPath"/>
         </StackPanel>
         <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnSave" Content="Zapisz" Width="90" Height="32" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                <Button Name="btnCancel" Content="Anuluj" Width="90" Height="32" IsCancel="True"/>
+                <Button Name="btnSave" Content="Zapisz" MinWidth="90" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+                <Button Name="btnCancel" Content="Anuluj" MinWidth="90" IsCancel="True"/>
             </StackPanel>
         </Border>
     </Grid>
@@ -5672,11 +5671,11 @@ function Show-PostInstallScriptsManager {
         <ListBox Name="lbScripts" Grid.Column="0" Margin="0,0,14,0" FontSize="13.5"/>
         <DockPanel Grid.Column="1" LastChildFill="False">
             <StackPanel DockPanel.Dock="Top">
-                <Button Name="btnAdd" Content="Dodaj" Height="34" Margin="0,0,0,8" Style="{StaticResource PrimaryButton}"/>
-                <Button Name="btnEdit" Content="Edytuj" Height="34" Margin="0,0,0,8"/>
-                <Button Name="btnRemove" Content="Usuń" Height="34" Margin="0,0,0,8" Style="{StaticResource DangerButton}"/>
+                <Button Name="btnAdd" Content="Dodaj" Margin="0,0,0,8" Style="{StaticResource PrimaryButton}"/>
+                <Button Name="btnEdit" Content="Edytuj" Margin="0,0,0,8"/>
+                <Button Name="btnRemove" Content="Usuń" Margin="0,0,0,8" Style="{StaticResource DangerButton}"/>
             </StackPanel>
-            <Button Name="btnClose" DockPanel.Dock="Bottom" Content="Zamknij" Height="34" IsCancel="True"/>
+            <Button Name="btnClose" DockPanel.Dock="Bottom" Content="Zamknij" IsCancel="True"/>
         </DockPanel>
     </Grid>
 </Window>
@@ -5750,7 +5749,7 @@ function Show-ProfileEditDialog {
         </Grid.RowDefinitions>
         <StackPanel Grid.Row="0" Margin="22,20,22,0">
             <TextBlock Text="NAZWA PROFILU (NP. KSIĘGOWOŚĆ)" Style="{StaticResource Caption}"/>
-            <TextBox Name="txtName" Height="32" Margin="0,0,0,14"/>
+            <TextBox Name="txtName" Margin="0,0,0,14"/>
         </StackPanel>
         <TextBlock Grid.Row="1" Text="APLIKACJE PRZYPISANE DO PROFILU" Style="{StaticResource Caption}" Margin="22,0,22,5"/>
         <Border Grid.Row="2" Style="{StaticResource Card}" Margin="22,0,22,16" Padding="12,8">
@@ -5760,8 +5759,8 @@ function Show-ProfileEditDialog {
         </Border>
         <Border Grid.Row="3" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnSave" Content="Zapisz" Width="90" Height="32" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                <Button Name="btnCancel" Content="Anuluj" Width="90" Height="32" IsCancel="True"/>
+                <Button Name="btnSave" Content="Zapisz" MinWidth="90" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+                <Button Name="btnCancel" Content="Anuluj" MinWidth="90" IsCancel="True"/>
             </StackPanel>
         </Border>
     </Grid>
@@ -5831,11 +5830,11 @@ function Show-ProfilesManager {
         <ListBox Name="lbProfiles" Grid.Column="0" Margin="0,0,14,0" FontSize="13.5"/>
         <DockPanel Grid.Column="1" LastChildFill="False">
             <StackPanel DockPanel.Dock="Top">
-                <Button Name="btnAdd" Content="Dodaj" Height="34" Margin="0,0,0,8" Style="{StaticResource PrimaryButton}"/>
-                <Button Name="btnEdit" Content="Edytuj" Height="34" Margin="0,0,0,8"/>
-                <Button Name="btnRemove" Content="Usuń" Height="34" Margin="0,0,0,8" Style="{StaticResource DangerButton}"/>
+                <Button Name="btnAdd" Content="Dodaj" Margin="0,0,0,8" Style="{StaticResource PrimaryButton}"/>
+                <Button Name="btnEdit" Content="Edytuj" Margin="0,0,0,8"/>
+                <Button Name="btnRemove" Content="Usuń" Margin="0,0,0,8" Style="{StaticResource DangerButton}"/>
             </StackPanel>
-            <Button Name="btnClose" DockPanel.Dock="Bottom" Content="Zamknij" Height="34" IsCancel="True"/>
+            <Button Name="btnClose" DockPanel.Dock="Bottom" Content="Zamknij" IsCancel="True"/>
         </DockPanel>
     </Grid>
 </Window>
@@ -5919,12 +5918,12 @@ function Show-PinPrompt {
         </Grid.RowDefinitions>
         <StackPanel Margin="22,20,22,18">
             <TextBlock Text="Wprowadź PIN, aby edytować ustawienia" FontSize="13.5" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,12"/>
-            <PasswordBox Name="txtPin" Height="34" FontSize="14"/>
+            <PasswordBox Name="txtPin" FontSize="14"/>
         </StackPanel>
         <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnOk" Content="Odblokuj" Width="96" Height="32" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                <Button Name="btnCancel" Content="Anuluj" Width="90" Height="32" IsCancel="True"/>
+                <Button Name="btnOk" Content="Odblokuj" MinWidth="96" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+                <Button Name="btnCancel" Content="Anuluj" MinWidth="90" IsCancel="True"/>
             </StackPanel>
         </Border>
     </Grid>
@@ -6029,7 +6028,7 @@ function Show-ConfigEditor {
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBox Name="txtWeb" Grid.Column="0" Margin="0,0,8,0"/>
-                                <Button Name="btnTestWeb" Content="Testuj" Grid.Column="1" Width="80" Height="30" Style="{StaticResource PrimaryButton}"/>
+                                <Button Name="btnTestWeb" Content="Testuj" Grid.Column="1" MinWidth="80" Style="{StaticResource PrimaryButton}"/>
                             </Grid>
                             <TextBlock Text="Niestandardowe dane (CustomWebDataLocation URL)" Style="{StaticResource FieldLabel}"/>
                             <TextBox Name="txtCwd" Margin="0,0,0,12"/>
@@ -6151,8 +6150,8 @@ function Show-ConfigEditor {
                     <StackPanel>
                         <TextBlock Text="💾 Kopia zapasowa konfiguracji" Style="{StaticResource CardTitle}"/>
                         <StackPanel Orientation="Horizontal">
-                            <Button Name="btnExportConfig" Content="⬆️ Eksportuj..." Height="34" Width="150" Margin="0,0,8,0"/>
-                            <Button Name="btnImportConfig" Content="⬇️ Importuj..." Height="34" Width="150"/>
+                            <Button Name="btnExportConfig" Content="⬆️ Eksportuj..." MinWidth="150" Margin="0,0,8,0"/>
+                            <Button Name="btnImportConfig" Content="⬇️ Importuj..." MinWidth="150"/>
                         </StackPanel>
                     </StackPanel>
                 </Border>
@@ -6161,8 +6160,8 @@ function Show-ConfigEditor {
 
         <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,12">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnSave" Content="Zapisz" Width="110" Height="34" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                <Button Name="btnCancel" Content="Anuluj" Width="110" Height="34" IsCancel="True"/>
+                <Button Name="btnSave" Content="Zapisz" MinWidth="110" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+                <Button Name="btnCancel" Content="Anuluj" MinWidth="110" IsCancel="True"/>
             </StackPanel>
         </Border>
     </Grid>
@@ -6478,7 +6477,7 @@ if ($null -eq $global:PesterTesting) {
                         <TextBlock Name="txtNetworkStatus" Text="Sprawdzanie sieci..." VerticalAlignment="Center" FontSize="12.5"/>
                     </StackPanel>
                 </Border>
-                <Button Name="btnThemeToggle" Grid.Column="3" Content="☀️ Jasny motyw" Padding="12,5" Height="32" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                <Button Name="btnThemeToggle" Grid.Column="3" Content="☀️ Jasny motyw" Padding="12,5" Margin="12,0,0,0" VerticalAlignment="Center"/>
             </Grid>
         </Border>
 
@@ -6514,8 +6513,8 @@ if ($null -eq $global:PesterTesting) {
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0,0,4,0">
                     <StackPanel>
                         <TextBlock Text="PROFIL WDROŻENIA (ROLA)" Style="{StaticResource Caption}"/>
-                        <ComboBox Name="cmbProfiles" Height="32" Margin="0,0,0,10"/>
-                        <Button Name="btnChooseApps" Content="Wybierz aplikacje" Height="38" Margin="0,0,0,16" Style="{StaticResource PrimaryButton}"/>
+                        <ComboBox Name="cmbProfiles" Margin="0,0,0,10"/>
+                        <Button Name="btnChooseApps" Content="Wybierz aplikacje" Margin="0,0,0,16" Style="{StaticResource PrimaryButton}"/>
 
                         <TextBlock Text="KONFIGURACJA I LOGI" Style="{StaticResource Caption}"/>
                         <Button Name="btnSettings" Content="Ustawienia..." Style="{StaticResource SideButton}"/>
@@ -6539,8 +6538,8 @@ if ($null -eq $global:PesterTesting) {
                             <Button Name="btnCompMgmt" Content="Zarządzanie" Grid.Row="0" Grid.Column="1" Margin="4,0,0,8" Style="{StaticResource QuickButton}" ToolTip="Zarządzanie komputerem (compmgmt.msc)"/>
                             <Button Name="btnRegEdit" Content="RegEdit" Grid.Row="1" Grid.Column="0" Margin="0,0,4,8" Style="{StaticResource QuickButton}" ToolTip="Edytor rejestru (regedit)"/>
                             <Button Name="btnPrinters" Content="Drukarki" Grid.Row="1" Grid.Column="1" Margin="4,0,0,8" Style="{StaticResource QuickButton}" ToolTip="Klasyczny widok urządzeń i drukarek"/>
-                            <Button Name="btnSysInfo" Content="Informacje o systemie" Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,0,8" Height="32" ToolTip="Podstawowe informacje o sprzęcie i systemie"/>
-                            <Button Name="btnUninstaller" Content="Odinstaluj programy" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Height="32" Style="{StaticResource DangerButton}" ToolTip="Moduł do wymuszania cichej deinstalacji oprogramowania"/>
+                            <Button Name="btnSysInfo" Content="Informacje o systemie" Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,0,8" ToolTip="Podstawowe informacje o sprzęcie i systemie"/>
+                            <Button Name="btnUninstaller" Content="Odinstaluj programy" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Style="{StaticResource DangerButton}" ToolTip="Moduł do wymuszania cichej deinstalacji oprogramowania"/>
                         </Grid>
                     </StackPanel>
                 </ScrollViewer>
@@ -6562,9 +6561,9 @@ if ($null -eq $global:PesterTesting) {
                     <ColumnDefinition Width="120"/>
                     <ColumnDefinition Width="120"/>
                 </Grid.ColumnDefinitions>
-                <Button Name="btnStart" Grid.Column="0" Content="ROZPOCZNIJ KONFIGURACJĘ" Height="50" FontSize="17" FontWeight="Bold" Style="{StaticResource SuccessButton}" Margin="0,0,10,0"/>
-                <Button Name="btnPause" Grid.Column="1" Content="Pauza" Height="50" FontSize="16" FontWeight="Bold" Style="{StaticResource WarningButton}" Margin="0,0,10,0" IsEnabled="False"/>
-                <Button Name="btnCancelDeploy" Grid.Column="2" Content="Przerwij" Height="50" FontSize="16" FontWeight="Bold" Style="{StaticResource DangerButton}" IsEnabled="False"/>
+                <Button Name="btnStart" Grid.Column="0" Content="ROZPOCZNIJ KONFIGURACJĘ" FontSize="17" FontWeight="Bold" Style="{StaticResource SuccessButton}" Margin="0,0,10,0"/>
+                <Button Name="btnPause" Grid.Column="1" Content="Pauza" FontSize="16" FontWeight="Bold" Style="{StaticResource WarningButton}" Margin="0,0,10,0" IsEnabled="False"/>
+                <Button Name="btnCancelDeploy" Grid.Column="2" Content="Przerwij" FontSize="16" FontWeight="Bold" Style="{StaticResource DangerButton}" IsEnabled="False"/>
             </Grid>
         </Border>
     </Grid>
