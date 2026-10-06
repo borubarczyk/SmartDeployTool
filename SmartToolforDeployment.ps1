@@ -364,9 +364,15 @@ $script:ThemeStylesXaml = @'
             <Setter.Value>
                 <ControlTemplate TargetType="TextBox">
                     <Border x:Name="b" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7" SnapsToDevicePixels="True">
-                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" Focusable="False" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden"/>
+                        <Grid Margin="{TemplateBinding Padding}">
+                            <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" Focusable="False"
+                                          HorizontalScrollBarVisibility="{TemplateBinding ScrollViewer.HorizontalScrollBarVisibility}" VerticalScrollBarVisibility="{TemplateBinding ScrollViewer.VerticalScrollBarVisibility}"/>
+                            <!-- Podpowiedź w pustym polu: tekst z Tag (np. Tag="Szukaj...") -->
+                            <TextBlock x:Name="wm" Text="{TemplateBinding Tag}" Foreground="{DynamicResource ThemeFaint}" Margin="2,0,0,0" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" IsHitTestVisible="False" Visibility="Collapsed"/>
+                        </Grid>
                     </Border>
                     <ControlTemplate.Triggers>
+                        <Trigger Property="Text" Value=""><Setter TargetName="wm" Property="Visibility" Value="Visible"/></Trigger>
                         <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="{DynamicResource ThemeFaint}"/></Trigger>
                         <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="{DynamicResource ThemeFocus}"/></Trigger>
                         <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
@@ -882,7 +888,7 @@ function global:Show-ThemedMessageBox {
         Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize" Topmost="True" WindowStyle="ToolWindow">
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <Grid Margin="22,22,22,20">
@@ -895,7 +901,7 @@ function global:Show-ThemedMessageBox {
                 <TextBlock Name="txtIcon" FontSize="18" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Grid>
             <ScrollViewer Grid.Column="1" MaxHeight="420" VerticalScrollBarVisibility="Auto" VerticalAlignment="Center">
-                <TextBlock Name="txtMessage" FontSize="13.5" TextWrapping="Wrap"/>
+                <TextBlock Name="txtMessage" TextWrapping="Wrap"/>
             </ScrollViewer>
         </Grid>
         <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
@@ -937,7 +943,6 @@ function global:Show-ThemedMessageBox {
         $btn.IsCancel = $isCanc
         $btn.Tag = $resVal
         $btn.MinWidth = 90
-        $btn.MinHeight = 32
         $btn.Margin = "8,0,0,0"
         if ($isDef) { $btn.Style = $dlg.FindResource("PrimaryButton") }
         $btn.Add_Click({
@@ -1007,12 +1012,12 @@ try {
         <Border Style="{StaticResource Card}">
             <StackPanel>
                 <TextBlock Text="IDENTYFIKATOR / LOGIN" Style="{StaticResource Caption}"/>
-                <TextBox Name="txtLogin" FontSize="14" Margin="0,0,0,14"/>
+                <TextBox Name="txtLogin" Margin="0,0,0,14"/>
                 <TextBlock Text="PIN" Style="{StaticResource Caption}"/>
-                <PasswordBox Name="txtPin" FontSize="14"/>
+                <PasswordBox Name="txtPin"/>
             </StackPanel>
         </Border>
-        <Button Name="btnLogin" Content="Odblokuj narzędzie" FontSize="14" Margin="0,18,0,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+        <Button Name="btnLogin" Content="Odblokuj narzędzie" Margin="0,18,0,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
     </StackPanel>
 </Window>
 "@
@@ -1084,14 +1089,14 @@ if ($null -eq $global:PesterTesting) {
         </Grid.RowDefinitions>
         <Border Style="{StaticResource Card}" Margin="22,22,22,20" Padding="22,20">
             <StackPanel>
-                <TextBlock Text="Smart Tool for Deployment" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource ThemeAccentText}"/>
+                <TextBlock Text="Smart Tool for Deployment" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource ThemeAccentText}"/>
                 <TextBlock Name="txtWelcomeVersion" Style="{StaticResource MutedText}" FontSize="12" Margin="0,2,0,16"/>
-                <TextBlock TextWrapping="Wrap" FontSize="14.5" LineHeight="23">
+                <TextBlock TextWrapping="Wrap" LineHeight="21">
                     <Run Text="Celem niniejszego skryptu jest wsparcie przy szybkiej i skutecznej konfiguracji komputera."/>
                     <LineBreak/>
                     <Run Text="Skrypt nie zastępuje decyzji ani uwag inżynierów IT." Foreground="{DynamicResource ThemeMuted}"/>
                 </TextBlock>
-                <TextBlock Text="Czy chcesz kontynuować?" FontSize="14.5" FontWeight="SemiBold" Margin="0,16,0,0"/>
+                <TextBlock Text="Czy chcesz kontynuować?" FontWeight="SemiBold" Margin="0,16,0,0"/>
             </StackPanel>
         </Border>
         <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="22,14">
@@ -2235,11 +2240,11 @@ function Show-InputDialog {
         Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize" Topmost="True" WindowStyle="ToolWindow">
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <StackPanel Margin="22,20,22,18">
-            <TextBlock Name="txtMessage" TextWrapping="Wrap" FontSize="13" Margin="0,0,0,12"/>
+            <TextBlock Name="txtMessage" TextWrapping="Wrap" Margin="0,0,0,12"/>
             <TextBox Name="txtInput"/>
             <PasswordBox Name="pwdInput" Visibility="Collapsed"/>
             <TextBlock Name="lblConfirm" Text="POWTÓRZ HASŁO" Style="{StaticResource Caption}" Margin="0,12,0,5" Visibility="Collapsed"/>
@@ -2679,7 +2684,9 @@ function Get-HardwareAudit {
             RamGb         = $ramGb
             Disks         = @($disks | ForEach-Object { [PSCustomObject]@{ Model = $_.Model; SizeGb = [math]::Round($_.Size / 1GB, 2); SerialNumber = ([string]$_.SerialNumber).Trim() } })
             Networks      = @($nets | ForEach-Object { [PSCustomObject]@{ Description = $_.Description; Mac = $_.MACAddress; Ip = ($_.IPAddress -join ', ') } })
-            InstalledApps = @($installedApps | ForEach-Object { [PSCustomObject]@{ DisplayName = $_.DisplayName; DisplayVersion = $_.DisplayVersion } })
+            # foreach zamiast potoku: przy błędzie odczytu $installedApps to $null, a potok
+            # przepuściłby go jako jeden pusty wiersz listy.
+            InstalledApps = @(foreach ($app in $installedApps) { if ($null -ne $app) { [PSCustomObject]@{ DisplayName = $app.DisplayName; DisplayVersion = $app.DisplayVersion } } })
             AppError      = $appError
         }
     }
@@ -3203,12 +3210,11 @@ function Show-AppSelectionWindow {
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Wybór aplikacji" Width="560" Height="660" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize">
+        Title="Wybór aplikacji" Width="640" Height="600" MinWidth="520" MinHeight="400" WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" FontSize="13">
     <Window.Resources>
         <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
-            <Setter Property="FontSize" Value="14"/>
-            <Setter Property="Margin" Value="4,5"/>
+            <Setter Property="Margin" Value="0,4,12,4"/>
         </Style>
     </Window.Resources>
     <Grid>
@@ -3216,36 +3222,32 @@ function Show-AppSelectionWindow {
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <StackPanel Grid.Row="0" Margin="20,18,20,12">
-            <TextBlock Text="SZUKAJ APLIKACJI" Style="{StaticResource Caption}"/>
-            <TextBox Name="txtSearch" FontSize="14"/>
-        </StackPanel>
+        <!-- Wyszukiwarka i zaznaczanie w jednym wierszu, aplikacje w dwóch kolumnach (krótsza lista). -->
+        <DockPanel Grid.Row="0" Margin="20,18,20,12">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="10,0,0,0">
+                <Button Name="btnSelectAll" Content="Wszystkie" ToolTip="Zaznacz wszystkie widoczne"/>
+                <Button Name="btnDeselectAll" Content="Żadne" Margin="6,0,0,0" ToolTip="Odznacz wszystkie widoczne"/>
+                <Button Name="btnInvertSelection" Content="Odwróć" Margin="6,0,0,0" ToolTip="Odwróć zaznaczenie widocznych"/>
+            </StackPanel>
+            <TextBox Name="txtSearch" Tag="Szukaj aplikacji..."/>
+        </DockPanel>
 
-        <Border Grid.Row="1" Style="{StaticResource Card}" Margin="20,0,20,0" Padding="12,10">
-            <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <StackPanel Name="spApps"/>
+        <Border Grid.Row="1" Style="{StaticResource Card}" Margin="20,0,20,0" Padding="14,10,4,10">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <WrapPanel Name="spApps" ItemWidth="275"/>
             </ScrollViewer>
         </Border>
 
-        <Grid Grid.Row="2" Margin="20,12,20,16">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-            <Button Name="btnSelectAll" Content="Zaznacz wszystko" Grid.Column="0" Margin="0,0,5,0"/>
-            <Button Name="btnDeselectAll" Content="Odznacz wszystko" Grid.Column="1" Margin="5,0,5,0"/>
-            <Button Name="btnInvertSelection" Content="Odwróć zaznaczenie" Grid.Column="2" Margin="5,0,0,0"/>
-        </Grid>
-
-        <Border Grid.Row="3" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,12">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnOk" Content="OK" MinWidth="120" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                <Button Name="btnCancel" Content="Anuluj" MinWidth="120" IsCancel="True"/>
-            </StackPanel>
+        <Border Grid.Row="2" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,10" Margin="0,14,0,0">
+            <DockPanel>
+                <TextBlock Name="txtSelectedApps" Foreground="{DynamicResource ThemeMuted}" VerticalAlignment="Center"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Name="btnOk" Content="OK" MinWidth="90" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+                    <Button Name="btnCancel" Content="Anuluj" MinWidth="90" IsCancel="True"/>
+                </StackPanel>
+            </DockPanel>
         </Border>
     </Grid>
 </Window>
@@ -3259,8 +3261,10 @@ function Show-AppSelectionWindow {
     $btnOk = $popup.FindName("btnOk")
     $btnCancel = $popup.FindName("btnCancel")
     $txtSearch = $popup.FindName("txtSearch")
+    $txtSelectedApps = $popup.FindName("txtSelectedApps")
 
     $checkboxes = @{}
+    $updateSelectedCount = { $txtSelectedApps.Text = "Wybrano: $(@($checkboxes.Values | Where-Object { $_.IsChecked -eq $true }).Count) z $($checkboxes.Count)" }
 
     foreach ($name in $programs.PSObject.Properties.Name | Sort-Object) {
         $cb = New-Object System.Windows.Controls.CheckBox
@@ -3273,9 +3277,12 @@ function Show-AppSelectionWindow {
             $cb.IsChecked = $false
         }
 
+        $cb.Add_Checked({ & $updateSelectedCount })
+        $cb.Add_Unchecked({ & $updateSelectedCount })
         $spApps.Children.Add($cb) | Out-Null
         $checkboxes[$name] = $cb
     }
+    & $updateSelectedCount
 
     $txtSearch.Add_TextChanged({
         $filter = $txtSearch.Text.ToLower()
@@ -3806,8 +3813,8 @@ function Show-LogWindow {
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Przeglądarka Logów" Height="700" Width="1150" MinHeight="420" MinWidth="820" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
+        Title="Przeglądarka logów" Height="680" Width="1000" MinHeight="420" MinWidth="820" WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" FontSize="13">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -3823,35 +3830,40 @@ function Show-LogWindow {
             </StackPanel>
         </Border>
 
-        <Grid Grid.Row="1" Margin="20,14,20,12">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="170"/>
-                <ColumnDefinition Width="170"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <TextBox Name="txtSearch" Grid.Column="0" Margin="0,0,10,0" ToolTip="Szukaj w treści wpisów..."/>
-            <ComboBox Name="cmbRodzajFilter" Grid.Column="1" Margin="0,0,10,0" SelectedIndex="0">
-                <ComboBoxItem Content="Rodzaj: wszystkie"/>
-                <ComboBoxItem Content="❌ Błędy"/>
-                <ComboBoxItem Content="⚠️ Ostrzeżenia"/>
-                <ComboBoxItem Content="✔️ Sukcesy"/>
-                <ComboBoxItem Content="🧪 Dry-Run"/>
-                <ComboBoxItem Content="ℹ️ Informacyjne"/>
-            </ComboBox>
-            <ComboBox Name="cmbKontekstFilter" Grid.Column="2" Margin="0,0,10,0" SelectedIndex="0">
-                <ComboBoxItem Content="Kontekst: wszystkie"/>
-                <ComboBoxItem Content="System"/>
-                <ComboBoxItem Content="Automat"/>
-                <ComboBoxItem Content="Użytkownik"/>
-            </ComboBox>
-            <CheckBox Name="chkAutoRefresh" Grid.Column="3" Content="Auto-odświeżanie" IsChecked="True" VerticalAlignment="Center" Margin="4,0,16,0"/>
-            <Button Name="btnRefresh" Grid.Column="4" Content="Odśwież" MinWidth="100"/>
-        </Grid>
+        <!-- Filtry jak w NPS Event Viewer: podpis nad polem. -->
+        <DockPanel Grid.Row="1" Margin="20,14,20,12">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Bottom">
+                <StackPanel Margin="12,0,0,0">
+                    <TextBlock Text="RODZAJ" Style="{StaticResource Caption}"/>
+                    <ComboBox Name="cmbRodzajFilter" MinWidth="150" SelectedIndex="0">
+                        <ComboBoxItem Content="Wszystkie"/>
+                        <ComboBoxItem Content="❌ Błędy"/>
+                        <ComboBoxItem Content="⚠️ Ostrzeżenia"/>
+                        <ComboBoxItem Content="✔️ Sukcesy"/>
+                        <ComboBoxItem Content="🧪 Dry-Run"/>
+                        <ComboBoxItem Content="ℹ️ Informacyjne"/>
+                    </ComboBox>
+                </StackPanel>
+                <StackPanel Margin="12,0,0,0">
+                    <TextBlock Text="KONTEKST" Style="{StaticResource Caption}"/>
+                    <ComboBox Name="cmbKontekstFilter" MinWidth="130" SelectedIndex="0">
+                        <ComboBoxItem Content="Wszystkie"/>
+                        <ComboBoxItem Content="System"/>
+                        <ComboBoxItem Content="Automat"/>
+                        <ComboBoxItem Content="Użytkownik"/>
+                    </ComboBox>
+                </StackPanel>
+                <CheckBox Name="chkAutoRefresh" Content="Auto-odświeżanie" IsChecked="True" VerticalAlignment="Bottom" Margin="16,0,12,7"/>
+                <Button Name="btnRefresh" Content="Odśwież" VerticalAlignment="Bottom"/>
+            </StackPanel>
+            <StackPanel>
+                <TextBlock Text="SZUKAJ" Style="{StaticResource Caption}"/>
+                <TextBox Name="txtSearch" Tag="Szukaj w treści wpisów..." ToolTip="Szukaj w treści wpisów"/>
+            </StackPanel>
+        </DockPanel>
 
         <Border Grid.Row="2" Style="{StaticResource Card}" Margin="20,0,20,0" Padding="1">
-            <ListView Name="lvLogs" FontFamily="Consolas" FontSize="13" ScrollViewer.HorizontalScrollBarVisibility="Auto">
+            <ListView Name="lvLogs" FontFamily="Consolas" FontSize="12" ScrollViewer.HorizontalScrollBarVisibility="Auto">
                 <ListView.ItemContainerStyle>
                     <!-- Kolor tekstu wiersza zależy od rodzaju wpisu (błąd, ostrzeżenie, sukces...). -->
                     <Style TargetType="ListViewItem" BasedOn="{StaticResource {x:Type ListViewItem}}">
@@ -3863,27 +3875,30 @@ function Show-LogWindow {
                         <GridViewColumn Header="Rodzaj" Width="130" DisplayMemberBinding="{Binding RodzajText}"/>
                         <GridViewColumn Header="Data zdarzenia" Width="160" DisplayMemberBinding="{Binding DataText}"/>
                         <GridViewColumn Header="Kontekst" Width="110" DisplayMemberBinding="{Binding Kontekst}"/>
-                        <GridViewColumn Header="Informacja" Width="660" DisplayMemberBinding="{Binding Informacja}"/>
+                        <GridViewColumn Header="Informacja" Width="540" DisplayMemberBinding="{Binding Informacja}"/>
                     </GridView>
                 </ListView.View>
             </ListView>
         </Border>
 
-        <Border Grid.Row="3" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,12" Margin="0,14,0,0">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
+        <!-- Jedna główna akcja (raport HTML) + rzadziej używane operacje na pliku w menu. -->
+        <Border Grid.Row="3" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,10" Margin="0,14,0,0">
+            <DockPanel>
+                <Button Name="btnClearLogs" DockPanel.Dock="Right" Content="Wyczyść logi" Style="{StaticResource DangerButton}"/>
                 <StackPanel Orientation="Horizontal">
-                    <Button Name="btnExportHtml" Content="Eksportuj raport (HTML)" MinWidth="190" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}"/>
-                    <Button Name="btnSave" Content="Zapisz jako..." MinWidth="120" Margin="0,0,8,0"/>
-                    <Button Name="btnOpenLog" Content="Otwórz plik" MinWidth="110" Margin="0,0,8,0"/>
-                    <Button Name="btnOpenDir" Content="Otwórz folder" MinWidth="120" Margin="0,0,8,0"/>
-                    <Button Name="btnZipLogs" Content="Spakuj do ZIP" MinWidth="130"/>
+                    <Button Name="btnExportHtml" Content="Eksportuj raport (HTML)" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}"/>
+                    <Button Name="btnLogFile" Content="Plik logu  ▾" ToolTip="Zapisz, otwórz lub spakuj pliki logów">
+                        <Button.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Name="btnSave" Header="Zapisz jako..."/>
+                                <MenuItem Name="btnOpenLog" Header="Otwórz plik w Notatniku"/>
+                                <MenuItem Name="btnOpenDir" Header="Otwórz folder z logami"/>
+                                <MenuItem Name="btnZipLogs" Header="Spakuj logi do ZIP..."/>
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
                 </StackPanel>
-                <Button Name="btnClearLogs" Grid.Column="1" Content="Wyczyść logi" MinWidth="120" Style="{StaticResource DangerButton}"/>
-            </Grid>
+            </DockPanel>
         </Border>
     </Grid>
 </Window>
@@ -3903,6 +3918,15 @@ function Show-LogWindow {
     $btnOpenLog = $logWindow.FindName("btnOpenLog")
     $btnOpenDir = $logWindow.FindName("btnOpenDir")
     $btnZipLogs = $logWindow.FindName("btnZipLogs")
+    $btnLogFile = $logWindow.FindName("btnLogFile")
+    # Okno jest niemodalne (Show), więc w chwili kliknięcia zmiennych tej funkcji już nie ma -
+    # przycisk bierzemy z $this (nadawca zdarzenia).
+    $btnLogFile.Add_Click({
+        $logFileMenu = $this.ContextMenu
+        $logFileMenu.PlacementTarget = $this
+        $logFileMenu.Placement = [System.Windows.Controls.Primitives.PlacementMode]::Bottom
+        $logFileMenu.IsOpen = $true
+    })
 
     $script:rawLogText = ""
     $script:LastRenderedEntries = @()
@@ -4218,18 +4242,24 @@ function Show-UninstallConfirmDialog {
         Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize">
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <StackPanel Margin="22,20,22,18">
-            <TextBlock Name="txtHeader" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource ThemeDanger}" TextWrapping="Wrap" Margin="0,0,0,12"/>
-            <Border Style="{StaticResource Card}" Padding="12,10" MaxHeight="260" Margin="0,0,0,14">
+        <!-- Lista programów w wierszu "*": przy niskim ekranie kurczy się ona (i przewija), a nie przyciski. -->
+        <Grid Margin="22,20,22,18">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock Name="txtHeader" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource ThemeDanger}" TextWrapping="Wrap" Margin="0,0,0,12"/>
+            <Border Grid.Row="1" Style="{StaticResource Card}" Padding="12,10" MaxHeight="260" Margin="0,0,0,14">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <TextBlock Name="txtAppList" TextWrapping="Wrap" FontFamily="Consolas" FontSize="13"/>
+                    <TextBlock Name="txtAppList" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"/>
                 </ScrollViewer>
             </Border>
-            <TextBlock Text="Czy na pewno chcesz kontynuować? Ta operacja usunie wybrane aplikacje." FontSize="13.5" TextWrapping="Wrap"/>
-        </StackPanel>
+            <TextBlock Grid.Row="2" Text="Czy na pewno chcesz kontynuować? Ta operacja usunie wybrane aplikacje." TextWrapping="Wrap"/>
+        </Grid>
         <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Name="btnYes" Content="Tak, odinstaluj" MinWidth="140" Margin="0,0,8,0" Style="{StaticResource DangerButton}" IsDefault="True"/>
@@ -4274,11 +4304,11 @@ function Show-CustomInfoDialog {
         Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize" Topmost="True">
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <ScrollViewer Grid.Row="0" MaxHeight="500" VerticalScrollBarVisibility="Auto" Margin="22,20,12,18" Padding="0,0,10,0">
-            <TextBlock Name="txtMessage" FontSize="14" TextWrapping="Wrap"/>
+            <TextBlock Name="txtMessage" TextWrapping="Wrap"/>
         </ScrollViewer>
         <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
@@ -4340,8 +4370,8 @@ function Show-SystemInfoWindow {
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Informacje o systemie" Width="820" Height="720" MinWidth="620" MinHeight="450" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
+        Title="Informacje o systemie" Width="820" Height="640" MinWidth="620" MinHeight="420" WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" FontSize="13">
     <Window.Resources>
         <Style x:Key="ChipBorder" TargetType="Border" BasedOn="{StaticResource Card}">
             <Setter Property="CornerRadius" Value="8"/>
@@ -4357,8 +4387,11 @@ function Show-SystemInfoWindow {
                 </Trigger>
             </Style.Triggers>
         </Style>
+        <!-- Bez zawijania: w WrapPanel ramka ma dokładnie szerokość napisu, a po zaokrągleniu układu
+             ostatnie słowo spadało do drugiej, uciętej linii ("ucięty w połowie" podpis). -->
         <Style x:Key="ChipLabel" TargetType="TextBlock" BasedOn="{StaticResource Caption}">
             <Setter Property="Margin" Value="0"/>
+            <Setter Property="TextWrapping" Value="NoWrap"/>
         </Style>
         <Style x:Key="CopyableLine" TargetType="TextBlock">
             <Setter Property="Cursor" Value="Hand"/>
@@ -4373,9 +4406,6 @@ function Show-SystemInfoWindow {
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
@@ -4387,95 +4417,95 @@ function Show-SystemInfoWindow {
             </StackPanel>
         </Border>
 
-        <WrapPanel Grid.Row="1" Margin="20,16,10,0">
-            <Border Name="chipOs" Style="{StaticResource ChipBorderClickable}">
-                <StackPanel>
-                    <TextBlock Text="💻 System operacyjny  📋" Style="{StaticResource ChipLabel}"/>
-                    <TextBlock Name="txtOs" FontWeight="SemiBold" Margin="0,2,0,0"/>
-                </StackPanel>
-            </Border>
-            <Border Name="chipBiosSn" Style="{StaticResource ChipBorderClickable}">
-                <StackPanel>
-                    <TextBlock Text="🔧 BIOS - numer seryjny (SN)  📋" Style="{StaticResource ChipLabel}"/>
-                    <TextBlock Name="txtBiosSn" FontWeight="SemiBold" Margin="0,2,0,0"/>
-                </StackPanel>
-            </Border>
-            <Border Name="chipBiosVer" Style="{StaticResource ChipBorderClickable}">
-                <StackPanel>
-                    <TextBlock Text="🔧 BIOS - wersja  📋" Style="{StaticResource ChipLabel}"/>
-                    <TextBlock Name="txtBiosVer" FontWeight="SemiBold" Margin="0,2,0,0"/>
-                </StackPanel>
-            </Border>
-            <Border Name="chipCpu" Style="{StaticResource ChipBorderClickable}">
-                <StackPanel>
-                    <TextBlock Text="⚙️ Procesor  📋" Style="{StaticResource ChipLabel}"/>
-                    <TextBlock Name="txtCpu" FontWeight="SemiBold" Margin="0,2,0,0"/>
-                </StackPanel>
-            </Border>
-            <Border Name="chipRam" Style="{StaticResource ChipBorderClickable}">
-                <StackPanel>
-                    <TextBlock Text="🧠 Pamięć RAM  📋" Style="{StaticResource ChipLabel}"/>
-                    <TextBlock Name="txtRam" FontWeight="SemiBold" Margin="0,2,0,0"/>
-                </StackPanel>
-            </Border>
-        </WrapPanel>
+        <!-- Dwie zakładki zamiast jednej strony: lista programów nie jest już ściskana do zera przez
+             karty dysków i sieci nad nią. -->
+        <TabControl Grid.Row="1" Margin="20,12,20,12">
+            <TabItem Header="Sprzęt i system">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="0,0,6,0">
+                        <TextBlock Text="Kliknij wartość, aby ją skopiować do schowka." Style="{StaticResource MutedText}" FontSize="11.5" Margin="0,0,0,10"/>
+                        <WrapPanel>
+                            <Border Name="chipOs" Style="{StaticResource ChipBorderClickable}">
+                                <StackPanel>
+                                    <TextBlock Text="SYSTEM OPERACYJNY" Style="{StaticResource ChipLabel}"/>
+                                    <TextBlock Name="txtOs" FontWeight="SemiBold" Margin="0,2,0,0"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Name="chipBiosSn" Style="{StaticResource ChipBorderClickable}">
+                                <StackPanel>
+                                    <TextBlock Text="NUMER SERYJNY (BIOS)" Style="{StaticResource ChipLabel}"/>
+                                    <TextBlock Name="txtBiosSn" FontWeight="SemiBold" Margin="0,2,0,0"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Name="chipBiosVer" Style="{StaticResource ChipBorderClickable}">
+                                <StackPanel>
+                                    <TextBlock Text="WERSJA BIOS" Style="{StaticResource ChipLabel}"/>
+                                    <TextBlock Name="txtBiosVer" FontWeight="SemiBold" Margin="0,2,0,0"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Name="chipCpu" Style="{StaticResource ChipBorderClickable}">
+                                <StackPanel>
+                                    <TextBlock Text="PROCESOR" Style="{StaticResource ChipLabel}"/>
+                                    <TextBlock Name="txtCpu" FontWeight="SemiBold" Margin="0,2,0,0"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Name="chipRam" Style="{StaticResource ChipBorderClickable}">
+                                <StackPanel>
+                                    <TextBlock Text="PAMIĘĆ RAM" Style="{StaticResource ChipLabel}"/>
+                                    <TextBlock Name="txtRam" FontWeight="SemiBold" Margin="0,2,0,0"/>
+                                </StackPanel>
+                            </Border>
+                        </WrapPanel>
+                        <Border Style="{StaticResource ChipBorder}" Margin="0,0,0,10">
+                            <StackPanel>
+                                <TextBlock Text="DYSKI" Style="{StaticResource ChipLabel}" Margin="0,0,0,4"/>
+                                <ItemsControl Name="icDisks">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding}" Style="{StaticResource CopyableLine}" FontWeight="SemiBold" Margin="0,1" TextWrapping="Wrap"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource ChipBorder}" Margin="0">
+                            <StackPanel>
+                                <TextBlock Text="KARTY SIECIOWE" Style="{StaticResource ChipLabel}" Margin="0,0,0,4"/>
+                                <ItemsControl Name="icNets">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding}" Style="{StaticResource CopyableLine}" FontWeight="SemiBold" Margin="0,1" TextWrapping="Wrap"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="Oprogramowanie">
+                <DockPanel>
+                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                        <TextBox Name="txtSearch" DockPanel.Dock="Right" Width="260" Tag="Szukaj programu..." ToolTip="Szukaj po nazwie programu"/>
+                        <TextBlock Name="txtAppsHeader" Style="{StaticResource CardTitle}" Margin="0,0,16,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    </DockPanel>
+                    <ListView Name="lvApps">
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="Nazwa programu" Width="500" DisplayMemberBinding="{Binding DisplayName}"/>
+                                <GridViewColumn Header="Wersja" Width="200" DisplayMemberBinding="{Binding DisplayVersion}"/>
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+                </DockPanel>
+            </TabItem>
+        </TabControl>
 
-        <Grid Grid.Row="2" Margin="20,0,20,14">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-            <Border Grid.Column="0" Style="{StaticResource ChipBorder}" Margin="0,0,10,0">
-                <StackPanel>
-                    <TextBlock Text="💾 Dyski twarde" Style="{StaticResource ChipLabel}" Margin="0,0,0,4"/>
-                    <ItemsControl Name="icDisks">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding}" Style="{StaticResource CopyableLine}" FontWeight="SemiBold" Margin="0,1"/>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-            <Border Grid.Column="1" Style="{StaticResource ChipBorder}" Margin="0">
-                <StackPanel>
-                    <TextBlock Text="🌐 Karty sieciowe" Style="{StaticResource ChipLabel}" Margin="0,0,0,4"/>
-                    <ItemsControl Name="icNets">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding}" Style="{StaticResource CopyableLine}" FontWeight="SemiBold" Margin="0,1" TextWrapping="Wrap"/>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-        </Grid>
-
-        <Grid Grid.Row="3" Margin="20,0,20,10">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="260"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock Name="txtAppsHeader" Grid.Column="0" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
-            <TextBox Name="txtSearch" Grid.Column="1" ToolTip="Szukaj po nazwie programu..."/>
-        </Grid>
-
-        <Border Grid.Row="4" Style="{StaticResource Card}" Margin="20,0,20,0" Padding="1">
-            <ListView Name="lvApps">
-                <ListView.View>
-                    <GridView>
-                        <GridViewColumn Header="Nazwa programu" Width="500" DisplayMemberBinding="{Binding DisplayName}"/>
-                        <GridViewColumn Header="Wersja" Width="200" DisplayMemberBinding="{Binding DisplayVersion}"/>
-                    </GridView>
-                </ListView.View>
-            </ListView>
-        </Border>
-
-        <Border Grid.Row="5" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,12" Margin="0,14,0,0">
+        <Border Grid.Row="2" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,10">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnCopy" Content="Kopiuj do schowka" MinWidth="150" Margin="0,0,8,0"/>
-                <Button Name="btnExportHtml" Content="Zapisz jako HTML" MinWidth="150" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}"/>
-                <Button Name="btnClose" Content="Zamknij" MinWidth="100" IsCancel="True"/>
+                <Button Name="btnCopy" Content="Kopiuj do schowka" Margin="0,0,8,0"/>
+                <Button Name="btnExportHtml" Content="Zapisz jako HTML" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}"/>
+                <Button Name="btnClose" Content="Zamknij" MinWidth="90" IsCancel="True"/>
             </StackPanel>
         </Border>
     </Grid>
@@ -4483,7 +4513,7 @@ function Show-SystemInfoWindow {
 "@
     $dlg = New-ThemedWindow -Xaml $xaml
 
-    $dlg.FindName("txtHeader").Text = "🖥️ $($audit.ComputerName)"
+    $dlg.FindName("txtHeader").Text = [string]$audit.ComputerName
     $dlg.FindName("txtMeta").Text = "Wygenerowano: $($audit.GeneratedAt.ToString('dd.MM.yyyy HH:mm:ss'))  ·  Użytkownik: $($audit.UserName)"
     $dlg.FindName("txtOs").Text = $audit.OsSummary
     $dlg.FindName("txtBiosSn").Text = $audit.BiosSerial
@@ -4531,19 +4561,19 @@ function Show-SystemInfoWindow {
     }
 
     $icDisks = $dlg.FindName("icDisks")
-    $diskLines = if ($audit.Disks.Count -gt 0) {
-        @($audit.Disks | ForEach-Object {
-            $snPart = if ($_.SerialNumber) { " — SN: $($_.SerialNumber)" } else { "" }
-            "• $($_.Model) — $($_.SizeGb) GB$snPart"
-        })
-    } else { @("Brak danych") }
+    $diskLines = @(if (@($audit.Disks).Count -gt 0) {
+        foreach ($disk in $audit.Disks) {
+            $snPart = if ($disk.SerialNumber) { " — SN: $($disk.SerialNumber)" } else { "" }
+            "• $($disk.Model) — $($disk.SizeGb) GB$snPart"
+        }
+    } else { "Brak danych" })
     # @(...) - przy jednym dysku/jednej karcie "if" zwraca zwykły napis zamiast tablicy, a ItemsControl
     # wyświetlał wtedy taki napis ZNAK PO ZNAKU, każdy w osobnym wierszu (okno rosło na ~1300 px
     # i przyciski na dole były ucinane).
     $icDisks.ItemsSource = @($diskLines)
 
     $icNets = $dlg.FindName("icNets")
-    $netLines = if ($audit.Networks.Count -gt 0) { @($audit.Networks | ForEach-Object { "• $($_.Description) — $($_.Mac) — $($_.Ip)" }) } else { @("Brak aktywnych kart sieciowych") }
+    $netLines = @(if (@($audit.Networks).Count -gt 0) { foreach ($net in $audit.Networks) { "• $($net.Description) — $($net.Mac) — $($net.Ip)" } } else { "Brak aktywnych kart sieciowych" })
     $icNets.ItemsSource = @($netLines)
 
     # Klik na dowolną linię dysku/karty sieciowej kopiuje jej pełną treść (m.in. numer seryjny
@@ -4571,13 +4601,13 @@ function Show-SystemInfoWindow {
 
     $renderApps = {
         $term = $txtSearch.Text
-        $filtered = if ([string]::IsNullOrWhiteSpace($term)) { $allApps } else { @($allApps | Where-Object { ([string]$_.DisplayName).IndexOf($term, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 }) }
+        $filtered = @(if ([string]::IsNullOrWhiteSpace($term)) { $allApps } else { $allApps | Where-Object { ([string]$_.DisplayName).IndexOf($term, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 } })
 
         $sortProp = if ($script:SysInfoSortColumn -eq "Wersja") { "DisplayVersion" } else { "DisplayName" }
         $sorted = @($filtered | Sort-Object -Property @{Expression = $sortProp; Descending = (-not $script:SysInfoSortAscending)})
 
         $lvApps.ItemsSource = $sorted
-        $txtAppsHeader.Text = if ($audit.AppError) { "📦 Zainstalowane oprogramowanie - błąd odczytu" } else { "📦 Zainstalowane oprogramowanie ($($sorted.Count) z $($allApps.Count))" }
+        $txtAppsHeader.Text = if ($audit.AppError) { "Zainstalowane programy - błąd odczytu" } else { "Zainstalowane programy ($($sorted.Count) z $($allApps.Count))" }
 
         try {
             $arrow = if ($script:SysInfoSortAscending) { " ▲" } else { " ▼" }
@@ -4667,7 +4697,7 @@ function Show-SoftwareUninstaller {
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBox Name="txtSearch" Grid.Column="0" Margin="0,0,10,0" FontSize="13.5" ToolTip="Szukaj po nazwie programu lub wydawcy..."/>
+            <TextBox Name="txtSearch" Grid.Column="0" Margin="0,0,10,0" Tag="Szukaj po nazwie programu lub wydawcy..." ToolTip="Szukaj po nazwie programu lub wydawcy"/>
             <Button Name="btnSelectAllApps" Content="Zaznacz widoczne" Grid.Column="1" MinWidth="130" Margin="0,0,6,0"/>
             <Button Name="btnDeselectAllApps" Content="Odznacz widoczne" Grid.Column="2" MinWidth="130" Margin="0,0,10,0"/>
             <Button Name="btnExportCSV" Content="Eksportuj CSV" Grid.Column="3" MinWidth="110" Margin="0,0,6,0"/>
@@ -4827,7 +4857,7 @@ function Show-SoftwareUninstaller {
                     }
                 }
             }
-            $script:uninstAllApps = $appList | Sort-Object DisplayName -Unique
+            $script:uninstAllApps = @($appList | Sort-Object DisplayName -Unique)
             
             & $UpdateList
             Write-Log "Odświeżono listę zainstalowanych programów w Deinstalatorze ($($script:uninstAllApps.Count) pozycji)."
@@ -5249,9 +5279,9 @@ function Show-ProgramEditDialog {
             <TextBox Name="txtFile" Margin="0,0,0,14"/>
             <TextBlock Text="ARGUMENTY CICHEJ INSTALACJI" Style="{StaticResource Caption}"/>
             <TextBox Name="txtArgs" Margin="0,0,0,16"/>
-            <CheckBox Name="chkForceUrl" Content="Zawsze pobieraj z niestandardowego adresu URL" Margin="0,0,0,8" FontSize="13.5" ToolTip="Nadpisuje globalne źródło instalacji dla tego konkretnego programu."/>
-            <TextBox Name="txtUrl" Margin="0,0,0,16" IsEnabled="False" ToolTip="Pełny bezpośredni adres URL do instalatora (np. https://.../plik.exe)"/>
-            <CheckBox Name="chkEnabled" Content="Domyślnie zaznaczone do instalacji" FontSize="13.5"/>
+            <CheckBox Name="chkForceUrl" Content="Zawsze pobieraj z niestandardowego adresu URL" Margin="0,0,0,8" ToolTip="Nadpisuje globalne źródło instalacji dla tego konkretnego programu."/>
+            <TextBox Name="txtUrl" Margin="24,0,0,16" IsEnabled="False" ToolTip="Pełny bezpośredni adres URL do instalatora (np. https://.../plik.exe)"/>
+            <CheckBox Name="chkEnabled" Content="Domyślnie zaznaczone do instalacji"/>
         </StackPanel>
         <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
@@ -5496,12 +5526,11 @@ function Show-ProfileEditDialog {
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Edytuj profil wdrożeniowy" Width="470" Height="580" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize">
+        Title="Edytuj profil wdrożeniowy" Width="660" Height="560" MinWidth="480" MinHeight="380" WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" FontSize="13">
     <Window.Resources>
         <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
-            <Setter Property="FontSize" Value="13.5"/>
-            <Setter Property="Margin" Value="2,4"/>
+            <Setter Property="Margin" Value="0,4,12,4"/>
         </Style>
     </Window.Resources>
     <Grid>
@@ -5511,17 +5540,18 @@ function Show-ProfileEditDialog {
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <StackPanel Grid.Row="0" Margin="22,20,22,0">
+        <StackPanel Grid.Row="0" Margin="20,18,20,0">
             <TextBlock Text="NAZWA PROFILU (NP. KSIĘGOWOŚĆ)" Style="{StaticResource Caption}"/>
-            <TextBox Name="txtName" Margin="0,0,0,14"/>
+            <TextBox Name="txtName" Width="300" HorizontalAlignment="Left" Margin="0,0,0,14"/>
         </StackPanel>
-        <TextBlock Grid.Row="1" Text="APLIKACJE PRZYPISANE DO PROFILU" Style="{StaticResource Caption}" Margin="22,0,22,5"/>
-        <Border Grid.Row="2" Style="{StaticResource Card}" Margin="22,0,22,16" Padding="12,8">
-            <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <StackPanel Name="spApps"/>
+        <TextBlock Grid.Row="1" Text="APLIKACJE PRZYPISANE DO PROFILU" Style="{StaticResource Caption}" Margin="20,0,20,5"/>
+        <!-- Programy w kolumnach (WrapPanel) zamiast jednej długiej listy do przewijania. -->
+        <Border Grid.Row="2" Style="{StaticResource Card}" Margin="20,0,20,14" Padding="14,10,4,10">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <WrapPanel Name="spApps" ItemWidth="200"/>
             </ScrollViewer>
         </Border>
-        <Border Grid.Row="3" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
+        <Border Grid.Row="3" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,10">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Name="btnSave" Content="Zapisz" MinWidth="90" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
                 <Button Name="btnCancel" Content="Anuluj" MinWidth="90" IsCancel="True"/>
@@ -5591,8 +5621,8 @@ function Show-PinPrompt {
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <StackPanel Margin="22,20,22,18">
-            <TextBlock Text="Wprowadź PIN, aby edytować ustawienia" FontSize="13.5" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,12"/>
-            <PasswordBox Name="txtPin" FontSize="14"/>
+            <TextBlock Text="Wprowadź PIN, aby edytować ustawienia" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,12"/>
+            <PasswordBox Name="txtPin"/>
         </StackPanel>
         <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
@@ -5680,7 +5710,7 @@ function Show-ConfigEditor {
                 </Border>
                 <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
                     <TextBlock Text="Ustawienia" FontSize="18" FontWeight="SemiBold"/>
-                    <TextBlock Text="Zmiany trafiają do config.json dopiero po kliknięciu „Zapisz”." Foreground="{DynamicResource ThemeMuted}" FontSize="11.5" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="Zmiany trafiają do config.json dopiero po kliknięciu &#x201E;Zapisz&#x201D;." Foreground="{DynamicResource ThemeMuted}" FontSize="11.5" TextTrimming="CharacterEllipsis"/>
                 </StackPanel>
             </DockPanel>
         </Border>
@@ -5835,7 +5865,7 @@ function Show-ConfigEditor {
                         </StackPanel>
                         <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
                             <TextBlock Name="txtProgTitle" Text="Programy" Style="{StaticResource CardTitle}" Margin="0"/>
-                            <TextBlock Text="Lista w oknie „Wybierz aplikacje”. Dwuklik otwiera edycję." Style="{StaticResource ListHint}"/>
+                            <TextBlock Text="Lista w oknie &#x201E;Wybierz aplikacje&#x201D;. Dwuklik otwiera edycję." Style="{StaticResource ListHint}"/>
                         </StackPanel>
                     </DockPanel>
                     <ListView Name="lbPrograms">
@@ -5921,7 +5951,7 @@ function Show-ConfigEditor {
                         </StackPanel>
                         <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
                             <TextBlock Name="txtRegTitle" Text="Rejestr niestandardowy" Style="{StaticResource CardTitle}" Margin="0"/>
-                            <TextBlock Text="Wpisy ustawiane przez zadanie „Rejestr i ustawienia systemowe”. Dwuklik otwiera edycję." Style="{StaticResource ListHint}"/>
+                            <TextBlock Text="Wpisy ustawiane przez zadanie &#x201E;Rejestr i ustawienia systemowe&#x201D;. Dwuklik otwiera edycję." Style="{StaticResource ListHint}"/>
                         </StackPanel>
                     </DockPanel>
                     <ListView Name="lbRegistry">
@@ -5947,7 +5977,7 @@ function Show-ConfigEditor {
                         </StackPanel>
                         <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
                             <TextBlock Name="txtScriptTitle" Text="Skrypty poinstalacyjne" Style="{StaticResource CardTitle}" Margin="0"/>
-                            <TextBlock Text="Pliki .ps1 / .bat uruchamiane przez zadanie „Uruchom skrypty poinstalacyjne”." Style="{StaticResource ListHint}"/>
+                            <TextBlock Text="Pliki .ps1 / .bat uruchamiane przez zadanie &#x201E;Uruchom skrypty poinstalacyjne&#x201D;." Style="{StaticResource ListHint}"/>
                         </StackPanel>
                     </DockPanel>
                     <ListBox Name="lbScripts"/>
@@ -5965,7 +5995,7 @@ function Show-ConfigEditor {
                                 </StackPanel>
                                 <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
                                     <TextBlock Text="Kopia zapasowa konfiguracji" Style="{StaticResource CardTitle}" Margin="0,0,0,4"/>
-                                    <TextBlock Text="Eksport zapisuje do pliku JSON ustawienia z tego okna (także niezapisane). Import wczytuje plik do okna - zatwierdź go przyciskiem „Zapisz”." Style="{StaticResource MutedText}"/>
+                                    <TextBlock Text="Eksport zapisuje do pliku JSON ustawienia z tego okna (także niezapisane). Import wczytuje plik do okna - zatwierdź go przyciskiem &#x201E;Zapisz&#x201D;." Style="{StaticResource MutedText}"/>
                                 </StackPanel>
                             </DockPanel>
                         </Border>
@@ -6577,7 +6607,7 @@ if ($null -eq $global:PesterTesting) {
 [xml]$mainXaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Smart Tool for Deployment" Width="1000" Height="660" MinWidth="900" MinHeight="560" WindowStartupLocation="CenterScreen"
+        Title="Smart Tool for Deployment" Width="1000" Height="660" MinWidth="900" MinHeight="570" WindowStartupLocation="CenterScreen"
         Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" FontSize="13">
     <Window.Resources>
         <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
