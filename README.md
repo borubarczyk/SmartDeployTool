@@ -5,9 +5,9 @@
 ## Główne funkcjonalności
 
 - **Zabezpieczenie logowaniem:** Dostęp do uruchomienia narzędzia oraz zmian w oknie `Ustawień` chroniony jest kodem PIN (domyślnie: `2137`).
-- **Nowoczesny interfejs GUI (WPF):** Spójny i responsywny układ z obsługą motywu Jasnego (☀️) i Ciemnego (🌙). Wszystkie komunikaty, komunikaty o błędach i prośby o potwierdzenie są renderowane w natywnym motywie aplikacji.
+- **Nowoczesny interfejs GUI (WPF):** Spójny i responsywny układ z obsługą motywu Jasnego (☀️) i Ciemnego (🌙) - ta sama paleta i ten sam wygląd kontrolek co w narzędziach ServerReview i NPS Event Viewer (grafitowo-granatowe tło, niebieski akcent, karty, zaokrąglone pola, ciemne paski przewijania, tabele, podpowiedzi i menu kontekstowe). Wszystkie okna (także logowanie, powitanie, komunikaty, potwierdzenia i okna Ustawień) korzystają z jednego wspólnego zestawu stylów, a przełączenie motywu działa od razu we wszystkich otwartych oknach.
 - **Czytelna Przeglądarka Logów (widok tabelaryczny):** Każdy wpis loguje pełną datę i godzinę, poziom (`INFO`/`ERROR`) oraz kontekst (`System`/`Automat`/`Użytkownik`). Przeglądarka logów prezentuje to w tabeli z sortowalnymi (kliknięcie nagłówka) i filtrowalnymi kolumnami **Rodzaj | Data zdarzenia | Kontekst | Informacja** - z kolorami/ikonami wg rodzaju zdarzenia (błąd, sukces, ostrzeżenie, Dry-Run), wyszukiwarką na żywo oraz eksportem czytelnego **raportu HTML** (do wysłania klientowi/dołączenia do zgłoszenia).
-- **Monitorowanie połączenia (Dynamiczny Status Sieci):** Działająca w tle (nie obciążająca interfejsu) pulsująca kropka wizualnie informująca o poprawności adresu IP oraz natychmiastowej weryfikacji poprawności repozytorium WWW (żądania HTTP HEAD).
+- **Monitorowanie połączenia (Dynamiczny Status Sieci):** Pulsująca kropka wizualnie informująca o poprawności adresu IP oraz o dostępności repozytorium WWW (żądanie HTTP HEAD wykonywane w osobnym wątku, więc nawet niedostępny serwer nie spowalnia interfejsu).
 - **Zarządzanie Oprogramowaniem:**
   - Automatyczna, cicha instalacja wybranych aplikacji z różnych źródeł (ścieżki sieciowe UNC, zasoby Web/HTTP(S), oraz pakiety **Winget**).
   - Zintegrowane uwierzytelnianie (WebAuth) do pobierania zastrzeżonych instalatorów HTTP.
