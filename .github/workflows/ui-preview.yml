@@ -22,7 +22,7 @@ jobs:
       - name: Render windows (dark + light)
         shell: powershell
         run: |
-          powershell -NoProfile -STA -ExecutionPolicy Bypass -File tools\Render-UiPreview.ps1 -Theme Dark
+          powershell -NoProfile -STA -ExecutionPolicy Bypass -File tools\Render-UiPreview.ps1 -Theme Dark -DumpLayout
           powershell -NoProfile -STA -ExecutionPolicy Bypass -File tools\Render-UiPreview.ps1 -Theme Light
           Get-ChildItem ui-preview -Recurse -Filter *.png | Measure-Object | ForEach-Object { "PNG: $($_.Count)" }
 

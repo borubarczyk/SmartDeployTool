@@ -12,7 +12,11 @@
 # workflow "UI Preview" - pliki są do pobrania jako artefakt).
 param(
     [ValidateSet('Dark', 'Light')][string]$Theme = 'Dark',
-    [string]$OutDir
+    [string]$OutDir,
+    # Wypisuje do konsoli mapę układu (typ, nazwa, tekst, pozycja i rozmiar kontrolek) każdego okna.
+    [switch]$DumpLayout,
+    # Kończy skrypt kodem 1, jeśli w którymkolwiek oknie wykryto ucięty tekst.
+    [switch]$FailOnClipping
 )
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -22,6 +26,8 @@ $global:UiShotDir = (Resolve-Path $OutDir).Path
 $global:UiShotIndex = 0
 $global:UiShotName = 'okno'
 $global:UiPending = New-Object System.Collections.ArrayList
+$global:UiClipping = New-Object System.Collections.ArrayList
+$global:UiDumpLayout = [bool]$DumpLayout
 
 # Tryb testowy: narzędzie nie pokaże okien logowania/powitania ani nie wywoła ShowDialog okna głównego.
 $global:PesterTesting = $true
@@ -52,6 +58,128 @@ function global:Save-UiElementPng {
     Write-Host ("OK   {0} ({1} x {2})" -f (Split-Path $file -Leaf), $w, $h)
 }
 
+# Wykrywanie uciętego tekstu: dla każdego widocznego TextBlocka liczymy naturalny rozmiar tekstu
+# (FormattedText) i porównujemy z miejscem, które dostał - zarówno sam TextBlock, jak i każdy jego
+# rodzic, który przycina zawartość (np. przycisk ze sztywną wysokością albo zbyt wąska kolumna).
+# Przycinanie przez ScrollViewer (przewijanie) jest zamierzone i pomijane.
+function global:Get-UiElementLabel {
+    param($Element)
+    $label = $Element.GetType().Name
+    if ($Element -is [System.Windows.FrameworkElement] -and -not [string]::IsNullOrWhiteSpace($Element.Name)) { $label += "#$($Element.Name)" }
+    return $label
+}
+
+function global:Find-UiClipping {
+    param([System.Windows.Window]$Win, [string]$WindowName)
+    $results = New-Object System.Collections.Generic.List[string]
+    $root = [System.Windows.Media.VisualTreeHelper]::GetChild($Win, 0)
+    $pixelsPerDip = 1.0
+    try { $pixelsPerDip = [System.Windows.Media.VisualTreeHelper]::GetDpi($Win).PixelsPerDip } catch {}
+    $stack = New-Object System.Collections.Stack
+    $stack.Push($root)
+    while ($stack.Count -gt 0) {
+        $v = $stack.Pop()
+        if ($v -is [System.Windows.UIElement] -and -not $v.IsVisible) { continue }
+        for ($i = 0; $i -lt [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($v); $i++) {
+            $stack.Push([System.Windows.Media.VisualTreeHelper]::GetChild($v, $i))
+        }
+        if ($v -isnot [System.Windows.Controls.TextBlock]) { continue }
+        $tb = $v
+        if ([string]::IsNullOrWhiteSpace($tb.Text) -or $tb.ActualWidth -le 0) { continue }
+
+        # Najbliższy "właściciel" tekstu do opisu (przycisk, pole, etykieta...).
+        $owner = $null
+        $p = [System.Windows.Media.VisualTreeHelper]::GetParent($tb)
+        while ($null -ne $p -and $null -eq $owner) {
+            if ($p -is [System.Windows.Controls.Control]) { $owner = $p }
+            $p = [System.Windows.Media.VisualTreeHelper]::GetParent($p)
+        }
+        $ownerLabel = if ($null -ne $owner) { Get-UiElementLabel $owner } else { 'okno' }
+        $textShort = ($tb.Text -replace '\s+', ' ').Trim()
+        if ($textShort.Length -gt 60) { $textShort = $textShort.Substring(0, 60) + '…' }
+
+        # 1) Czy tekst mieści się w samym TextBlocku.
+        $typeface = New-Object System.Windows.Media.Typeface -ArgumentList $tb.FontFamily, $tb.FontStyle, $tb.FontWeight, $tb.FontStretch
+        $ft = New-Object System.Windows.Media.FormattedText -ArgumentList $tb.Text, ([System.Globalization.CultureInfo]::CurrentUICulture), $tb.FlowDirection, $typeface, $tb.FontSize, ([System.Windows.Media.Brushes]::Black), $pixelsPerDip
+        if (-not [double]::IsNaN($tb.LineHeight)) { $ft.LineHeight = $tb.LineHeight }
+        $innerW = $tb.ActualWidth - $tb.Padding.Left - $tb.Padding.Right
+        $innerH = $tb.ActualHeight - $tb.Padding.Top - $tb.Padding.Bottom
+        if ($tb.TextWrapping -ne [System.Windows.TextWrapping]::NoWrap) {
+            if ($innerW -gt 0) { $ft.MaxTextWidth = $innerW }
+            if ($ft.Height -gt $innerH + 1.5) {
+                [void]$results.Add(("{0} | {1} | '{2}' | tekst wyższy niż miejsce: {3:N0}px > {4:N0}px" -f $WindowName, $ownerLabel, $textShort, $ft.Height, $innerH))
+            }
+        } else {
+            if ($tb.TextTrimming -eq [System.Windows.TextTrimming]::None -and $ft.WidthIncludingTrailingWhitespace -gt $innerW + 1.5) {
+                [void]$results.Add(("{0} | {1} | '{2}' | ucięty w poziomie: tekst {3:N0}px, miejsce {4:N0}px" -f $WindowName, $ownerLabel, $textShort, $ft.WidthIncludingTrailingWhitespace, $innerW))
+            }
+            if ($ft.Height -gt $innerH + 1.5) {
+                [void]$results.Add(("{0} | {1} | '{2}' | ucięty w pionie: tekst {3:N0}px, miejsce {4:N0}px" -f $WindowName, $ownerLabel, $textShort, $ft.Height, $innerH))
+            }
+        }
+
+        # 2) Czy któryś z rodziców nie przycina TextBlocka (do najbliższego ScrollViewera).
+        $tbRect = New-Object System.Windows.Rect 0, 0, $tb.ActualWidth, $tb.ActualHeight
+        $a = [System.Windows.Media.VisualTreeHelper]::GetParent($tb)
+        while ($null -ne $a -and $a -ne $root) {
+            if ($a -is [System.Windows.Controls.ScrollContentPresenter]) { break }
+            if ($a -is [System.Windows.FrameworkElement]) {
+                $clip = [System.Windows.Controls.Primitives.LayoutInformation]::GetLayoutClip($a)
+                $clipRect = $null
+                if ($null -ne $clip) { $clipRect = $clip.Bounds }
+                elseif ($a.ClipToBounds) { $clipRect = New-Object System.Windows.Rect 0, 0, $a.ActualWidth, $a.ActualHeight }
+                if ($null -ne $clipRect -and -not $clipRect.IsEmpty) {
+                    try {
+                        $r = $tb.TransformToAncestor($a).TransformBounds($tbRect)
+                        $cutX = [Math]::Max(0, $clipRect.Left - $r.Left) + [Math]::Max(0, $r.Right - $clipRect.Right)
+                        $cutY = [Math]::Max(0, $clipRect.Top - $r.Top) + [Math]::Max(0, $r.Bottom - $clipRect.Bottom)
+                        if ($cutX -gt 1.5 -or $cutY -gt 1.5) {
+                            [void]$results.Add(("{0} | {1} | '{2}' | przycięty przez {3}: brakuje {4:N0}px w poziomie, {5:N0}px w pionie" -f $WindowName, $ownerLabel, $textShort, (Get-UiElementLabel $a), $cutX, $cutY))
+                            break
+                        }
+                    } catch {}
+                }
+            }
+            $a = [System.Windows.Media.VisualTreeHelper]::GetParent($a)
+        }
+    }
+    return ,$results
+}
+
+# Tekstowa "mapa" okna: widoczne kontrolki z pozycją i rozmiarem względem okna.
+function global:Write-UiLayoutMap {
+    param([System.Windows.Window]$Win, [string]$WindowName)
+    $root = [System.Windows.Media.VisualTreeHelper]::GetChild($Win, 0)
+    Write-Host ("MAP  == {0} ({1:N0} x {2:N0}) ==" -f $WindowName, $root.ActualWidth, $root.ActualHeight)
+    $stack = New-Object System.Collections.Stack
+    $stack.Push($root)
+    while ($stack.Count -gt 0) {
+        $v = $stack.Pop()
+        if ($v -is [System.Windows.UIElement] -and -not $v.IsVisible) { continue }
+        $isControl = $v -is [System.Windows.Controls.Button] -or $v -is [System.Windows.Controls.TextBox] -or $v -is [System.Windows.Controls.PasswordBox] -or
+            $v -is [System.Windows.Controls.ComboBox] -or $v -is [System.Windows.Controls.CheckBox] -or $v -is [System.Windows.Controls.ListView] -or
+            $v -is [System.Windows.Controls.ListBox] -or $v -is [System.Windows.Controls.ProgressBar]
+        $isLooseText = $v -is [System.Windows.Controls.TextBlock] -and $null -eq $v.TemplatedParent -and -not [string]::IsNullOrWhiteSpace($v.Text)
+        if ($isControl -or $isLooseText) {
+            try {
+                $r = $v.TransformToAncestor($root).TransformBounds((New-Object System.Windows.Rect 0, 0, $v.ActualWidth, $v.ActualHeight))
+                $text = ''
+                if ($v -is [System.Windows.Controls.TextBlock]) { $text = $v.Text }
+                elseif ($v -is [System.Windows.Controls.ContentControl] -and $v.Content -is [string]) { $text = $v.Content }
+                elseif ($v -is [System.Windows.Controls.TextBox]) { $text = $v.Text }
+                elseif ($v -is [System.Windows.Controls.ComboBox]) { $text = [string]$v.Text }
+                $text = ($text -replace '\s+', ' ').Trim()
+                if ($text.Length -gt 50) { $text = $text.Substring(0, 50) + '…' }
+                Write-Host ("MAP  {0,-34} x={1,4:N0} y={2,4:N0} w={3,4:N0} h={4,3:N0} fs={5} '{6}'" -f (Get-UiElementLabel $v), $r.X, $r.Y, $r.Width, $r.Height, $v.FontSize, $text)
+            } catch {}
+            if ($isControl -and $v -isnot [System.Windows.Controls.ListView] -and $v -isnot [System.Windows.Controls.ListBox]) { continue }
+        }
+        for ($i = [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($v) - 1; $i -ge 0; $i--) {
+            $stack.Push([System.Windows.Media.VisualTreeHelper]::GetChild($v, $i))
+        }
+    }
+}
+
 function global:Save-UiWindowShot {
     param([System.Windows.Window]$Win)
     try {
@@ -62,6 +190,12 @@ function global:Save-UiWindowShot {
             if ($null -ne $panel) { $panel.Visibility = [System.Windows.Visibility]::Visible }
         }
         $root = [System.Windows.Media.VisualTreeHelper]::GetChild($Win, 0)
+        $root.UpdateLayout()
+        foreach ($issue in (Find-UiClipping -Win $Win -WindowName $name)) {
+            [void]$global:UiClipping.Add($issue)
+            Write-Host "CLIP $issue"
+        }
+        if ($global:UiDumpLayout) { Write-UiLayoutMap -Win $Win -WindowName $name }
         Save-UiElementPng -Element $root -Background $null -Name $name
         # Jeśli okno ma przewijaną zawartość dłuższą niż widok - dodatkowo cała zawartość.
         $queue = New-Object System.Collections.Queue
@@ -162,3 +296,12 @@ Invoke-UiShot 'profile' { Show-ProfilesManager -config $cfg }
 Invoke-UiShot 'edycja-profilu' { Show-ProfileEditDialog -IsNew $false -ProfileName 'Standard' -ProfileApps @('7-Zip', 'Google Chrome') -config $cfg }
 
 Write-Host "Gotowe: $global:UiShotIndex plików w $global:UiShotDir"
+$report = Join-Path $global:UiShotDir 'uciety-tekst.txt'
+if ($global:UiClipping.Count -gt 0) {
+    $global:UiClipping | Set-Content -Path $report -Encoding UTF8
+    Write-Host "UCIĘTY TEKST: $($global:UiClipping.Count) miejsc (lista w $report)"
+    if ($FailOnClipping) { exit 1 }
+} else {
+    'Brak uciętego tekstu.' | Set-Content -Path $report -Encoding UTF8
+    Write-Host "Brak uciętego tekstu."
+}
