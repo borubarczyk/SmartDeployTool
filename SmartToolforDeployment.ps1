@@ -158,11 +158,14 @@ function global:Get-ThemeColor {
     return (Get-ThemePalette)[$Name]
 }
 
+# Zwraca "surowy" obiekt .NET (BaseObject), a nie PSObject: obiekt z New-Object jest opakowany
+# w PSObject i takie opakowanie trafiało do ResourceDictionary (indeksator typu object), przez co
+# WPF zgłaszał "'#FF...' is not a valid value for property 'Background'".
 function global:New-ThemeBrush {
     param([string]$Color)
     $brush = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.ColorConverter]::ConvertFromString($Color))
     $brush.Freeze()
-    return $brush
+    return $brush.PSObject.BaseObject
 }
 
 $script:ThemeStylesXaml = @'
@@ -719,10 +722,10 @@ function global:Update-WindowTheme {
     if ($null -eq $TargetWindow) { return }
     $palette = Get-ThemePalette
     foreach ($key in $palette.Keys) {
-        $TargetWindow.Resources[$key] = New-ThemeBrush $palette[$key]
+        $TargetWindow.Resources[$key] = (New-ThemeBrush $palette[$key]).PSObject.BaseObject
     }
     foreach ($sysKey in $script:ThemeSystemBrushKeys.Keys) {
-        $TargetWindow.Resources[[System.Windows.SystemColors]::$sysKey] = New-ThemeBrush $palette[$script:ThemeSystemBrushKeys[$sysKey]]
+        $TargetWindow.Resources[[System.Windows.SystemColors]::$sysKey] = (New-ThemeBrush $palette[$script:ThemeSystemBrushKeys[$sysKey]]).PSObject.BaseObject
     }
 }
 
