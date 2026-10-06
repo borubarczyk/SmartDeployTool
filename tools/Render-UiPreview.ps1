@@ -105,7 +105,9 @@ function global:Find-UiClipping {
         $innerW = $tb.ActualWidth - $tb.Padding.Left - $tb.Padding.Right
         $innerH = $tb.ActualHeight - $tb.Padding.Top - $tb.Padding.Bottom
         if ($tb.TextWrapping -ne [System.Windows.TextWrapping]::NoWrap) {
-            if ($innerW -gt 0) { $ft.MaxTextWidth = $innerW }
+            # Zawijanie liczymy tylko, gdy tekst wyraźnie nie mieści się w jednej linii - FormattedText
+            # mierzy emoji (czcionka zastępcza) o 1-3 px inaczej niż TextBlock, co dawało fałszywe alarmy.
+            if ($innerW -gt 0 -and $ft.WidthIncludingTrailingWhitespace -gt $innerW + 4) { $ft.MaxTextWidth = $innerW }
             if ($ft.Height -gt $innerH + 1.5) {
                 [void]$results.Add(("{0} | {1} | '{2}' | tekst wyższy niż miejsce: {3:N0}px > {4:N0}px" -f $WindowName, $ownerLabel, $textShort, $ft.Height, $innerH))
             }
@@ -202,6 +204,10 @@ function global:Save-UiWindowShot {
         $queue.Enqueue($root)
         while ($queue.Count -gt 0) {
             $v = $queue.Dequeue()
+            if ($v -is [System.Windows.Controls.ScrollViewer] -and $v.ExtentHeight -gt ($v.ViewportHeight + 1) -and $v.ViewportHeight -gt 0 -and $v.TemplatedParent -isnot [System.Windows.Controls.TextBoxBase] -and $v.TemplatedParent -isnot [System.Windows.Controls.ItemsControl]) {
+                # Zawartość dłuższa niż widoczny obszar = trzeba przewijać (np. lista zadań w oknie głównym).
+                Write-Host ("SCROLL {0} | {1} | zawartość {2:N0}px w widoku {3:N0}px" -f $name, (Get-UiElementLabel $v.Content), $v.ExtentHeight, $v.ViewportHeight)
+            }
             if ($v -is [System.Windows.Controls.ScrollViewer] -and $v.Content -is [System.Windows.FrameworkElement] -and $v.ExtentHeight -gt ($v.ViewportHeight + 40) -and $v.ViewportHeight -gt 100) {
                 Save-UiElementPng -Element $v.Content -Background $Win.Background -Name "$name-cala-zawartosc"
                 continue

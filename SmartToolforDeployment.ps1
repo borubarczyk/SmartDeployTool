@@ -788,6 +788,17 @@ function global:New-ThemedWindow {
 
     $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $Xaml))
     $win.UseLayoutRounding = $true
+    # Okno nigdy większe niż obszar roboczy ekranu. Narzędzie działa na świeżo zainstalowanych
+    # komputerach - często jeszcze bez sterownika grafiki (1024x768) albo na laptopach ze
+    # skalowaniem 125-150% - i wtedy dół okna (np. przyciski Start/Pauza) wychodził poza ekran.
+    try {
+        $work = [System.Windows.SystemParameters]::WorkArea
+        if ($win.MinWidth -gt $work.Width) { $win.MinWidth = $work.Width }
+        if ($win.MinHeight -gt $work.Height) { $win.MinHeight = $work.Height }
+        if (-not [double]::IsNaN($win.Width) -and $win.Width -gt $work.Width) { $win.Width = $work.Width }
+        if (-not [double]::IsNaN($win.Height) -and $win.Height -gt $work.Height) { $win.Height = $work.Height }
+        if ($win.SizeToContent -ne [System.Windows.SizeToContent]::Manual) { $win.MaxHeight = $work.Height; $win.MaxWidth = $work.Width }
+    } catch {}
     if (-not $NoOwner) {
         $owner = Get-DialogOwner
         if ($null -ne $owner -and $owner -ne $win) {
@@ -4383,11 +4394,14 @@ function Show-SystemInfoWindow {
             "• $($_.Model) — $($_.SizeGb) GB$snPart"
         })
     } else { @("Brak danych") }
-    $icDisks.ItemsSource = $diskLines
+    # @(...) - przy jednym dysku/jednej karcie "if" zwraca zwykły napis zamiast tablicy, a ItemsControl
+    # wyświetlał wtedy taki napis ZNAK PO ZNAKU, każdy w osobnym wierszu (okno rosło na ~1300 px
+    # i przyciski na dole były ucinane).
+    $icDisks.ItemsSource = @($diskLines)
 
     $icNets = $dlg.FindName("icNets")
     $netLines = if ($audit.Networks.Count -gt 0) { @($audit.Networks | ForEach-Object { "• $($_.Description) — $($_.Mac) — $($_.Ip)" }) } else { @("Brak aktywnych kart sieciowych") }
-    $icNets.ItemsSource = $netLines
+    $icNets.ItemsSource = @($netLines)
 
     # Klik na dowolną linię dysku/karty sieciowej kopiuje jej pełną treść (m.in. numer seryjny
     # dysku, adres MAC) - jeden wspólny handler na ItemsControl zamiast po jednym na wpis.
