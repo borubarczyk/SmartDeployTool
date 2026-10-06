@@ -182,39 +182,62 @@ function global:Write-UiLayoutMap {
     }
 }
 
+# Jeden "widok" okna: lint ucinania, mapa układu, PNG i (gdy jest przewijanie) PNG całej zawartości.
+function global:Save-UiView {
+    param([System.Windows.Window]$Win, [string]$Name)
+    $root = [System.Windows.Media.VisualTreeHelper]::GetChild($Win, 0)
+    $root.UpdateLayout()
+    foreach ($issue in (Find-UiClipping -Win $Win -WindowName $Name)) {
+        [void]$global:UiClipping.Add($issue)
+        Write-Host "CLIP $issue"
+    }
+    if ($global:UiDumpLayout) { Write-UiLayoutMap -Win $Win -WindowName $Name }
+    Save-UiElementPng -Element $root -Background $null -Name $Name
+    # Jeśli okno ma przewijaną zawartość dłuższą niż widok - dodatkowo cała zawartość.
+    $queue = New-Object System.Collections.Queue
+    $queue.Enqueue($root)
+    while ($queue.Count -gt 0) {
+        $v = $queue.Dequeue()
+        if ($v -is [System.Windows.UIElement] -and -not $v.IsVisible) { continue }
+        if ($v -is [System.Windows.Controls.ScrollViewer] -and $v.ExtentHeight -gt ($v.ViewportHeight + 1) -and $v.ViewportHeight -gt 0 -and $v.TemplatedParent -isnot [System.Windows.Controls.Primitives.TextBoxBase] -and $v.TemplatedParent -isnot [System.Windows.Controls.ItemsControl]) {
+            # Zawartość dłuższa niż widoczny obszar = trzeba przewijać (np. lista zadań w oknie głównym).
+            Write-Host ("SCROLL {0} | {1} | zawartość {2:N0}px w widoku {3:N0}px" -f $Name, (Get-UiElementLabel $v.Content), $v.ExtentHeight, $v.ViewportHeight)
+        }
+        if ($v -is [System.Windows.Controls.ScrollViewer] -and $v.Content -is [System.Windows.FrameworkElement] -and $v.ExtentHeight -gt ($v.ViewportHeight + 40) -and $v.ViewportHeight -gt 100) {
+            Save-UiElementPng -Element $v.Content -Background $Win.Background -Name "$Name-cala-zawartosc"
+            continue
+        }
+        for ($i = 0; $i -lt [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($v); $i++) {
+            $queue.Enqueue([System.Windows.Media.VisualTreeHelper]::GetChild($v, $i))
+        }
+    }
+}
+
+# Okno z zakładkami: każda zakładka osobno (w drzewie wizualnym jest tylko wybrana).
+function global:Save-UiTabbedView {
+    param([System.Windows.Window]$Win, [string]$Name)
+    $tabs = $null
+    foreach ($tabName in 'tabSettings') { if ($null -eq $tabs) { $tabs = $Win.FindName($tabName) } }
+    if ($null -eq $tabs) { Save-UiView -Win $Win -Name $Name; return }
+    for ($i = 0; $i -lt $tabs.Items.Count; $i++) {
+        $tabs.SelectedIndex = $i
+        $viewName = "{0}-{1:D2}" -f $Name, ($i + 1)
+        Write-Host ("TAB  {0} = {1}" -f $viewName, $tabs.Items[$i].Header)
+        Save-UiView -Win $Win -Name $viewName
+    }
+    $tabs.SelectedIndex = 0
+}
+
 function global:Save-UiWindowShot {
     param([System.Windows.Window]$Win)
     try {
         $name = $global:UiShotName
-        # Okno Ustawień: rozwijamy wszystkie sekcje, żeby było widać wszystkie pola.
-        foreach ($panelName in 'panelSrc', 'panelDom', 'panelTv', 'panelAv', 'panelWifi') {
-            $panel = $Win.FindName($panelName)
-            if ($null -ne $panel) { $panel.Visibility = [System.Windows.Visibility]::Visible }
-        }
-        $root = [System.Windows.Media.VisualTreeHelper]::GetChild($Win, 0)
-        $root.UpdateLayout()
-        foreach ($issue in (Find-UiClipping -Win $Win -WindowName $name)) {
-            [void]$global:UiClipping.Add($issue)
-            Write-Host "CLIP $issue"
-        }
-        if ($global:UiDumpLayout) { Write-UiLayoutMap -Win $Win -WindowName $name }
-        Save-UiElementPng -Element $root -Background $null -Name $name
-        # Jeśli okno ma przewijaną zawartość dłuższą niż widok - dodatkowo cała zawartość.
-        $queue = New-Object System.Collections.Queue
-        $queue.Enqueue($root)
-        while ($queue.Count -gt 0) {
-            $v = $queue.Dequeue()
-            if ($v -is [System.Windows.Controls.ScrollViewer] -and $v.ExtentHeight -gt ($v.ViewportHeight + 1) -and $v.ViewportHeight -gt 0 -and $v.TemplatedParent -isnot [System.Windows.Controls.Primitives.TextBoxBase] -and $v.TemplatedParent -isnot [System.Windows.Controls.ItemsControl]) {
-                # Zawartość dłuższa niż widoczny obszar = trzeba przewijać (np. lista zadań w oknie głównym).
-                Write-Host ("SCROLL {0} | {1} | zawartość {2:N0}px w widoku {3:N0}px" -f $name, (Get-UiElementLabel $v.Content), $v.ExtentHeight, $v.ViewportHeight)
-            }
-            if ($v -is [System.Windows.Controls.ScrollViewer] -and $v.Content -is [System.Windows.FrameworkElement] -and $v.ExtentHeight -gt ($v.ViewportHeight + 40) -and $v.ViewportHeight -gt 100) {
-                Save-UiElementPng -Element $v.Content -Background $Win.Background -Name "$name-cala-zawartosc"
-                continue
-            }
-            for ($i = 0; $i -lt [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($v); $i++) {
-                $queue.Enqueue([System.Windows.Media.VisualTreeHelper]::GetChild($v, $i))
-            }
+        Save-UiTabbedView -Win $Win -Name $name
+        # Okno główne i Ustawienia dodatkowo w minimalnym rozmiarze - tam najłatwiej coś uciąć.
+        if ($name -in @('okno-glowne', 'ustawienia') -and $Win.MinWidth -gt 0 -and $Win.MinHeight -gt 0) {
+            $Win.Width = $Win.MinWidth
+            $Win.Height = $Win.MinHeight
+            Save-UiTabbedView -Win $Win -Name "$name-min"
         }
     } catch {
         Write-Host "ERR  $($global:UiShotName): $($_.Exception.Message)"
@@ -291,14 +314,9 @@ Invoke-UiShot 'szczegoly-wpisu-logu' { Show-LogEntryDetail -Entry ([PSCustomObje
 Invoke-UiShot 'informacje-o-systemie' { Show-SystemInfoWindow }
 Invoke-UiShot 'deinstalator' { Show-SoftwareUninstaller }
 Invoke-UiShot 'ustawienia' { Show-ConfigEditor }
-Invoke-UiShot 'programy' { Show-ProgramsManager -config $cfg }
 Invoke-UiShot 'edycja-programu' { Show-ProgramEditDialog -IsNew $false -ProgramName 'Google Chrome' -ProgramData ([PSCustomObject]@{ Enabled = $true; FileName = 'Google.Chrome'; SilentArgs = ''; DownloadUrl = 'https://dl.google.com/chrome/install/ChromeStandaloneSetup64.exe' }) }
-Invoke-UiShot 'rejestr' { Show-RegistryManager -config $cfg }
 Invoke-UiShot 'edycja-rejestru' { Show-RegistryEditDialog -IsNew $false -RegData ([PSCustomObject]@{ Path = 'HKLM:\SOFTWARE\MojaFirma'; Name = 'WdrozenieZakonczone'; Value = '1'; PropertyType = 'DWord' }) }
-Invoke-UiShot 'domyslne-zadania' { Show-DefaultTasksEditor -config $cfg }
-Invoke-UiShot 'skrypty' { Show-PostInstallScriptsManager -config $cfg }
 Invoke-UiShot 'edycja-skryptu' { Show-ScriptEditDialog -IsNew $true -ScriptPath 'SkryptDrukarki.ps1' }
-Invoke-UiShot 'profile' { Show-ProfilesManager -config $cfg }
 Invoke-UiShot 'edycja-profilu' { Show-ProfileEditDialog -IsNew $false -ProfileName 'Standard' -ProfileApps @('7-Zip', 'Google Chrome') -config $cfg }
 
 Write-Host "Gotowe: $global:UiShotIndex plików w $global:UiShotDir"

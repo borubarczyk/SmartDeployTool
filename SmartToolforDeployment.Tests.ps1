@@ -460,6 +460,79 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
         }
     }
 
+    Context "Okno główne (zadania w grupach, menu Narzędzia)" {
+        It "Każde zadanie ma grupę i trafiło do okna głównego" {
+            $CheckboxControls.Count | Should -Be $checkboxOptions.Count
+            foreach ($key in $checkboxOptions.Keys) {
+                @($script:TaskGroups.Keys) | Should -Contain $checkboxOptions[$key].Group
+                $CheckboxControls[$key].Parent | Should -BeOfType [System.Windows.Controls.StackPanel]
+            }
+        }
+
+        It "Każda kolumna zadań zawiera podpisy grup" {
+            foreach ($colName in 'spTaskCol0', 'spTaskCol1', 'spTaskCol2') {
+                $col = $Window.FindName($colName)
+                $col | Should -Not -BeNullOrEmpty
+                @($col.Children | Where-Object { $_ -is [System.Windows.Controls.TextBlock] }).Count | Should -Be 2
+            }
+        }
+
+        It "Narzędzia systemowe są w menu przycisku Narzędzia" {
+            $Window.FindName("btnSysInfo") | Should -BeOfType [System.Windows.Controls.MenuItem]
+            $Window.FindName("btnTools").ContextMenu.Items.Count | Should -BeGreaterThan 5
+        }
+    }
+
+    Context "Okno Ustawienia (zakładki z listami)" {
+        BeforeAll {
+            # Okna zamykają się same zaraz po wczytaniu - test sprawdza zawartość bez klikania.
+            # Handler klasy zostaje w procesie na stałe, więc działa tylko przy włączonej fladze.
+            if (-not $global:SdtAutoCloseRegistered) {
+                [System.Windows.EventManager]::RegisterClassHandler([System.Windows.Window], [System.Windows.FrameworkElement]::LoadedEvent, [System.Windows.RoutedEventHandler]{
+                    param($loadedSender, $loadedArgs)
+                    if ($global:SdtAutoCloseWindows) { $global:SdtLastWindow = $loadedSender; $loadedSender.Close() }
+                })
+                $global:SdtAutoCloseRegistered = $true
+            }
+            $global:SdtAutoCloseWindows = $true
+        }
+
+        AfterAll {
+            $global:SdtAutoCloseWindows = $false
+        }
+
+        It "Ma 9 zakładek i wypełnia listy programów, profili, rejestru i skryptów" {
+            Mock Get-Config {
+                '{ "DefaultInstallSource": "web", "InstallSourcePaths": { "web": "https://serwer/instalki/" },
+                   "WebAuth": { "Username": "jan", "Password": "tajne" },
+                   "Programs": { "7zip": { "Enabled": true, "FileName": "7z.exe" }, "Chrome": { "Enabled": false, "FileName": "Google.Chrome", "DownloadUrl": "https://x/y.exe" } },
+                   "Profiles": { "Biuro": ["7zip", "Chrome"] },
+                   "SystemSettings": { "CustomRegistry": [ { "Path": "HKLM:\\SOFTWARE\\Firma", "Name": "Test", "Value": "1", "PropertyType": "DWord" } ] },
+                   "PostInstallScripts": ["a.ps1", "b.bat"],
+                   "DefaultCheckboxes": { "AutoReboot": true } }' | ConvertFrom-Json
+            }
+            $global:SdtLastWindow = $null
+            Show-ConfigEditor
+            $w = $global:SdtLastWindow
+            $w | Should -Not -BeNullOrEmpty
+            $w.Title | Should -Be "Ustawienia"
+            $w.FindName("tabSettings").Items.Count | Should -Be 9
+
+            $programs = $w.FindName("lbPrograms")
+            $programs.Items.Count | Should -Be 2
+            $programs.Items[0].Name | Should -Be "7zip"
+            $programs.Items[0].Default | Should -Be "tak"
+            $programs.Items[1].Url | Should -Be "tak"
+
+            $w.FindName("lbProfiles").Items[0].Apps | Should -Be "7zip, Chrome"
+            $w.FindName("lbRegistry").Items[0].Type | Should -Be "DWord"
+            $w.FindName("lbScripts").Items.Count | Should -Be 2
+            $w.FindName("txtWebPass").Password | Should -Be "tajne"
+            $w.FindName("cmbSrc").SelectedItem | Should -Be "web"
+            $w.FindName("txtSettingsState").Text | Should -Be "Bez zmian"
+        }
+    }
+
     Context "Motyw graficzny (wspólny wygląd wszystkich okien)" {
         BeforeAll {
             # Wszystkie bloki XAML okien ze skryptu (logowanie, komunikaty, Ustawienia, okno główne...).
@@ -496,7 +569,7 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
         }
 
         It "Znajduje okna XAML w skrypcie" {
-            $script:ThemeTestBlocks.Count | Should -BeGreaterThan 20
+            $script:ThemeTestBlocks.Count | Should -BeGreaterThan 15
         }
 
         It "Każde okno wczytuje się z motywem ciemnym" {

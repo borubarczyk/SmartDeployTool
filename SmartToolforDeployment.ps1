@@ -648,10 +648,11 @@ $script:ThemeStylesXaml = @'
     <Style TargetType="TabItem">
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Padding" Value="14,8"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TabItem">
-                    <Border x:Name="bd" Background="Transparent" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="14,8" Margin="0,0,4,-1">
+                    <Border x:Name="bd" Background="Transparent" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="{TemplateBinding Padding}" Margin="0,0,4,-1">
                         <ContentPresenter x:Name="hdr" ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True"
                                           TextElement.FontSize="13.5" TextElement.FontWeight="SemiBold" TextElement.Foreground="{DynamicResource ThemeMuted}"/>
                     </Border>
@@ -740,6 +741,17 @@ $script:ThemeStylesXaml = @'
                         <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="bd" Property="Background" Value="{DynamicResource ThemeHover}"/></Trigger>
                         <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
                     </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <!-- Separator w menu: WPF szuka go pod kluczem MenuItem.SeparatorStyleKey, nie jako stylu domyślnego. -->
+    <Style x:Key="{x:Static MenuItem.SeparatorStyleKey}" TargetType="Separator">
+        <Setter Property="Margin" Value="6,4"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Separator">
+                    <Border Height="1" Background="{DynamicResource ThemeBorder}"/>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
@@ -1135,106 +1147,159 @@ if ($null -eq $global:PesterTesting) {
     $timer.Stop()
 }
 
+# Grupy zadań: w oknie głównym i w Ustawieniach (zakładka Zadania) - numer kolumny i podpis.
+$script:TaskGroups = [ordered]@{
+    Prep     = @{ Caption = "PRZYGOTOWANIE";           Column = 0 }
+    Cleanup  = @{ Caption = "CZYSZCZENIE SYSTEMU";     Column = 0 }
+    Software = @{ Caption = "OPROGRAMOWANIE";          Column = 1 }
+    Identity = @{ Caption = "KONTA I DOMENA";          Column = 1 }
+    System   = @{ Caption = "SYSTEM I BEZPIECZEŃSTWO"; Column = 2 }
+    Finish   = @{ Caption = "ZAKOŃCZENIE";             Column = 2 }
+}
+
+# Tworzy w podanych kolumnach (StackPanel) podpis + pusty panel dla każdej grupy zadań.
+# Zwraca słownik: klucz grupy -> panel, do którego trafiają pola wyboru zadań.
+function Add-TaskGroupPanels {
+    param([System.Windows.Controls.Panel[]]$Columns)
+    $groupPanels = @{}
+    foreach ($groupKey in $script:TaskGroups.Keys) {
+        $group = $script:TaskGroups[$groupKey]
+        $column = $Columns[$group.Column]
+        $caption = New-Object System.Windows.Controls.TextBlock
+        $caption.Text = $group.Caption
+        $caption.Style = $column.FindResource("Caption")
+        $caption.Margin = New-Object System.Windows.Thickness(0, 0, 0, 8)
+        [void]$column.Children.Add($caption)
+        $groupPanel = New-Object System.Windows.Controls.StackPanel
+        $groupPanel.Margin = New-Object System.Windows.Thickness(0, 0, 0, 12)
+        [void]$column.Children.Add($groupPanel)
+        $groupPanels[$groupKey] = $groupPanel
+    }
+    return $groupPanels
+}
+
+# Zadania wdrożenia. Group = klucz z $script:TaskGroups. Text to krótka etykieta mieszcząca się
+# w kolumnie; pełny opis jest w Tooltip.
 $checkboxOptions = [ordered]@{
-    "DryRun"                = @{
-        "Text"    = "🧪 Tryb testowy (Dry-Run - bez rzeczywistych zmian)"
+    "DryRun"               = @{
+        "Text"    = "🧪 Tryb testowy (Dry-Run)"
         "Tooltip" = "Symuluje wdrożenie: loguje co zostałoby zrobione (instalacje, deinstalacje, zmiany rejestru, dołączenie do domeny, BitLocker itd.), ale nie wykonuje żadnej z tych operacji naprawdę. Przydatne do sprawdzenia poprawności konfiguracji przed wdrożeniem na realnej stacji."
         "Enabled" = $false
+        "Group"   = "Prep"
     }
-    "CreateRestorePoint"    = @{
-        "Text"    = "Utwórz punkt przywracania systemu przed startem"
+    "CreateRestorePoint"   = @{
+        "Text"    = "Utwórz punkt przywracania"
         "Tooltip" = "Tworzy punkt przywracania systemu Windows tuż przed rozpoczęciem wdrożenia, aby w razie problemu można było łatwo cofnąć zmiany w systemie (System Restore). Nie obejmuje plików użytkownika ani zainstalowanych aplikacji spoza mechanizmu Restore."
         "Enabled" = $false
+        "Group"   = "Prep"
     }
-    "WaitForNetwork"        = @{
-        "Text"    = "Czekaj na połączenie z siecią przed startem"
-        "Tooltip" = "Wstrzymuje konfigurację do momentu podłączenia kabla sieciowego lub Wi-Fi i uzyskania adresu IP."
-        "Enabled" = $true
-    }
-    "SuspendHibernation"    = @{
-        "Text"    = "Wstrzymaj usypianie i hibernację"
-        "Tooltip" = "Tymczasowo zapobiega usypianiu i hibernacji komputera podczas działania skryptu."
-        "Enabled" = $true
-    }
-    "ImportWiFiProfile"     = @{
+    "ImportWiFiProfile"    = @{
         "Text"    = "Importuj profil Wi-Fi"
         "Tooltip" = "Importuje zapisany profil Wi-Fi z pliku (Lizard-Tech)."
         "Enabled" = $false
+        "Group"   = "Prep"
     }
-    "RunPostInstallScripts" = @{
-        "Text"    = "Uruchom skrypty poinstalacyjne"
-        "Tooltip" = "Wykonuje dodatkowe skrypty (.ps1, .bat) zdefiniowane w pliku JSON w sekcji PostInstallScripts."
-        "Enabled" = $false
+    "WaitForNetwork"       = @{
+        "Text"    = "Czekaj na połączenie z siecią"
+        "Tooltip" = "Wstrzymuje konfigurację do momentu podłączenia kabla sieciowego lub Wi-Fi i uzyskania adresu IP."
+        "Enabled" = $true
+        "Group"   = "Prep"
     }
-    "ExportHardwareAudit"   = @{
-        "Text"    = "Eksportuj audyt sprzętowy"
-        "Tooltip" = "Zapisuje pełny raport sprzętowy maszyny w zdefiniowanej ścieżce."
-        "Enabled" = $false
+    "SuspendHibernation"   = @{
+        "Text"    = "Wstrzymaj usypianie i hibernację"
+        "Tooltip" = "Tymczasowo zapobiega usypianiu i hibernacji komputera podczas działania skryptu."
+        "Enabled" = $true
+        "Group"   = "Prep"
     }
-    "UninstallMicrosoft365" = @{
-        "Text"    = "Odinstaluj preinstalowane produkty Microsoft 365"
+    "UninstallMicrosoft365"= @{
+        "Text"    = "Usuń preinstalowany Microsoft 365"
         "Tooltip" = "Usuwa preinstalowane aplikacje Microsoft 365."
         "Enabled" = $false
+        "Group"   = "Cleanup"
     }
-    "UninstallOneDrive"     = @{
+    "UninstallOneDrive"    = @{
         "Text"    = "Odinstaluj OneDrive"
         "Tooltip" = "Zatrzymuje proces i usuwa klienta OneDrive z systemu."
         "Enabled" = $false
+        "Group"   = "Cleanup"
     }
-    "RemoveBloatware"       = @{
-        "Text"    = "Usuń preinstalowane aplikacje (Bloatware)"
+    "RemoveBloatware"      = @{
+        "Text"    = "Usuń zbędne aplikacje (bloatware)"
         "Tooltip" = "Usuwa zbędne aplikacje Appx (Xbox, TikTok, Solitaire itp.) z systemu."
         "Enabled" = $true
+        "Group"   = "Cleanup"
     }
-    "InstallTeamViewer"     = @{
-        "Text"    = "Zainstaluj TeamViewer (jeśli jest przeinstaluje)"
+    "InstallTeamViewer"    = @{
+        "Text"    = "Zainstaluj TeamViewer"
         "Tooltip" = "Instaluje TeamViewer, jeśli jest już zainstalowany, odinstaluje i zainstaluje ponownie, jeśli jest uruchomiony QS zamknie proces i rozpocznie instalację."
         "Enabled" = $true
+        "Group"   = "Software"
     }
-    "InstallApplications"   = @{
-        "Text"    = "Zainstaluj aplikacje (wybór)"
+    "InstallAV"            = @{
+        "Text"    = "Zainstaluj antywirus"
+        "Tooltip" = "Instaluje oprogramowanie antywirusowe (IN DEVELOPMENT)."
+        "Enabled" = $true
+        "Group"   = "Software"
+    }
+    "InstallApplications"  = @{
+        "Text"    = "Zainstaluj wybrane aplikacje"
         "Tooltip" = "Instaluje wybrane aplikacje z listy."
         "Enabled" = $true
+        "Group"   = "Software"
     }
-    "CreateLocalAdmin"      = @{
+    "RunPostInstallScripts"= @{
+        "Text"    = "Uruchom skrypty poinstalacyjne"
+        "Tooltip" = "Wykonuje dodatkowe skrypty (.ps1, .bat) zdefiniowane w pliku JSON w sekcji PostInstallScripts."
+        "Enabled" = $false
+        "Group"   = "Software"
+    }
+    "CreateLocalAdmin"     = @{
         "Text"    = "Utwórz lokalnego administratora"
         "Tooltip" = "Tworzy lokalne konto administratora z niewygasającym hasłem, nazwa konta utworzy się na podstawie konfiguracji w pliku JSON."
         "Enabled" = $true
+        "Group"   = "Identity"
     }
-    "InstallAV"             = @{
-        "Text"    = "Zainstaluj Antywirusa"
-        "Tooltip" = "Instaluje oprogramowanie antywirusowe (IN DEVELOPMENT)."
-        "Enabled" = $true
-    }
-    "JoinDomain"            = @{
-        "Text"    = "Dołącz do domeny"
-        "Tooltip" = "Dołącza komputer do domeny - zgodnie z konfiguracją w pliku JSON - trzeba wpisać hasło do konta domenowego uprawnionego do tego."
-        "Enabled" = $true
-    }
-    "ChangeSystemSettings"  = @{
-        "Text"    = "Zmiany rejestru i ustawień systemowych"
-        "Tooltip" = "Wprowadza zmiany w rejestrze i ustawieniach systemowych, zgodnie z konfiguracją w pliku JSON zmiana pobierania aktualizacji, ustawienia prywatności, wyłączenie Cortany, szybkiego uruchamiania, włącza stary widok menu kontekstowego itp."
-        "Enabled" = $true
-    }
-    "RunWindowsUpdate"      = @{
-        "Text"    = "Uruchom Windows Update"
-        "Tooltip" = "Uruchamia usługę Windows Update po zakończeniu instalacji i sprawdza dostępność aktualizacji."
-        "Enabled" = $true
-    }
-    "ChangeComputerName"    = @{
+    "ChangeComputerName"   = @{
         "Text"    = "Zmień nazwę komputera"
         "Tooltip" = "Zmienia nazwę komputera na podstawie konfiguracji w pliku JSON i wprowadzonych danych wymaga ponownego uruchomienia."
         "Enabled" = $false
+        "Group"   = "Identity"
     }
-    "EnableBitLocker"       = @{
-        "Text"    = "Zaszyfruj dysk systemowy (BitLocker TPM)"
+    "JoinDomain"           = @{
+        "Text"    = "Dołącz do domeny"
+        "Tooltip" = "Dołącza komputer do domeny - zgodnie z konfiguracją w pliku JSON - trzeba wpisać hasło do konta domenowego uprawnionego do tego."
+        "Enabled" = $true
+        "Group"   = "Identity"
+    }
+    "ChangeSystemSettings" = @{
+        "Text"    = "Rejestr i ustawienia systemowe"
+        "Tooltip" = "Wprowadza zmiany w rejestrze i ustawieniach systemowych, zgodnie z konfiguracją w pliku JSON zmiana pobierania aktualizacji, ustawienia prywatności, wyłączenie Cortany, szybkiego uruchamiania, włącza stary widok menu kontekstowego itp."
+        "Enabled" = $true
+        "Group"   = "System"
+    }
+    "EnableBitLocker"      = @{
+        "Text"    = "Szyfruj dysk C: (BitLocker TPM)"
         "Tooltip" = "Włącza po cichu szyfrowanie BitLocker na dysku C: i eksportuje klucz odzyskiwania na serwer."
         "Enabled" = $false
+        "Group"   = "System"
     }
-    "AutoReboot"            = @{
+    "RunWindowsUpdate"     = @{
+        "Text"    = "Uruchom Windows Update"
+        "Tooltip" = "Uruchamia usługę Windows Update po zakończeniu instalacji i sprawdza dostępność aktualizacji."
+        "Enabled" = $true
+        "Group"   = "System"
+    }
+    "ExportHardwareAudit"  = @{
+        "Text"    = "Eksportuj audyt sprzętowy"
+        "Tooltip" = "Zapisuje pełny raport sprzętowy maszyny w zdefiniowanej ścieżce."
+        "Enabled" = $false
+        "Group"   = "Finish"
+    }
+    "AutoReboot"           = @{
         "Text"    = "Uruchom ponownie po zakończeniu"
         "Tooltip" = "Automatycznie uruchamia komputer ponownie po wdrożeniu (wymagane m.in. po zmianie nazwy i domeny)."
         "Enabled" = $false
+        "Group"   = "Finish"
     }
 }
 
@@ -1446,21 +1511,6 @@ function Write-Log {
         try { [System.Media.SystemSounds]::Hand.Play() } catch { }
     }
 
-    # Log to GUI
-    try {
-        if ($null -ne $rtbLog) {
-            if ($rtbLog.Dispatcher.CheckAccess()) {
-                $rtbLog.AppendText("$line`r`n")
-                try { $rtbLog.ScrollToEnd() } catch { }
-            } else {
-                $rtbLog.Dispatcher.Invoke([Action]{
-                    $rtbLog.AppendText("$line`r`n")
-                    try { $rtbLog.ScrollToEnd() } catch { }
-                })
-            }
-        }
-    } catch { }
-
     # Log to File
     try {
         $line | Add-Content -Path $script:LogFilePath -Encoding UTF8 -ErrorAction SilentlyContinue
@@ -1570,6 +1620,7 @@ function Invoke-DownloadFile {
     )
     
     $progressBarDownload.Value = 0
+    $progressBarDownload.Visibility = [System.Windows.Visibility]::Visible
     
     $webClient = New-Object System.Net.WebClient
     if ($null -ne $Credential) {
@@ -1618,6 +1669,7 @@ function Invoke-DownloadFile {
         $webClient.remove_DownloadFileCompleted($onComplete)
         $webClient.Dispose()
         $progressBarDownload.Value = 0
+        $progressBarDownload.Visibility = [System.Windows.Visibility]::Hidden
     }
 }
 
@@ -3293,13 +3345,14 @@ function Show-AppSelectionWindow {
 }
 
 function Start-Deployment {
-    Write-Log "Użytkownik rozpoczął wdrożenie (przycisk 'ROZPOCZNIJ KONFIGURACJĘ')." -Context "Użytkownik"
+    Write-Log "Użytkownik rozpoczął wdrożenie (przycisk 'Rozpocznij')." -Context "Użytkownik"
     $btnStart.IsEnabled = $false
+    $btnStart.Content = "Trwa konfiguracja..."
     $btnPause.IsEnabled = $true
     $btnCancelDeploy.IsEnabled = $true
-    # Kolory przycisków zmieniamy przez style motywu, a nie stałe HEX - przypisanie Background na
-    # sztywno odcinało przycisk od motywu (po przełączeniu jasny/ciemny zostawał w starym kolorze).
-    $btnStart.Style = $Window.FindResource("WarningButton")
+    $btnPause.Visibility = [System.Windows.Visibility]::Visible
+    $btnCancelDeploy.Visibility = [System.Windows.Visibility]::Visible
+    $txtProgressInfo.ClearValue([System.Windows.Controls.TextBlock]::ForegroundProperty)
     $progressBar.Value = 0
     $script:isCancelled = $false
     $script:isPaused = $false
@@ -3308,10 +3361,14 @@ function Start-Deployment {
 
     if (-not (Test-BeforeRun)) {
         Write-Log "Walidacja nie powiodla sie. Przerywam." -IsError
-        $btnStart.Style = $Window.FindResource("DangerButton")
         $btnStart.IsEnabled = $true
         $btnPause.IsEnabled = $false
         $btnCancelDeploy.IsEnabled = $false
+        $btnPause.Visibility = [System.Windows.Visibility]::Collapsed
+        $btnCancelDeploy.Visibility = [System.Windows.Visibility]::Collapsed
+        & $syncStartLabel
+        Set-ProgressText "Wdrożenie nie wystartowało - popraw konfigurację (szczegóły w logach)."
+        $txtProgressInfo.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, "ThemeDanger")
         return
     }
 
@@ -3468,10 +3525,12 @@ function Start-Deployment {
         $script:isCancelled = $true
     } finally {
         if ($null -ne $script:stopwatchTimer) { $script:stopwatchTimer.Stop() }
-        $btnStart.Style = $Window.FindResource("SuccessButton")
         $btnStart.IsEnabled = $true
+        & $syncStartLabel
         $btnPause.IsEnabled = $false
         $btnCancelDeploy.IsEnabled = $false
+        $btnPause.Visibility = [System.Windows.Visibility]::Collapsed
+        $btnCancelDeploy.Visibility = [System.Windows.Visibility]::Collapsed
         $wasCancelled = $script:isCancelled
         # Przy przerwaniu (return w środku try) krok "Przywracanie ustawień hibernacji" był pomijany,
         # więc blokada usypiania zostawała włączona aż do zamknięcia aplikacji.
@@ -3527,7 +3586,7 @@ function Get-AppSelection {
 function Load-Profiles {
     if ($null -eq $cmbProfiles) { return }
     $cmbProfiles.Items.Clear()
-    [void]$cmbProfiles.Items.Add("--- Niestandardowy wybór ---")
+    [void]$cmbProfiles.Items.Add("Własny wybór")
     try {
         $cfg = Get-Config
         if ($null -ne $cfg.Profiles) {
@@ -5261,114 +5320,6 @@ function Show-ProgramEditDialog {
     return $null
 }
 
-function Show-ProgramsManager {
-    param($config)
-    [xml]$xaml = @"
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Title="Zarządzaj programami" Height="450" Width="500" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize">
-    <Grid Margin="20">
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*"/>
-            <ColumnDefinition Width="140"/>
-        </Grid.ColumnDefinitions>
-        <ListBox Name="lbPrograms" Grid.Column="0" Margin="0,0,14,0" FontSize="13.5"/>
-        <DockPanel Grid.Column="1" LastChildFill="False">
-            <StackPanel DockPanel.Dock="Top">
-                <Button Name="btnAdd" Content="Dodaj" Margin="0,0,0,8" Style="{StaticResource PrimaryButton}"/>
-                <Button Name="btnEdit" Content="Edytuj" Margin="0,0,0,8"/>
-                <Button Name="btnClone" Content="Powiel" Margin="0,0,0,8"/>
-                <Button Name="btnRemove" Content="Usuń" Margin="0,0,0,8" Style="{StaticResource DangerButton}"/>
-            </StackPanel>
-            <Button Name="btnClose" DockPanel.Dock="Bottom" Content="Zamknij" IsCancel="True"/>
-        </DockPanel>
-    </Grid>
-</Window>
-"@
-    $dlg = New-ThemedWindow -Xaml $xaml
-    
-    $lbPrograms = $dlg.FindName("lbPrograms")
-    $btnAdd = $dlg.FindName("btnAdd")
-    $btnEdit = $dlg.FindName("btnEdit")
-    $btnClone = $dlg.FindName("btnClone")
-    $btnRemove = $dlg.FindName("btnRemove")
-    $btnClose = $dlg.FindName("btnClose")
-    
-    $RefreshList = {
-        $lbPrograms.Items.Clear()
-        if ($config.Programs) {
-            foreach ($p in $config.Programs.PSObject.Properties.Name | Sort-Object) {
-                [void]$lbPrograms.Items.Add($p)
-            }
-        }
-    }
-    & $RefreshList
-
-    $btnAdd.Add_Click({
-        $res = Show-ProgramEditDialog -IsNew $true -ProgramName "" -ProgramData $null
-        if ($res) {
-            if ($null -eq $config.Programs) {
-                $config | Add-Member -NotePropertyName Programs -NotePropertyValue (New-Object PSObject) -Force
-            }
-            if ($config.Programs.PSObject.Properties.Name -contains $res.Name) {
-                Show-ThemedMessageBox -Message "Program o tym identyfikatorze już istnieje." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
-                return
-            }
-            Add-Member -InputObject $config.Programs -NotePropertyName $res.Name -NotePropertyValue $res.Data -Force
-            & $RefreshList
-        }
-    })
-
-    $btnEdit.Add_Click({
-        if ($lbPrograms.SelectedItem) {
-            $pName = $lbPrograms.SelectedItem
-            $pData = $config.Programs.$pName
-            $res = Show-ProgramEditDialog -IsNew $false -ProgramName $pName -ProgramData $pData
-            if ($res) {
-                if ($null -eq $config.Programs) {
-                    $config | Add-Member -NotePropertyName Programs -NotePropertyValue (New-Object PSObject) -Force
-                }
-                $config.Programs.PSObject.Properties.Remove($pName)
-                Add-Member -InputObject $config.Programs -NotePropertyName $res.Name -NotePropertyValue $res.Data -Force
-                & $RefreshList
-            }
-        }
-    })
-
-    $btnClone.Add_Click({
-        if ($lbPrograms.SelectedItem) {
-            $pName = $lbPrograms.SelectedItem
-            $pData = $config.Programs.$pName
-            $res = Show-ProgramEditDialog -IsNew $true -ProgramName "$pName-Kopia" -ProgramData $pData
-            if ($res) {
-                if ($null -eq $config.Programs) {
-                    $config | Add-Member -NotePropertyName Programs -NotePropertyValue (New-Object PSObject) -Force
-                }
-                if ($config.Programs.PSObject.Properties.Name -contains $res.Name) {
-                Show-ThemedMessageBox -Message "Program o tym identyfikatorze już istnieje." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
-                    return
-                }
-                Add-Member -InputObject $config.Programs -NotePropertyName $res.Name -NotePropertyValue $res.Data -Force
-                & $RefreshList
-            }
-        }
-    })
-
-    $btnRemove.Add_Click({
-        if ($lbPrograms.SelectedItem) {
-            $pName = $lbPrograms.SelectedItem
-            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć program $pName?" -Title "Potwierdzenie" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
-                $config.Programs.PSObject.Properties.Remove($pName)
-                & $RefreshList
-            }
-        }
-    })
-
-    $btnClose.Add_Click({ $dlg.Close() })
-
-    $dlg.ShowDialog() | Out-Null
-}
-
 function Show-RegistryEditDialog {
     param($IsNew, $RegData)
     [xml]$xaml = @"
@@ -5491,158 +5442,6 @@ function Show-RegistryEditDialog {
     return $null
 }
 
-function Show-RegistryManager {
-    param($config)
-    [xml]$xaml = @"
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Title="Zarządzaj kluczami rejestru" Height="450" Width="620" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize">
-    <Grid Margin="20">
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*"/>
-            <ColumnDefinition Width="140"/>
-        </Grid.ColumnDefinitions>
-        <ListBox Name="lbRegistry" Grid.Column="0" Margin="0,0,14,0" FontSize="13.5"/>
-        <DockPanel Grid.Column="1" LastChildFill="False">
-            <StackPanel DockPanel.Dock="Top">
-                <Button Name="btnAdd" Content="Dodaj" Margin="0,0,0,8" Style="{StaticResource PrimaryButton}"/>
-                <Button Name="btnEdit" Content="Edytuj" Margin="0,0,0,8"/>
-                <Button Name="btnRemove" Content="Usuń" Margin="0,0,0,8" Style="{StaticResource DangerButton}"/>
-            </StackPanel>
-            <Button Name="btnClose" DockPanel.Dock="Bottom" Content="Zamknij" IsCancel="True"/>
-        </DockPanel>
-    </Grid>
-</Window>
-"@
-    $dlg = New-ThemedWindow -Xaml $xaml
-    
-    $lbRegistry = $dlg.FindName("lbRegistry")
-    $btnAdd = $dlg.FindName("btnAdd")
-    $btnEdit = $dlg.FindName("btnEdit")
-    $btnRemove = $dlg.FindName("btnRemove")
-    $btnClose = $dlg.FindName("btnClose")
-    
-    if (-not $config.SystemSettings) {
-        $config | Add-Member -NotePropertyName SystemSettings -NotePropertyValue (New-Object PSObject) -Force
-    }
-    if ($null -eq $config.SystemSettings.CustomRegistry) {
-        $config.SystemSettings | Add-Member -NotePropertyName CustomRegistry -NotePropertyValue @() -Force
-    }
-    $regList = [System.Collections.ArrayList]@($config.SystemSettings.CustomRegistry)
-    
-    $RefreshList = {
-        $lbRegistry.Items.Clear()
-        foreach ($r in $regList) {
-            [void]$lbRegistry.Items.Add("$($r.Path)\$($r.Name) = $($r.Value)")
-        }
-        $config.SystemSettings | Add-Member -NotePropertyName CustomRegistry -NotePropertyValue ($regList.ToArray()) -Force
-    }
-    & $RefreshList
-    
-    $btnAdd.Add_Click({
-        $res = Show-RegistryEditDialog -IsNew $true -RegData $null
-        if ($res) {
-            [void]$regList.Add([PSCustomObject]$res)
-            & $RefreshList
-        }
-    })
-    
-    $btnEdit.Add_Click({
-        $idx = $lbRegistry.SelectedIndex
-        if ($idx -ge 0) {
-            $res = Show-RegistryEditDialog -IsNew $false -RegData $regList[$idx]
-            if ($res) {
-                $regList[$idx] = [PSCustomObject]$res
-                & $RefreshList
-            }
-        }
-    })
-    
-    $btnRemove.Add_Click({
-        $idx = $lbRegistry.SelectedIndex
-        if ($idx -ge 0) {
-            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć ten wpis rejestru?" -Title "Potwierdzenie" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
-                $regList.RemoveAt($idx)
-                & $RefreshList
-            }
-        }
-    })
-    
-    $btnClose.Add_Click({ $dlg.Close() })
-    $dlg.ShowDialog() | Out-Null
-}
-
-function Show-DefaultTasksEditor {
-    param($config)
-    [xml]$xaml = @"
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Domyślne zadania startowe" Height="540" Width="480" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize">
-    <Window.Resources>
-        <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
-            <Setter Property="Margin" Value="2,5"/>
-            <Setter Property="FontSize" Value="13"/>
-        </Style>
-    </Window.Resources>
-    <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-        <TextBlock Text="Zaznacz opcje, które mają być domyślnie włączone przy starcie aplikacji:" TextWrapping="Wrap" Margin="22,18,22,12" FontSize="13.5"/>
-        <Border Grid.Row="1" Style="{StaticResource Card}" Margin="22,0,22,16" Padding="12,8">
-            <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <StackPanel Name="spDefaults"/>
-            </ScrollViewer>
-        </Border>
-        <Border Grid.Row="2" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnSave" Content="Zapisz" MinWidth="100" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                <Button Name="btnCancel" Content="Anuluj" MinWidth="100" IsCancel="True"/>
-            </StackPanel>
-        </Border>
-    </Grid>
-</Window>
-"@
-    $dlg = New-ThemedWindow -Xaml $xaml
-    
-    $spDefaults = $dlg.FindName("spDefaults")
-    $btnSave = $dlg.FindName("btnSave")
-    $btnCancel = $dlg.FindName("btnCancel")
-    
-    if (-not $config.DefaultCheckboxes) {
-        $config | Add-Member -NotePropertyName DefaultCheckboxes -NotePropertyValue (New-Object PSObject) -Force
-    }
-    
-    $chkList = @{}
-    foreach ($key in $checkboxOptions.Keys) {
-        $cb = New-Object System.Windows.Controls.CheckBox
-        $cb.Content = $checkboxOptions[$key].Text
-        if ($null -ne $config.DefaultCheckboxes.$key) { $cb.IsChecked = [bool]$config.DefaultCheckboxes.$key } else { $cb.IsChecked = $checkboxOptions[$key].Enabled }
-        $spDefaults.Children.Add($cb) | Out-Null
-        $chkList[$key] = $cb
-    }
-    
-    $btnSave.Add_Click({
-        foreach ($key in $chkList.Keys) {
-            Add-Member -InputObject $config.DefaultCheckboxes -NotePropertyName $key -NotePropertyValue ($chkList[$key].IsChecked -eq $true) -Force
-        }
-        $dlg.DialogResult = $true
-        $dlg.Close()
-    })
-    $btnCancel.Add_Click({ $dlg.DialogResult = $false; $dlg.Close() })
-    if ($dlg.ShowDialog() -eq $true) {
-        foreach ($key in $chkList.Keys) {
-            if ($null -ne $CheckboxControls[$key]) {
-                $CheckboxControls[$key].IsChecked = $config.DefaultCheckboxes.$key
-                $checkboxOptions[$key].Enabled = $config.DefaultCheckboxes.$key
-            }
-        }
-    }
-}
-
 function Show-ScriptEditDialog {
     param($IsNew, $ScriptPath)
     [xml]$xaml = @"
@@ -5690,76 +5489,6 @@ function Show-ScriptEditDialog {
     $btnCancel.Add_Click({ $dlg.DialogResult = $false; $dlg.Close() })
     if ($dlg.ShowDialog() -eq $true) { return $script:scriptEditResult }
     return $null
-}
-
-function Show-PostInstallScriptsManager {
-    param($config)
-    [xml]$xaml = @"
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Title="Zarządzaj skryptami Post-Install" Height="400" Width="540" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize">
-    <Grid Margin="20">
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*"/>
-            <ColumnDefinition Width="140"/>
-        </Grid.ColumnDefinitions>
-        <ListBox Name="lbScripts" Grid.Column="0" Margin="0,0,14,0" FontSize="13.5"/>
-        <DockPanel Grid.Column="1" LastChildFill="False">
-            <StackPanel DockPanel.Dock="Top">
-                <Button Name="btnAdd" Content="Dodaj" Margin="0,0,0,8" Style="{StaticResource PrimaryButton}"/>
-                <Button Name="btnEdit" Content="Edytuj" Margin="0,0,0,8"/>
-                <Button Name="btnRemove" Content="Usuń" Margin="0,0,0,8" Style="{StaticResource DangerButton}"/>
-            </StackPanel>
-            <Button Name="btnClose" DockPanel.Dock="Bottom" Content="Zamknij" IsCancel="True"/>
-        </DockPanel>
-    </Grid>
-</Window>
-"@
-    $dlg = New-ThemedWindow -Xaml $xaml
-    
-    $lbScripts = $dlg.FindName("lbScripts")
-    $btnAdd = $dlg.FindName("btnAdd")
-    $btnEdit = $dlg.FindName("btnEdit")
-    $btnRemove = $dlg.FindName("btnRemove")
-    $btnClose = $dlg.FindName("btnClose")
-    
-    if ($null -eq $config.PostInstallScripts) {
-        $config | Add-Member -NotePropertyName PostInstallScripts -NotePropertyValue @() -Force
-    }
-    $scriptList = [System.Collections.ArrayList]@($config.PostInstallScripts)
-    
-    $RefreshList = {
-        $lbScripts.Items.Clear()
-        foreach ($s in $scriptList) { [void]$lbScripts.Items.Add($s) }
-        $config | Add-Member -NotePropertyName PostInstallScripts -NotePropertyValue ($scriptList.ToArray()) -Force
-    }
-    & $RefreshList
-    
-    $btnAdd.Add_Click({
-        $res = Show-ScriptEditDialog -IsNew $true -ScriptPath ""
-        if ($res) { [void]$scriptList.Add($res); & $RefreshList }
-    })
-    
-    $btnEdit.Add_Click({
-        $idx = $lbScripts.SelectedIndex
-        if ($idx -ge 0) {
-            $res = Show-ScriptEditDialog -IsNew $false -ScriptPath $scriptList[$idx]
-            if ($res) { $scriptList[$idx] = $res; & $RefreshList }
-        }
-    })
-    
-    $btnRemove.Add_Click({
-        $idx = $lbScripts.SelectedIndex
-        if ($idx -ge 0) {
-            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć ten skrypt z listy?" -Title "Potwierdzenie" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
-                $scriptList.RemoveAt($idx)
-                & $RefreshList
-            }
-        }
-    })
-    
-    $btnClose.Add_Click({ $dlg.Close() })
-    $dlg.ShowDialog() | Out-Null
 }
 
 function Show-ProfileEditDialog {
@@ -5851,96 +5580,6 @@ function Show-ProfileEditDialog {
     return $null
 }
 
-function Show-ProfilesManager {
-    param($config)
-    [xml]$xaml = @"
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Title="Zarządzaj profilami wdrożeniowymi" Height="450" Width="500" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize">
-    <Grid Margin="20">
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*"/>
-            <ColumnDefinition Width="140"/>
-        </Grid.ColumnDefinitions>
-        <ListBox Name="lbProfiles" Grid.Column="0" Margin="0,0,14,0" FontSize="13.5"/>
-        <DockPanel Grid.Column="1" LastChildFill="False">
-            <StackPanel DockPanel.Dock="Top">
-                <Button Name="btnAdd" Content="Dodaj" Margin="0,0,0,8" Style="{StaticResource PrimaryButton}"/>
-                <Button Name="btnEdit" Content="Edytuj" Margin="0,0,0,8"/>
-                <Button Name="btnRemove" Content="Usuń" Margin="0,0,0,8" Style="{StaticResource DangerButton}"/>
-            </StackPanel>
-            <Button Name="btnClose" DockPanel.Dock="Bottom" Content="Zamknij" IsCancel="True"/>
-        </DockPanel>
-    </Grid>
-</Window>
-"@
-    $dlg = New-ThemedWindow -Xaml $xaml
-    
-    $lbProfiles = $dlg.FindName("lbProfiles")
-    $btnAdd = $dlg.FindName("btnAdd")
-    $btnEdit = $dlg.FindName("btnEdit")
-    $btnRemove = $dlg.FindName("btnRemove")
-    $btnClose = $dlg.FindName("btnClose")
-    
-    if ($null -eq $config.Profiles) {
-        $config | Add-Member -NotePropertyName Profiles -NotePropertyValue (New-Object PSObject) -Force
-    }
-    
-    $RefreshList = {
-        $lbProfiles.Items.Clear()
-        if ($config.Profiles) {
-            foreach ($p in $config.Profiles.PSObject.Properties.Name | Sort-Object) {
-                [void]$lbProfiles.Items.Add($p)
-            }
-        }
-    }
-    & $RefreshList
-    
-    $btnAdd.Add_Click({
-        $res = Show-ProfileEditDialog -IsNew $true -ProfileName "" -ProfileApps @() -config $config
-        if ($res) {
-            if ($null -eq $config.Profiles) {
-                $config | Add-Member -NotePropertyName Profiles -NotePropertyValue (New-Object PSObject) -Force
-            }
-            if ($config.Profiles.PSObject.Properties.Name -contains $res.Name) {
-                Show-ThemedMessageBox -Message "Profil o tej nazwie już istnieje." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
-                return
-            }
-            Add-Member -InputObject $config.Profiles -NotePropertyName $res.Name -NotePropertyValue $res.Apps -Force
-            & $RefreshList
-        }
-    })
-    
-    $btnEdit.Add_Click({
-        if ($lbProfiles.SelectedItem) {
-            $pName = $lbProfiles.SelectedItem
-            $pApps = $config.Profiles.$pName
-            $res = Show-ProfileEditDialog -IsNew $false -ProfileName $pName -ProfileApps $pApps -config $config
-            if ($res) {
-                if ($null -eq $config.Profiles) {
-                    $config | Add-Member -NotePropertyName Profiles -NotePropertyValue (New-Object PSObject) -Force
-                }
-                $config.Profiles.PSObject.Properties.Remove($pName)
-                Add-Member -InputObject $config.Profiles -NotePropertyName $res.Name -NotePropertyValue $res.Apps -Force
-                & $RefreshList
-            }
-        }
-    })
-    
-    $btnRemove.Add_Click({
-        if ($lbProfiles.SelectedItem) {
-            $pName = $lbProfiles.SelectedItem
-            if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć profil '$pName'?" -Title "Potwierdzenie" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
-                $config.Profiles.PSObject.Properties.Remove($pName)
-                & $RefreshList
-            }
-        }
-    })
-    
-    $btnClose.Add_Click({ $dlg.Close() })
-    $dlg.ShowDialog() | Out-Null
-}
-
 function Show-PinPrompt {
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -5995,215 +5634,383 @@ function Show-PinPrompt {
 function Show-ConfigEditor {
     try { $config = Get-Config } catch { Write-Log "Nie udało się wczytać config.json: $_" -IsError; return }
 
+    # Jedno okno z zakładkami (jak w NPS Event Viewer) zamiast długiej przewijanej strony i osobnych
+    # okien "Zarządzaj ...". Listy (programy, profile, rejestr, skrypty, domyślne zadania) są w
+    # zakładkach; edycja pojedynczego wpisu nadal w małym oknie dialogowym. Wszystko zmienia tylko
+    # $config w pamięci - do pliku trafia dopiero po "Zapisz".
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Ustawienia – źródła, domena, konto lokalne" Height="680" Width="700" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize">
+        Title="Ustawienia" Width="920" Height="640" MinWidth="860" MinHeight="500" WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" FontSize="13">
     <Window.Resources>
-        <!-- Podpis nad polem -->
-        <Style x:Key="FieldLabel" TargetType="TextBlock" BasedOn="{StaticResource Caption}">
-            <Setter Property="Margin" Value="0,0,0,4"/>
+        <Style TargetType="TabItem" BasedOn="{StaticResource {x:Type TabItem}}">
+            <Setter Property="Padding" Value="11,7"/>
         </Style>
-        <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
-            <Setter Property="Height" Value="30"/>
-        </Style>
-        <Style TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
-            <Setter Property="Height" Value="30"/>
-        </Style>
-        <!-- Karta zwijanej sekcji -->
-        <Style x:Key="SectionCard" TargetType="Border" BasedOn="{StaticResource Card}">
-            <Setter Property="Padding" Value="0"/>
+        <Style x:Key="TabCard" TargetType="Border" BasedOn="{StaticResource Card}">
+            <Setter Property="Padding" Value="16,14,2,2"/>
             <Setter Property="Margin" Value="0,0,0,12"/>
         </Style>
-        <Style x:Key="SectionTitle" TargetType="TextBlock">
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="FontSize" Value="14.5"/>
-            <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+        <Style x:Key="TabScroll" TargetType="ScrollViewer">
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="HorizontalScrollBarVisibility" Value="Disabled"/>
         </Style>
-        <Style x:Key="Chevron" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="14"/>
-            <Setter Property="Foreground" Value="{DynamicResource ThemeMuted}"/>
+        <Style x:Key="BarButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Margin" Value="6,0,0,0"/>
         </Style>
-        <Style x:Key="ToolButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Height" Value="38"/>
-            <Setter Property="Margin" Value="4"/>
-            <Setter Property="HorizontalContentAlignment" Value="Left"/>
-            <Setter Property="Padding" Value="14,6"/>
+        <Style x:Key="ListHint" TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="Margin" Value="0,2,0,0"/>
         </Style>
     </Window.Resources>
     <Grid>
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="20,18,12,8">
-            <StackPanel Margin="0,0,8,0">
-                <Border Style="{StaticResource SectionCard}">
+
+        <Border Grid.Row="0" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,0,0,1" Padding="20,12">
+            <DockPanel>
+                <Border DockPanel.Dock="Right" Background="{DynamicResource ThemePanel}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="1" CornerRadius="14" Padding="12,5" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Name="dotSettingsState" Width="9" Height="9" Fill="{DynamicResource ThemeSuccess}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                        <TextBlock Name="txtSettingsState" Text="Bez zmian" FontSize="12" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+                <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Text="Ustawienia" FontSize="18" FontWeight="SemiBold"/>
+                    <TextBlock Text="Zmiany trafiają do config.json dopiero po kliknięciu „Zapisz”." Foreground="{DynamicResource ThemeMuted}" FontSize="11.5" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <TabControl Name="tabSettings" Grid.Row="1" Margin="20,12,20,12">
+            <TabItem Header="Źródła">
+                <ScrollViewer Style="{StaticResource TabScroll}">
                     <StackPanel>
-                        <Button Name="btnToggleSrc" Style="{StaticResource SectionHeaderButton}">
-                            <Grid>
+                        <Border Style="{StaticResource TabCard}">
+                            <StackPanel>
+                                <TextBlock Text="Źródło instalacji programów" Style="{StaticResource CardTitle}"/>
+                                <WrapPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="150">
+                                        <TextBlock Text="DOMYŚLNE ŹRÓDŁO" Style="{StaticResource Caption}" ToolTip="DefaultInstallSource"/>
+                                        <ComboBox Name="cmbSrc"/>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="340">
+                                        <TextBlock Text="ŚCIEŻKA SIECIOWA (UNC)" Style="{StaticResource Caption}" ToolTip="InstallSourcePaths.network, np. \\serwer\instalki\"/>
+                                        <TextBox Name="txtNet"/>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="380">
+                                        <TextBlock Text="ADRES WWW (URL)" Style="{StaticResource Caption}" ToolTip="InstallSourcePaths.web, np. https://serwer/instalki/"/>
+                                        <DockPanel>
+                                            <Button Name="btnTestWeb" Content="Testuj" DockPanel.Dock="Right" Margin="8,0,0,0" ToolTip="Sprawdza, czy adres odpowiada"/>
+                                            <TextBox Name="txtWeb"/>
+                                        </DockPanel>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="360">
+                                        <TextBlock Text="DANE NIESTANDARDOWE (URL)" Style="{StaticResource Caption}" ToolTip="CustomWebDataLocation.URL"/>
+                                        <TextBox Name="txtCwd"/>
+                                    </StackPanel>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource TabCard}">
+                            <StackPanel>
+                                <TextBlock Text="Logowanie do serwera WWW" Style="{StaticResource CardTitle}"/>
+                                <WrapPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="240">
+                                        <TextBlock Text="UŻYTKOWNIK" Style="{StaticResource Caption}" ToolTip="WebAuth.Username"/>
+                                        <TextBox Name="txtWebUser"/>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="240">
+                                        <TextBlock Text="HASŁO" Style="{StaticResource Caption}" ToolTip="WebAuth.Password"/>
+                                        <PasswordBox Name="txtWebPass"/>
+                                    </StackPanel>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Domena i Wi-Fi">
+                <ScrollViewer Style="{StaticResource TabScroll}">
+                    <StackPanel>
+                        <Border Style="{StaticResource TabCard}">
+                            <StackPanel>
+                                <TextBlock Text="Domena i konto lokalne" Style="{StaticResource CardTitle}"/>
+                                <WrapPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="240">
+                                        <TextBlock Text="NAZWA DOMENY" Style="{StaticResource Caption}" ToolTip="DomainJoin.DomainName"/>
+                                        <TextBox Name="txtDom"/>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="240">
+                                        <TextBlock Text="KONTO DO DOŁĄCZANIA" Style="{StaticResource Caption}" ToolTip="DomainJoin.Username - konto uprawnione do dołączania komputerów"/>
+                                        <TextBox Name="txtDomUser"/>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="240">
+                                        <TextBlock Text="KONTO LOKALNEGO ADMINA" Style="{StaticResource Caption}" ToolTip="LocalAdmin.Username"/>
+                                        <TextBox Name="txtLoc"/>
+                                    </StackPanel>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource TabCard}">
+                            <StackPanel>
+                                <TextBlock Text="Profil Wi-Fi" Style="{StaticResource CardTitle}"/>
+                                <WrapPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="500">
+                                        <TextBlock Text="PLIKI PROFILI (ROZDZIEL PRZECINKAMI)" Style="{StaticResource Caption}" ToolTip="WiFiProfile.FileName - pliki XML wyeksportowane przez netsh wlan export profile"/>
+                                        <TextBox Name="txtWifiFile"/>
+                                    </StackPanel>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="TeamViewer i AV">
+                <ScrollViewer Style="{StaticResource TabScroll}">
+                    <StackPanel>
+                        <Border Style="{StaticResource TabCard}">
+                            <StackPanel>
+                                <TextBlock Text="TeamViewer" Style="{StaticResource CardTitle}"/>
+                                <WrapPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="240">
+                                        <TextBlock Text="PLIK / WINGET ID" Style="{StaticResource Caption}" ToolTip="TeamViewer.FileName"/>
+                                        <TextBox Name="txtTvFile"/>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="480">
+                                        <TextBlock Text="ARGUMENTY INSTALACJI" Style="{StaticResource Caption}" ToolTip="TeamViewer.Arguments"/>
+                                        <TextBox Name="txtTvArgs"/>
+                                    </StackPanel>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource TabCard}">
+                            <StackPanel>
+                                <TextBlock Text="Antywirus" Style="{StaticResource CardTitle}"/>
+                                <WrapPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="240">
+                                        <TextBlock Text="PLIK / WINGET ID" Style="{StaticResource Caption}" ToolTip="AntyVirus.FileName"/>
+                                        <TextBox Name="txtAvFile"/>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="130">
+                                        <TextBlock Text="ŹRÓDŁO" Style="{StaticResource Caption}" ToolTip="AntyVirus.DefaultInstallSource"/>
+                                        <ComboBox Name="cmbAvSrc"/>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="340">
+                                        <TextBlock Text="ŚCIEŻKA SIECIOWA (UNC)" Style="{StaticResource Caption}" ToolTip="AntyVirus.InstallSourcePaths.network"/>
+                                        <TextBox Name="txtAvNet"/>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="340">
+                                        <TextBlock Text="ADRES WWW (URL)" Style="{StaticResource Caption}" ToolTip="AntyVirus.InstallSourcePaths.web"/>
+                                        <TextBox Name="txtAvWeb"/>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="180">
+                                        <TextBlock Text="UŻYTKOWNIK" Style="{StaticResource Caption}" ToolTip="AntyVirus.Credentials.Username"/>
+                                        <TextBox Name="txtAvUser"/>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="180">
+                                        <TextBlock Text="HASŁO" Style="{StaticResource Caption}" ToolTip="AntyVirus.Credentials.Password"/>
+                                        <PasswordBox Name="txtAvPass"/>
+                                    </StackPanel>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Programy">
+                <DockPanel>
+                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Name="btnProgAdd" Content="Dodaj..." Style="{StaticResource PrimaryButton}"/>
+                            <Button Name="btnProgEdit" Content="Edytuj..." Style="{StaticResource BarButton}"/>
+                            <Button Name="btnProgClone" Content="Powiel..." Style="{StaticResource BarButton}"/>
+                            <Button Name="btnProgRemove" Content="Usuń" Style="{StaticResource BarButton}"/>
+                        </StackPanel>
+                        <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                            <TextBlock Name="txtProgTitle" Text="Programy" Style="{StaticResource CardTitle}" Margin="0"/>
+                            <TextBlock Text="Lista w oknie „Wybierz aplikacje”. Dwuklik otwiera edycję." Style="{StaticResource ListHint}"/>
+                        </StackPanel>
+                    </DockPanel>
+                    <ListView Name="lbPrograms">
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="Identyfikator" Width="230" DisplayMemberBinding="{Binding Name}"/>
+                                <GridViewColumn Header="Plik / Winget ID" Width="320" DisplayMemberBinding="{Binding File}"/>
+                                <GridViewColumn Header="Domyślnie" Width="100" DisplayMemberBinding="{Binding Default}"/>
+                                <GridViewColumn Header="Własny URL" Width="110" DisplayMemberBinding="{Binding Url}"/>
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+                </DockPanel>
+            </TabItem>
+
+            <TabItem Header="Profile">
+                <DockPanel>
+                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Name="btnProfAdd" Content="Dodaj..." Style="{StaticResource PrimaryButton}"/>
+                            <Button Name="btnProfEdit" Content="Edytuj..." Style="{StaticResource BarButton}"/>
+                            <Button Name="btnProfRemove" Content="Usuń" Style="{StaticResource BarButton}"/>
+                        </StackPanel>
+                        <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                            <TextBlock Name="txtProfTitle" Text="Profile wdrożeniowe" Style="{StaticResource CardTitle}" Margin="0"/>
+                            <TextBlock Text="Profil (rola) zaznacza w oknie głównym zestaw aplikacji. Dwuklik otwiera edycję." Style="{StaticResource ListHint}"/>
+                        </StackPanel>
+                    </DockPanel>
+                    <ListView Name="lbProfiles">
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="Profil" Width="200" DisplayMemberBinding="{Binding Name}"/>
+                                <GridViewColumn Header="Aplikacje" Width="560" DisplayMemberBinding="{Binding Apps}"/>
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+                </DockPanel>
+            </TabItem>
+
+            <TabItem Header="Zadania">
+                <ScrollViewer Style="{StaticResource TabScroll}">
+                    <Border Style="{StaticResource TabCard}">
+                        <DockPanel>
+                            <DockPanel DockPanel.Dock="Top" Margin="0,0,14,14">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Name="btnDefaultsAll" Content="Zaznacz wszystko"/>
+                                    <Button Name="btnDefaultsNone" Content="Odznacz wszystko" Style="{StaticResource BarButton}"/>
+                                </StackPanel>
+                                <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                                    <TextBlock Text="Zadania zaznaczone przy starcie" Style="{StaticResource CardTitle}" Margin="0"/>
+                                    <TextBlock Text="Domyślny stan pól w oknie głównym po uruchomieniu narzędzia." Style="{StaticResource ListHint}"/>
+                                </StackPanel>
+                            </DockPanel>
+                            <Grid Margin="0,0,14,0">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="📡 Źródła instalacji i uwierzytelnianie sieciowe" Style="{StaticResource SectionTitle}"/>
-                                <TextBlock Name="chevronSrc" Grid.Column="1" Text="▾" Style="{StaticResource Chevron}"/>
-                            </Grid>
-                        </Button>
-                        <StackPanel Name="panelSrc" Margin="16,2,16,16" Visibility="Visible">
-                            <TextBlock Text="Domyślne źródło (DefaultInstallSource)" Style="{StaticResource FieldLabel}"/>
-                            <ComboBox Name="cmbSrc" Margin="0,0,0,12"/>
-                            <TextBlock Text="Ścieżka sieciowa [network] (UNC)" Style="{StaticResource FieldLabel}"/>
-                            <TextBox Name="txtNet" Margin="0,0,0,12"/>
-                            <TextBlock Text="Ścieżka sieciowa [web] (URL)" Style="{StaticResource FieldLabel}"/>
-                            <Grid Margin="0,0,0,12">
-                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="24"/>
                                     <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBox Name="txtWeb" Grid.Column="0" Margin="0,0,8,0"/>
-                                <Button Name="btnTestWeb" Content="Testuj" Grid.Column="1" MinWidth="80" Style="{StaticResource PrimaryButton}"/>
-                            </Grid>
-                            <TextBlock Text="Niestandardowe dane (CustomWebDataLocation URL)" Style="{StaticResource FieldLabel}"/>
-                            <TextBox Name="txtCwd" Margin="0,0,0,12"/>
-                            <TextBlock Text="Konto logowania po HTTP/HTTPS (WebAuth Username)" Style="{StaticResource FieldLabel}"/>
-                            <TextBox Name="txtWebUser" Margin="0,0,0,12"/>
-                            <TextBlock Text="Hasło do konta po HTTP/HTTPS (WebAuth Password)" Style="{StaticResource FieldLabel}"/>
-                            <TextBox Name="txtWebPass"/>
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource SectionCard}">
-                    <StackPanel>
-                        <Button Name="btnToggleDom" Style="{StaticResource SectionHeaderButton}">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="24"/>
                                     <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="🏢 Domena i konto lokalne" Style="{StaticResource SectionTitle}"/>
-                                <TextBlock Name="chevronDom" Grid.Column="1" Text="▾" Style="{StaticResource Chevron}"/>
+                                <Grid.Resources>
+                                    <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+                                        <Setter Property="Margin" Value="0,0,0,8"/>
+                                    </Style>
+                                </Grid.Resources>
+                                <StackPanel Name="spDefCol0" Grid.Column="0"/>
+                                <StackPanel Name="spDefCol1" Grid.Column="2"/>
+                                <StackPanel Name="spDefCol2" Grid.Column="4"/>
                             </Grid>
-                        </Button>
-                        <StackPanel Name="panelDom" Margin="16,2,16,16" Visibility="Visible">
-                            <TextBlock Text="Nazwa domeny (DomainName)" Style="{StaticResource FieldLabel}"/>
-                            <TextBox Name="txtDom" Margin="0,0,0,12"/>
-                            <TextBlock Text="Konto uprawnione do podłączenia (Username)" Style="{StaticResource FieldLabel}"/>
-                            <TextBox Name="txtDomUser" Margin="0,0,0,12"/>
-                            <TextBlock Text="Nazwa domyślnego konta lokalnego (LocalAdmin Username)" Style="{StaticResource FieldLabel}"/>
-                            <TextBox Name="txtLoc"/>
+                        </DockPanel>
+                    </Border>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Rejestr">
+                <DockPanel>
+                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Name="btnRegAdd" Content="Dodaj..." Style="{StaticResource PrimaryButton}"/>
+                            <Button Name="btnRegEdit" Content="Edytuj..." Style="{StaticResource BarButton}"/>
+                            <Button Name="btnRegRemove" Content="Usuń" Style="{StaticResource BarButton}"/>
                         </StackPanel>
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource SectionCard}">
-                    <StackPanel>
-                        <Button Name="btnToggleTv" Style="{StaticResource SectionHeaderButton}">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="📺 TeamViewer" Style="{StaticResource SectionTitle}"/>
-                                <TextBlock Name="chevronTv" Grid.Column="1" Text="▸" Style="{StaticResource Chevron}"/>
-                            </Grid>
-                        </Button>
-                        <StackPanel Name="panelTv" Margin="16,2,16,16" Visibility="Collapsed">
-                            <TextBlock Text="Nazwa pliku / Winget ID" Style="{StaticResource FieldLabel}"/>
-                            <TextBox Name="txtTvFile" Margin="0,0,0,12"/>
-                            <TextBlock Text="Argumenty instalacji" Style="{StaticResource FieldLabel}"/>
-                            <TextBox Name="txtTvArgs"/>
+                        <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                            <TextBlock Name="txtRegTitle" Text="Rejestr niestandardowy" Style="{StaticResource CardTitle}" Margin="0"/>
+                            <TextBlock Text="Wpisy ustawiane przez zadanie „Rejestr i ustawienia systemowe”. Dwuklik otwiera edycję." Style="{StaticResource ListHint}"/>
                         </StackPanel>
-                    </StackPanel>
-                </Border>
+                    </DockPanel>
+                    <ListView Name="lbRegistry">
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="Ścieżka" Width="340" DisplayMemberBinding="{Binding Path}"/>
+                                <GridViewColumn Header="Nazwa" Width="190" DisplayMemberBinding="{Binding Name}"/>
+                                <GridViewColumn Header="Wartość" Width="140" DisplayMemberBinding="{Binding Value}"/>
+                                <GridViewColumn Header="Typ" Width="90" DisplayMemberBinding="{Binding Type}"/>
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+                </DockPanel>
+            </TabItem>
 
-                <Border Style="{StaticResource SectionCard}">
-                    <StackPanel>
-                        <Button Name="btnToggleAv" Style="{StaticResource SectionHeaderButton}">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="🛡️ Antywirus" Style="{StaticResource SectionTitle}"/>
-                                <TextBlock Name="chevronAv" Grid.Column="1" Text="▸" Style="{StaticResource Chevron}"/>
-                            </Grid>
-                        </Button>
-                        <StackPanel Name="panelAv" Margin="16,2,16,16" Visibility="Collapsed">
-                            <TextBlock Text="Nazwa pliku / Winget ID" Style="{StaticResource FieldLabel}"/>
-                            <TextBox Name="txtAvFile" Margin="0,0,0,12"/>
-                            <TextBlock Text="Domyślne źródło instalacji" Style="{StaticResource FieldLabel}"/>
-                            <ComboBox Name="cmbAvSrc" Margin="0,0,0,12"/>
-                            <TextBlock Text="Ścieżka sieciowa [network] (UNC)" Style="{StaticResource FieldLabel}"/>
-                            <TextBox Name="txtAvNet" Margin="0,0,0,12"/>
-                            <TextBlock Text="Ścieżka sieciowa [web] (URL)" Style="{StaticResource FieldLabel}"/>
-                            <TextBox Name="txtAvWeb" Margin="0,0,0,12"/>
-                            <TextBlock Text="Użytkownik WebAuth" Style="{StaticResource FieldLabel}"/>
-                            <TextBox Name="txtAvUser" Margin="0,0,0,12"/>
-                            <TextBlock Text="Hasło WebAuth" Style="{StaticResource FieldLabel}"/>
-                            <TextBox Name="txtAvPass"/>
+            <TabItem Header="Skrypty">
+                <DockPanel>
+                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Name="btnScriptAdd" Content="Dodaj..." Style="{StaticResource PrimaryButton}"/>
+                            <Button Name="btnScriptEdit" Content="Edytuj..." Style="{StaticResource BarButton}"/>
+                            <Button Name="btnScriptRemove" Content="Usuń" Style="{StaticResource BarButton}"/>
                         </StackPanel>
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource SectionCard}">
-                    <StackPanel>
-                        <Button Name="btnToggleWifi" Style="{StaticResource SectionHeaderButton}">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="📶 Profil Wi-Fi" Style="{StaticResource SectionTitle}"/>
-                                <TextBlock Name="chevronWifi" Grid.Column="1" Text="▸" Style="{StaticResource Chevron}"/>
-                            </Grid>
-                        </Button>
-                        <StackPanel Name="panelWifi" Margin="16,2,16,16" Visibility="Collapsed">
-                            <TextBlock Text="Nazwy plików (po przecinku, jeśli kilka)" Style="{StaticResource FieldLabel}"/>
-                            <TextBox Name="txtWifiFile"/>
+                        <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                            <TextBlock Name="txtScriptTitle" Text="Skrypty poinstalacyjne" Style="{StaticResource CardTitle}" Margin="0"/>
+                            <TextBlock Text="Pliki .ps1 / .bat uruchamiane przez zadanie „Uruchom skrypty poinstalacyjne”." Style="{StaticResource ListHint}"/>
                         </StackPanel>
-                    </StackPanel>
-                </Border>
+                    </DockPanel>
+                    <ListBox Name="lbScripts"/>
+                </DockPanel>
+            </TabItem>
 
-                <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+            <TabItem Header="Zaawansowane">
+                <ScrollViewer Style="{StaticResource TabScroll}">
                     <StackPanel>
-                        <TextBlock Text="🛠️ Zarządzanie" Style="{StaticResource CardTitle}" Margin="4,0,0,6"/>
-                        <UniformGrid Columns="2" Rows="3">
-                            <Button Name="btnManageApps" Content="📦 Programy" Style="{StaticResource ToolButton}"/>
-                            <Button Name="btnManageProfiles" Content="🗂️ Profile wdrożeniowe" Style="{StaticResource ToolButton}"/>
-                            <Button Name="btnManageRegistry" Content="🧩 Rejestr niestandardowy" Style="{StaticResource ToolButton}"/>
-                            <Button Name="btnManageDefaults" Content="☑️ Domyślne zadania" Style="{StaticResource ToolButton}"/>
-                            <Button Name="btnManageScripts" Content="📜 Skrypty Post-Install" Style="{StaticResource ToolButton}"/>
-                            <Button Name="btnCheckUpdate" Content="🔄 Aktualizacje narzędzia" Style="{StaticResource ToolButton}"/>
-                        </UniformGrid>
+                        <Border Style="{StaticResource TabCard}" Padding="16,14">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Name="btnExportConfig" Content="Eksportuj..."/>
+                                    <Button Name="btnImportConfig" Content="Importuj..." Style="{StaticResource BarButton}"/>
+                                </StackPanel>
+                                <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                                    <TextBlock Text="Kopia zapasowa konfiguracji" Style="{StaticResource CardTitle}" Margin="0,0,0,4"/>
+                                    <TextBlock Text="Eksport zapisuje do pliku JSON ustawienia z tego okna (także niezapisane). Import wczytuje plik do okna - zatwierdź go przyciskiem „Zapisz”." Style="{StaticResource MutedText}"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+                        <Border Style="{StaticResource TabCard}">
+                            <StackPanel>
+                                <DockPanel Margin="0,0,14,12">
+                                    <Button Name="btnCheckUpdate" Content="Sprawdź teraz" DockPanel.Dock="Right" VerticalAlignment="Center" ToolTip="Sprawdza, czy w ścieżce aktualizacji jest nowsza wersja"/>
+                                    <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                                        <TextBlock Text="Aktualizacje narzędzia" Style="{StaticResource CardTitle}" Margin="0,0,0,4"/>
+                                        <TextBlock Name="txtVersionInfo" Style="{StaticResource MutedText}"/>
+                                    </StackPanel>
+                                </DockPanel>
+                                <WrapPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" Width="500">
+                                        <TextBlock Text="ŚCIEŻKA AKTUALIZACJI (UNC LUB URL)" Style="{StaticResource Caption}" ToolTip="AutoUpdate.VersionCheckPath - katalog z plikiem std_version.json"/>
+                                        <TextBox Name="txtUpdatePath"/>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource FieldBox}" VerticalAlignment="Bottom">
+                                        <CheckBox Name="chkAutoUpdate" Content="Sprawdzaj przy starcie" Margin="0,0,0,7" ToolTip="AutoUpdate.Enabled"/>
+                                    </StackPanel>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource TabCard}" Padding="16,14">
+                            <StackPanel>
+                                <TextBlock Text="Plik konfiguracji" Style="{StaticResource CardTitle}" Margin="0,0,0,4"/>
+                                <TextBlock Name="txtConfigPath" Style="{StaticResource MutedText}"/>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
-                </Border>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
 
-                <Border Style="{StaticResource Card}" Margin="0,0,0,4">
-                    <StackPanel>
-                        <TextBlock Text="💾 Kopia zapasowa konfiguracji" Style="{StaticResource CardTitle}"/>
-                        <StackPanel Orientation="Horizontal">
-                            <Button Name="btnExportConfig" Content="⬆️ Eksportuj..." MinWidth="150" Margin="0,0,8,0"/>
-                            <Button Name="btnImportConfig" Content="⬇️ Importuj..." MinWidth="150"/>
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-        </ScrollViewer>
-
-        <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,12">
+        <Border Grid.Row="2" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,10">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnSave" Content="Zapisz" MinWidth="110" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                <Button Name="btnCancel" Content="Anuluj" MinWidth="110" IsCancel="True"/>
+                <Button Name="btnSave" Content="Zapisz" MinWidth="100" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}"/>
+                <Button Name="btnCancel" Content="Anuluj" MinWidth="100" IsCancel="True"/>
             </StackPanel>
         </Border>
     </Grid>
 </Window>
 "@
     $dlg = New-ThemedWindow -Xaml $xaml
-    
+
     $cmbSrc = $dlg.FindName("cmbSrc")
     $txtNet = $dlg.FindName("txtNet")
     $txtWeb = $dlg.FindName("txtWeb")
@@ -6223,54 +6030,70 @@ function Show-ConfigEditor {
     $txtAvUser = $dlg.FindName("txtAvUser")
     $txtAvPass = $dlg.FindName("txtAvPass")
     $txtWifiFile = $dlg.FindName("txtWifiFile")
-    $btnManageApps = $dlg.FindName("btnManageApps")
-    $btnManageProfiles = $dlg.FindName("btnManageProfiles")
-    $btnManageRegistry = $dlg.FindName("btnManageRegistry")
-    $btnManageDefaults = $dlg.FindName("btnManageDefaults")
-    $btnManageScripts = $dlg.FindName("btnManageScripts")
-    $btnCheckUpdate = $dlg.FindName("btnCheckUpdate")
+    $lbPrograms = $dlg.FindName("lbPrograms")
+    $txtProgTitle = $dlg.FindName("txtProgTitle")
+    $btnProgAdd = $dlg.FindName("btnProgAdd")
+    $btnProgEdit = $dlg.FindName("btnProgEdit")
+    $btnProgClone = $dlg.FindName("btnProgClone")
+    $btnProgRemove = $dlg.FindName("btnProgRemove")
+    $lbProfiles = $dlg.FindName("lbProfiles")
+    $txtProfTitle = $dlg.FindName("txtProfTitle")
+    $btnProfAdd = $dlg.FindName("btnProfAdd")
+    $btnProfEdit = $dlg.FindName("btnProfEdit")
+    $btnProfRemove = $dlg.FindName("btnProfRemove")
+    $btnDefaultsAll = $dlg.FindName("btnDefaultsAll")
+    $btnDefaultsNone = $dlg.FindName("btnDefaultsNone")
+    $lbRegistry = $dlg.FindName("lbRegistry")
+    $txtRegTitle = $dlg.FindName("txtRegTitle")
+    $btnRegAdd = $dlg.FindName("btnRegAdd")
+    $btnRegEdit = $dlg.FindName("btnRegEdit")
+    $btnRegRemove = $dlg.FindName("btnRegRemove")
+    $lbScripts = $dlg.FindName("lbScripts")
+    $txtScriptTitle = $dlg.FindName("txtScriptTitle")
+    $btnScriptAdd = $dlg.FindName("btnScriptAdd")
+    $btnScriptEdit = $dlg.FindName("btnScriptEdit")
+    $btnScriptRemove = $dlg.FindName("btnScriptRemove")
     $btnExportConfig = $dlg.FindName("btnExportConfig")
     $btnImportConfig = $dlg.FindName("btnImportConfig")
+    $btnCheckUpdate = $dlg.FindName("btnCheckUpdate")
+    $txtVersionInfo = $dlg.FindName("txtVersionInfo")
+    $txtUpdatePath = $dlg.FindName("txtUpdatePath")
+    $chkAutoUpdate = $dlg.FindName("chkAutoUpdate")
+    $txtConfigPath = $dlg.FindName("txtConfigPath")
+    $txtSettingsState = $dlg.FindName("txtSettingsState")
+    $dotSettingsState = $dlg.FindName("dotSettingsState")
     $btnSave = $dlg.FindName("btnSave")
     $btnCancel = $dlg.FindName("btnCancel")
 
-    # Zwijanie/rozwijanie sekcji - zwykłe przyciski (sprawdzony, już wszędzie indziej działający
-    # wzorzec) zamiast natywnego Expandera, którego nagłówek w tym oknie nie łapał poprawnie
-    # motywu (mały, czarny tekst w trybie ciemnym).
-    foreach ($section in @(
-        @{ Button = "btnToggleSrc"; Panel = "panelSrc"; Chevron = "chevronSrc" }
-        @{ Button = "btnToggleDom"; Panel = "panelDom"; Chevron = "chevronDom" }
-        @{ Button = "btnToggleTv"; Panel = "panelTv"; Chevron = "chevronTv" }
-        @{ Button = "btnToggleAv"; Panel = "panelAv"; Chevron = "chevronAv" }
-        @{ Button = "btnToggleWifi"; Panel = "panelWifi"; Chevron = "chevronWifi" }
-    )) {
-        $btn = $dlg.FindName($section.Button)
-        $panel = $dlg.FindName($section.Panel)
-        $chevron = $dlg.FindName($section.Chevron)
-        $btn.Add_Click({
-            if ($panel.Visibility -eq [System.Windows.Visibility]::Visible) {
-                $panel.Visibility = [System.Windows.Visibility]::Collapsed
-                $chevron.Text = "▸"
-            } else {
-                $panel.Visibility = [System.Windows.Visibility]::Visible
-                $chevron.Text = "▾"
-            }
-        }.GetNewClosure())
+    $txtVersionInfo.Text = "Zainstalowana wersja: $script:ScriptVersion"
+    $txtConfigPath.Text = $configPath
+
+    foreach ($srcName in @("network", "web", "winget")) {
+        [void]$cmbSrc.Items.Add($srcName)
+        [void]$cmbAvSrc.Items.Add($srcName)
     }
 
-    [void]$cmbAvSrc.Items.Add("network")
-    [void]$cmbAvSrc.Items.Add("web")
-    [void]$cmbAvSrc.Items.Add("winget")
+    # UWAGA na zasięg zmiennych: obsługa zdarzeń widzi zmienne tej funkcji tylko dlatego, że
+    # ShowDialog() wykonuje się w jej wnętrzu. W handlerach nie przypisujemy więc niczego do
+    # zmiennych z zewnątrz (powstałaby kopia lokalna) - zmieniamy obiekty w miejscu ($state,
+    # $regList.Clear() itd.). Nazwy są unikalne (prefiks zakładki), bo skrypt ma też $btnSave itp.
+    $state = @{ Dirty = $false; Loading = $true; DefaultsChanged = $false; Saved = $false }
+    $regList = New-Object System.Collections.ArrayList
+    $scriptList = New-Object System.Collections.ArrayList
+    $defaultTaskChecks = [ordered]@{}
 
-    [void]$cmbSrc.Items.Add("network")
-    [void]$cmbSrc.Items.Add("web")
-    [void]$cmbSrc.Items.Add("winget")
-    
+    $markDirty = {
+        if ($state.Loading -or $state.Dirty) { return }
+        $state.Dirty = $true
+        $txtSettingsState.Text = "Niezapisane zmiany"
+        $dotSettingsState.SetResourceReference([System.Windows.Shapes.Shape]::FillProperty, "ThemeWarning")
+    }
+
     $UpdateUIFields = {
         param($cfg)
         $src = [string]$cfg.DefaultInstallSource
         if ($cmbSrc.Items -contains $src) { $cmbSrc.SelectedItem = $src } else { $cmbSrc.SelectedItem = 'network' }
-        
+
         $txtNet.Text = [string]$cfg.InstallSourcePaths.network
         $txtWeb.Text = [string]$cfg.InstallSourcePaths.web
         $txtCwd.Text = [string]$cfg.CustomWebDataLocation.URL
@@ -6278,7 +6101,7 @@ function Show-ConfigEditor {
         $txtDomUser.Text = [string]$cfg.DomainJoin.Username
         $txtLoc.Text = [string]$cfg.LocalAdmin.Username
         $txtWebUser.Text = [string]$cfg.WebAuth.Username
-        $txtWebPass.Text = [string]$cfg.WebAuth.Password
+        $txtWebPass.Password = [string]$cfg.WebAuth.Password
         $txtTvFile.Text = [string]$cfg.TeamViewer.FileName
         $txtTvArgs.Text = [string]$cfg.TeamViewer.Arguments
         $txtAvFile.Text = [string]$cfg.AntyVirus.FileName
@@ -6287,32 +6110,362 @@ function Show-ConfigEditor {
         $txtAvNet.Text = [string]$cfg.AntyVirus.InstallSourcePaths.network
         $txtAvWeb.Text = [string]$cfg.AntyVirus.InstallSourcePaths.web
         $txtAvUser.Text = [string]$cfg.AntyVirus.Credentials.Username
-        $txtAvPass.Text = [string]$cfg.AntyVirus.Credentials.Password
+        $txtAvPass.Password = [string]$cfg.AntyVirus.Credentials.Password
         if ($cfg.WiFiProfile.FileName -is [array]) {
             $txtWifiFile.Text = $cfg.WiFiProfile.FileName -join ","
         } else {
             $txtWifiFile.Text = [string]$cfg.WiFiProfile.FileName
         }
+        $txtUpdatePath.Text = [string]$cfg.AutoUpdate.VersionCheckPath
+        $chkAutoUpdate.IsChecked = ($cfg.AutoUpdate.Enabled -eq $true)
     }
-    
-    & $UpdateUIFields $config
-    
-    $src = [string]$config.DefaultInstallSource
-    if ($cmbSrc.Items -contains $src) {
-        $cmbSrc.SelectedItem = $src
+
+    # --- Listy w zakładkach ---
+    $refreshPrograms = {
+        $lbPrograms.Items.Clear()
+        if ($config.Programs) {
+            foreach ($progName in $config.Programs.PSObject.Properties.Name | Sort-Object) {
+                $progData = $config.Programs.$progName
+                [void]$lbPrograms.Items.Add([PSCustomObject]@{
+                    Name    = $progName
+                    File    = [string]$progData.FileName
+                    Default = if ($progData.Enabled -eq $true -or [string]$progData.Enabled -match 'true') { "tak" } else { "" }
+                    Url     = if (-not [string]::IsNullOrWhiteSpace([string]$progData.DownloadUrl)) { "tak" } else { "" }
+                })
+            }
+        }
+        $txtProgTitle.Text = "Programy ($($lbPrograms.Items.Count))"
     }
-    else {
-        $cmbSrc.SelectedItem = 'network'
+    $refreshProfiles = {
+        $lbProfiles.Items.Clear()
+        if ($config.Profiles) {
+            foreach ($profName in $config.Profiles.PSObject.Properties.Name | Sort-Object) {
+                [void]$lbProfiles.Items.Add([PSCustomObject]@{ Name = $profName; Apps = (@($config.Profiles.$profName) -join ", ") })
+            }
+        }
+        $txtProfTitle.Text = "Profile wdrożeniowe ($($lbProfiles.Items.Count))"
     }
-    
-    $btnManageApps.Add_Click({ Show-ProgramsManager -config $config })
-    $btnManageProfiles.Add_Click({ Show-ProfilesManager -config $config })
-    $btnManageRegistry.Add_Click({ Show-RegistryManager -config $config })
-    $btnManageDefaults.Add_Click({ Show-DefaultTasksEditor -config $config })
-    $btnManageScripts.Add_Click({ Show-PostInstallScriptsManager -config $config })
-    $btnCheckUpdate.Add_Click({ Test-ForAppUpdate })
+    $refreshRegistry = {
+        $lbRegistry.Items.Clear()
+        foreach ($regEntry in $regList) {
+            [void]$lbRegistry.Items.Add([PSCustomObject]@{ Path = [string]$regEntry.Path; Name = [string]$regEntry.Name; Value = [string]$regEntry.Value; Type = [string]$regEntry.PropertyType })
+        }
+        $config.SystemSettings | Add-Member -NotePropertyName CustomRegistry -NotePropertyValue ($regList.ToArray()) -Force
+        $txtRegTitle.Text = "Rejestr niestandardowy ($($regList.Count))"
+    }
+    $refreshScripts = {
+        $lbScripts.Items.Clear()
+        foreach ($scriptEntry in $scriptList) { [void]$lbScripts.Items.Add($scriptEntry) }
+        $config | Add-Member -NotePropertyName PostInstallScripts -NotePropertyValue ($scriptList.ToArray()) -Force
+        $txtScriptTitle.Text = "Skrypty poinstalacyjne ($($scriptList.Count))"
+    }
+
+    # Domyślne zadania - te same grupy co w oknie głównym.
+    $defaultTaskPanels = Add-TaskGroupPanels -Columns @($dlg.FindName("spDefCol0"), $dlg.FindName("spDefCol1"), $dlg.FindName("spDefCol2"))
+    foreach ($key in $checkboxOptions.Keys) {
+        $cb = New-Object System.Windows.Controls.CheckBox
+        $cbLabel = New-Object System.Windows.Controls.TextBlock
+        $cbLabel.Text = $checkboxOptions[$key].Text
+        $cbLabel.TextWrapping = [System.Windows.TextWrapping]::Wrap
+        $cb.Content = $cbLabel
+        $cb.ToolTip = $checkboxOptions[$key].Tooltip
+        $cb.Add_Checked({ if (-not $state.Loading) { $state.DefaultsChanged = $true; & $markDirty } })
+        $cb.Add_Unchecked({ if (-not $state.Loading) { $state.DefaultsChanged = $true; & $markDirty } })
+        [void]$defaultTaskPanels[$checkboxOptions[$key].Group].Children.Add($cb)
+        $defaultTaskChecks[$key] = $cb
+    }
+
+    # Wczytuje cały $config do okna: pola, listy i domyślne zadania. Wołane przy otwarciu i po
+    # imporcie - listy rejestru i skryptów są przebudowywane w miejscu, inaczej następna edycja
+    # zapisałaby z powrotem stare (sprzed importu) wpisy.
+    $loadAll = {
+        $state.Loading = $true
+        try {
+            if ($null -eq $config.Programs) { $config | Add-Member -NotePropertyName Programs -NotePropertyValue (New-Object PSObject) -Force }
+            if ($null -eq $config.Profiles) { $config | Add-Member -NotePropertyName Profiles -NotePropertyValue (New-Object PSObject) -Force }
+            if (-not $config.SystemSettings) { $config | Add-Member -NotePropertyName SystemSettings -NotePropertyValue (New-Object PSObject) -Force }
+            if ($null -eq $config.SystemSettings.CustomRegistry) { $config.SystemSettings | Add-Member -NotePropertyName CustomRegistry -NotePropertyValue @() -Force }
+            if ($null -eq $config.PostInstallScripts) { $config | Add-Member -NotePropertyName PostInstallScripts -NotePropertyValue @() -Force }
+
+            & $UpdateUIFields $config
+            $regList.Clear()
+            foreach ($regEntry in @($config.SystemSettings.CustomRegistry)) { if ($null -ne $regEntry) { [void]$regList.Add($regEntry) } }
+            $scriptList.Clear()
+            foreach ($scriptEntry in @($config.PostInstallScripts)) { if (-not [string]::IsNullOrWhiteSpace([string]$scriptEntry)) { [void]$scriptList.Add([string]$scriptEntry) } }
+            & $refreshPrograms
+            & $refreshProfiles
+            & $refreshRegistry
+            & $refreshScripts
+            foreach ($key in $defaultTaskChecks.Keys) {
+                if ($null -ne $config.DefaultCheckboxes -and $null -ne $config.DefaultCheckboxes.$key) {
+                    $defaultTaskChecks[$key].IsChecked = [bool]$config.DefaultCheckboxes.$key
+                } else {
+                    $defaultTaskChecks[$key].IsChecked = $checkboxOptions[$key].Enabled
+                }
+            }
+        } finally {
+            $state.Loading = $false
+        }
+    }
+    & $loadAll
+
+    foreach ($field in @($txtNet, $txtWeb, $txtCwd, $txtDom, $txtDomUser, $txtLoc, $txtWebUser, $txtTvFile, $txtTvArgs, $txtAvFile, $txtAvNet, $txtAvWeb, $txtAvUser, $txtWifiFile, $txtUpdatePath)) {
+        $field.Add_TextChanged({ & $markDirty })
+    }
+    $txtWebPass.Add_PasswordChanged({ & $markDirty })
+    $txtAvPass.Add_PasswordChanged({ & $markDirty })
+    $cmbSrc.Add_SelectionChanged({ & $markDirty })
+    $cmbAvSrc.Add_SelectionChanged({ & $markDirty })
+    $chkAutoUpdate.Add_Click({ & $markDirty })
+
+    # --- Programy ---
+    $editProgram = {
+        $selProg = $lbPrograms.SelectedItem
+        if ($null -eq $selProg) { return }
+        $res = Show-ProgramEditDialog -IsNew $false -ProgramName $selProg.Name -ProgramData $config.Programs.($selProg.Name)
+        if ($res) {
+            if ($res.Name -ne $selProg.Name -and $config.Programs.PSObject.Properties.Name -contains $res.Name) {
+                Show-ThemedMessageBox -Message "Program o tym identyfikatorze już istnieje." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
+                return
+            }
+            $config.Programs.PSObject.Properties.Remove($selProg.Name)
+            Add-Member -InputObject $config.Programs -NotePropertyName $res.Name -NotePropertyValue $res.Data -Force
+            & $refreshPrograms
+            & $markDirty
+        }
+    }
+    $btnProgAdd.Add_Click({
+        $res = Show-ProgramEditDialog -IsNew $true -ProgramName "" -ProgramData $null
+        if ($res) {
+            if ($config.Programs.PSObject.Properties.Name -contains $res.Name) {
+                Show-ThemedMessageBox -Message "Program o tym identyfikatorze już istnieje." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
+                return
+            }
+            Add-Member -InputObject $config.Programs -NotePropertyName $res.Name -NotePropertyValue $res.Data -Force
+            & $refreshPrograms
+            & $markDirty
+        }
+    })
+    $btnProgEdit.Add_Click({ & $editProgram })
+    $lbPrograms.Add_MouseDoubleClick({ & $editProgram })
+    $btnProgClone.Add_Click({
+        $selProg = $lbPrograms.SelectedItem
+        if ($null -eq $selProg) { return }
+        $res = Show-ProgramEditDialog -IsNew $true -ProgramName "$($selProg.Name)-Kopia" -ProgramData $config.Programs.($selProg.Name)
+        if ($res) {
+            if ($config.Programs.PSObject.Properties.Name -contains $res.Name) {
+                Show-ThemedMessageBox -Message "Program o tym identyfikatorze już istnieje." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
+                return
+            }
+            Add-Member -InputObject $config.Programs -NotePropertyName $res.Name -NotePropertyValue $res.Data -Force
+            & $refreshPrograms
+            & $markDirty
+        }
+    })
+    $btnProgRemove.Add_Click({
+        $selProg = $lbPrograms.SelectedItem
+        if ($null -eq $selProg) { return }
+        if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć program $($selProg.Name)?" -Title "Potwierdzenie" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
+            $config.Programs.PSObject.Properties.Remove($selProg.Name)
+            & $refreshPrograms
+            & $markDirty
+        }
+    })
+
+    # --- Profile ---
+    $editProfile = {
+        $selProf = $lbProfiles.SelectedItem
+        if ($null -eq $selProf) { return }
+        $res = Show-ProfileEditDialog -IsNew $false -ProfileName $selProf.Name -ProfileApps $config.Profiles.($selProf.Name) -config $config
+        if ($res) {
+            $config.Profiles.PSObject.Properties.Remove($selProf.Name)
+            Add-Member -InputObject $config.Profiles -NotePropertyName $res.Name -NotePropertyValue $res.Apps -Force
+            & $refreshProfiles
+            & $markDirty
+        }
+    }
+    $btnProfAdd.Add_Click({
+        $res = Show-ProfileEditDialog -IsNew $true -ProfileName "" -ProfileApps @() -config $config
+        if ($res) {
+            if ($config.Profiles.PSObject.Properties.Name -contains $res.Name) {
+                Show-ThemedMessageBox -Message "Profil o tej nazwie już istnieje." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
+                return
+            }
+            Add-Member -InputObject $config.Profiles -NotePropertyName $res.Name -NotePropertyValue $res.Apps -Force
+            & $refreshProfiles
+            & $markDirty
+        }
+    })
+    $btnProfEdit.Add_Click({ & $editProfile })
+    $lbProfiles.Add_MouseDoubleClick({ & $editProfile })
+    $btnProfRemove.Add_Click({
+        $selProf = $lbProfiles.SelectedItem
+        if ($null -eq $selProf) { return }
+        if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć profil '$($selProf.Name)'?" -Title "Potwierdzenie" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
+            $config.Profiles.PSObject.Properties.Remove($selProf.Name)
+            & $refreshProfiles
+            & $markDirty
+        }
+    })
+
+    # --- Domyślne zadania ---
+    $btnDefaultsAll.Add_Click({ foreach ($key in $defaultTaskChecks.Keys) { if ($key -ne "DryRun") { $defaultTaskChecks[$key].IsChecked = $true } } })
+    $btnDefaultsNone.Add_Click({ foreach ($cb in $defaultTaskChecks.Values) { $cb.IsChecked = $false } })
+
+    # --- Rejestr ---
+    $editRegistry = {
+        $regIdx = $lbRegistry.SelectedIndex
+        if ($regIdx -lt 0) { return }
+        $res = Show-RegistryEditDialog -IsNew $false -RegData $regList[$regIdx]
+        if ($res) {
+            $regList[$regIdx] = [PSCustomObject]$res
+            & $refreshRegistry
+            & $markDirty
+        }
+    }
+    $btnRegAdd.Add_Click({
+        $res = Show-RegistryEditDialog -IsNew $true -RegData $null
+        if ($res) {
+            [void]$regList.Add([PSCustomObject]$res)
+            & $refreshRegistry
+            & $markDirty
+        }
+    })
+    $btnRegEdit.Add_Click({ & $editRegistry })
+    $lbRegistry.Add_MouseDoubleClick({ & $editRegistry })
+    $btnRegRemove.Add_Click({
+        $regIdx = $lbRegistry.SelectedIndex
+        if ($regIdx -lt 0) { return }
+        if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć ten wpis rejestru?" -Title "Potwierdzenie" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
+            $regList.RemoveAt($regIdx)
+            & $refreshRegistry
+            & $markDirty
+        }
+    })
+
+    # --- Skrypty ---
+    $editScript = {
+        $scriptIdx = $lbScripts.SelectedIndex
+        if ($scriptIdx -lt 0) { return }
+        $res = Show-ScriptEditDialog -IsNew $false -ScriptPath $scriptList[$scriptIdx]
+        if ($res) {
+            $scriptList[$scriptIdx] = $res
+            & $refreshScripts
+            & $markDirty
+        }
+    }
+    $btnScriptAdd.Add_Click({
+        $res = Show-ScriptEditDialog -IsNew $true -ScriptPath ""
+        if ($res) {
+            [void]$scriptList.Add($res)
+            & $refreshScripts
+            & $markDirty
+        }
+    })
+    $btnScriptEdit.Add_Click({ & $editScript })
+    $lbScripts.Add_MouseDoubleClick({ & $editScript })
+    $btnScriptRemove.Add_Click({
+        $scriptIdx = $lbScripts.SelectedIndex
+        if ($scriptIdx -lt 0) { return }
+        if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz usunąć ten skrypt z listy?" -Title "Potwierdzenie" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
+            $scriptList.RemoveAt($scriptIdx)
+            & $refreshScripts
+            & $markDirty
+        }
+    })
+
+    # Przepisuje pola formularza do $config (z walidacją). Używane przez "Zapisz" i "Eksportuj" -
+    # wcześniej eksport pomijał niezapisane zmiany w polach tekstowych.
+    $applyFieldsToConfig = {
+        $src = [string]$cmbSrc.SelectedItem
+        if ([string]::IsNullOrWhiteSpace($src) -or ($src -notin @('network', 'web', 'winget'))) {
+            Show-ThemedMessageBox -Message "Wybierz poprawne źródło (network/web/winget)." -Title "Ostrzeżenie" -Button "OK" -Image "Warning" | Out-Null
+            return $false
+        }
+        $net = $txtNet.Text.Trim()
+        $web = $txtWeb.Text.Trim()
+        $cwd = $txtCwd.Text.Trim()
+
+        if ($web -and $web[-1] -ne '/') { $web += '/' }
+        if ($cwd -and $cwd[-1] -ne '/') { $cwd += '/' }
+        if ($net -and $net -notmatch '^\\\\') {
+            Show-ThemedMessageBox -Message "Ścieżka network musi być w formacie UNC (\\server\share\)." -Title "Ostrzeżenie" -Button "OK" -Image "Warning" | Out-Null
+            return $false
+        }
+
+        # Set-ConfigValue / Get-ConfigSection zamiast "$config.Sekcja.Pole = ...": przypisanie do pola,
+        # którego nie ma w obiekcie z ConvertFrom-Json, rzuca wyjątek i cały zapis się nie udawał
+        # (np. gdy w config.json była sekcja InstallSourcePaths tylko z "web", bez "network").
+        Set-ConfigValue $config 'DefaultInstallSource' $src
+        $paths = Get-ConfigSection $config 'InstallSourcePaths'
+        Set-ConfigValue $paths 'network' $net
+        Set-ConfigValue $paths 'web' $web
+
+        Set-ConfigValue (Get-ConfigSection $config 'CustomWebDataLocation') 'URL' $cwd
+
+        $domainSection = Get-ConfigSection $config 'DomainJoin'
+        Set-ConfigValue $domainSection 'DomainName' $txtDom.Text.Trim()
+        Set-ConfigValue $domainSection 'Username' $txtDomUser.Text.Trim()
+
+        Set-ConfigValue (Get-ConfigSection $config 'LocalAdmin') 'Username' $txtLoc.Text.Trim()
+
+        $webAuth = Get-ConfigSection $config 'WebAuth'
+        Set-ConfigValue $webAuth 'Username' $txtWebUser.Text.Trim()
+        Set-ConfigValue $webAuth 'Password' $txtWebPass.Password.Trim()
+
+        $tv = Get-ConfigSection $config 'TeamViewer'
+        Set-ConfigValue $tv 'FileName' $txtTvFile.Text.Trim()
+        Set-ConfigValue $tv 'Arguments' $txtTvArgs.Text.Trim()
+
+        $av = Get-ConfigSection $config 'AntyVirus'
+        Set-ConfigValue $av 'FileName' $txtAvFile.Text.Trim()
+        $avSrcVal = [string]$cmbAvSrc.SelectedItem
+        if ([string]::IsNullOrWhiteSpace($avSrcVal)) { $avSrcVal = "network" }
+        Set-ConfigValue $av 'DefaultInstallSource' $avSrcVal
+        $avPaths = Get-ConfigSection $av 'InstallSourcePaths'
+        Set-ConfigValue $avPaths 'network' $txtAvNet.Text.Trim()
+        Set-ConfigValue $avPaths 'web' $txtAvWeb.Text.Trim()
+        $avCred = Get-ConfigSection $av 'Credentials'
+        Set-ConfigValue $avCred 'Username' $txtAvUser.Text.Trim()
+        Set-ConfigValue $avCred 'Password' $txtAvPass.Password.Trim()
+
+        $wifiStr = $txtWifiFile.Text.Trim()
+        $wifiValue = if ($wifiStr -match ",") { @($wifiStr -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }) } else { $wifiStr }
+        Set-ConfigValue (Get-ConfigSection $config 'WiFiProfile') 'FileName' $wifiValue
+
+        # Sekcję AutoUpdate zapisujemy tylko, gdy coś w niej ustawiono - bez tego każdy zapis
+        # dopisywałby do config.json pustą sekcję.
+        $updatePath = $txtUpdatePath.Text.Trim()
+        if ($null -ne $config.AutoUpdate -or $updatePath -or $chkAutoUpdate.IsChecked -eq $true) {
+            $autoUpdate = Get-ConfigSection $config 'AutoUpdate'
+            Set-ConfigValue $autoUpdate 'Enabled' ($chkAutoUpdate.IsChecked -eq $true)
+            Set-ConfigValue $autoUpdate 'VersionCheckPath' $updatePath
+        }
+
+        # Domyślne zadania tylko po zmianie - inaczej do pliku trafiałyby wszystkie 20 kluczy,
+        # nadpisując wartości wbudowane, gdy ktoś zmienił np. tylko adres URL.
+        if ($state.DefaultsChanged) {
+            if (-not $config.DefaultCheckboxes) { $config | Add-Member -NotePropertyName DefaultCheckboxes -NotePropertyValue (New-Object PSObject) -Force }
+            foreach ($key in $defaultTaskChecks.Keys) {
+                Add-Member -InputObject $config.DefaultCheckboxes -NotePropertyName $key -NotePropertyValue ($defaultTaskChecks[$key].IsChecked -eq $true) -Force
+            }
+        }
+        return $true
+    }
+
+    # --- Zaawansowane ---
+    $btnCheckUpdate.Add_Click({
+        # Aktualizacja czyta config.json z dysku i po sukcesie zamyka aplikację - niezapisane
+        # zmiany przepadłyby bez pytania.
+        if ($state.Dirty) {
+            Show-ThemedMessageBox -Message "Najpierw zapisz albo anuluj zmiany w ustawieniach." -Title "Aktualizacje" -Button "OK" -Image "Information" | Out-Null
+            return
+        }
+        Test-ForAppUpdate
+    })
 
     $btnExportConfig.Add_Click({
+        if (@(& $applyFieldsToConfig)[-1] -ne $true) { return }
         $sfd = New-Object Microsoft.Win32.SaveFileDialog
         $sfd.Filter = "Pliki JSON (*.json)|*.json|Wszystkie pliki (*.*)|*.*"
         $sfd.FileName = "config_backup_$(Get-Date -Format 'yyyyMMdd_HHmmss').json"
@@ -6336,7 +6489,9 @@ function Show-ConfigEditor {
                     foreach ($prop in $importedConfig.PSObject.Properties) {
                         $config | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
                     }
-                    & $UpdateUIFields $config
+                    & $loadAll
+                    $state.DefaultsChanged = $true
+                    & $markDirty
                     Show-ThemedMessageBox -Message "Konfiguracja została zaimportowana. Kliknij 'Zapisz', aby ją trwale zachować w aplikacji." -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
                 }
             } catch {
@@ -6370,74 +6525,39 @@ function Show-ConfigEditor {
             $dlg.Cursor = [System.Windows.Input.Cursors]::Arrow
         }
     })
+
     $btnCancel.Add_Click({ $dlg.Close() })
+
+    # Zamknięcie (Anuluj, Esc, krzyżyk) z niezapisanymi zmianami pyta o potwierdzenie - zmiany
+    # ze wszystkich zakładek przepadłyby naraz.
+    $dlg.Add_Closing({
+        param($closingSender, $closingArgs)
+        if ($state.Dirty -and -not $state.Saved) {
+            if ((Show-ThemedMessageBox -Message "Masz niezapisane zmiany w ustawieniach. Zamknąć okno bez zapisywania?" -Title "Ustawienia" -Button "YesNo" -Image "Question") -ne [System.Windows.MessageBoxResult]::Yes) {
+                $closingArgs.Cancel = $true
+            }
+        }
+    })
 
     $btnSave.Add_Click({
         try {
-            $src = [string]$cmbSrc.SelectedItem
-            if ([string]::IsNullOrWhiteSpace($src) -or ($src -notin @('network', 'web', 'winget'))) {
-                Show-ThemedMessageBox -Message "Wybierz poprawne źródło (network/web/winget)." -Title "Ostrzeżenie" -Button "OK" -Image "Warning" | Out-Null
-                return
-            }
-            $net = $txtNet.Text.Trim()
-            $web = $txtWeb.Text.Trim()
-            $cwd = $txtCwd.Text.Trim()
-            $dom = $txtDom.Text.Trim()
-            $domUser = $txtDomUser.Text.Trim()
-            $locUser = $txtLoc.Text.Trim()
-
-            if ($web -and $web[-1] -ne '/') { $web += '/' }
-            if ($cwd -and $cwd[-1] -ne '/') { $cwd += '/' }
-            if ($net -and $net -notmatch '^\\\\') {
-                Show-ThemedMessageBox -Message "Ścieżka network musi być w formacie UNC (\\server\share\)." -Title "Ostrzeżenie" -Button "OK" -Image "Warning" | Out-Null
-                return
-            }
-
-            # Set-ConfigValue / Get-ConfigSection zamiast "$config.Sekcja.Pole = ...": przypisanie do pola,
-            # którego nie ma w obiekcie z ConvertFrom-Json, rzuca wyjątek i cały zapis się nie udawał
-            # (np. gdy w config.json była sekcja InstallSourcePaths tylko z "web", bez "network").
-            Set-ConfigValue $config 'DefaultInstallSource' $src
-            $paths = Get-ConfigSection $config 'InstallSourcePaths'
-            Set-ConfigValue $paths 'network' $net
-            Set-ConfigValue $paths 'web' $web
-
-            Set-ConfigValue (Get-ConfigSection $config 'CustomWebDataLocation') 'URL' $cwd
-
-            $domainSection = Get-ConfigSection $config 'DomainJoin'
-            Set-ConfigValue $domainSection 'DomainName' $dom
-            Set-ConfigValue $domainSection 'Username' $domUser
-
-            Set-ConfigValue (Get-ConfigSection $config 'LocalAdmin') 'Username' $locUser
-
-            $webAuth = Get-ConfigSection $config 'WebAuth'
-            Set-ConfigValue $webAuth 'Username' $txtWebUser.Text.Trim()
-            Set-ConfigValue $webAuth 'Password' $txtWebPass.Text.Trim()
-
-            $tv = Get-ConfigSection $config 'TeamViewer'
-            Set-ConfigValue $tv 'FileName' $txtTvFile.Text.Trim()
-            Set-ConfigValue $tv 'Arguments' $txtTvArgs.Text.Trim()
-
-            $av = Get-ConfigSection $config 'AntyVirus'
-            Set-ConfigValue $av 'FileName' $txtAvFile.Text.Trim()
-            $avSrcVal = [string]$cmbAvSrc.SelectedItem
-            if ([string]::IsNullOrWhiteSpace($avSrcVal)) { $avSrcVal = "network" }
-            Set-ConfigValue $av 'DefaultInstallSource' $avSrcVal
-            $avPaths = Get-ConfigSection $av 'InstallSourcePaths'
-            Set-ConfigValue $avPaths 'network' $txtAvNet.Text.Trim()
-            Set-ConfigValue $avPaths 'web' $txtAvWeb.Text.Trim()
-            $avCred = Get-ConfigSection $av 'Credentials'
-            Set-ConfigValue $avCred 'Username' $txtAvUser.Text.Trim()
-            Set-ConfigValue $avCred 'Password' $txtAvPass.Text.Trim()
-
-            $wifiStr = $txtWifiFile.Text.Trim()
-            $wifiValue = if ($wifiStr -match ",") { @($wifiStr -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }) } else { $wifiStr }
-            Set-ConfigValue (Get-ConfigSection $config 'WiFiProfile') 'FileName' $wifiValue
-
+            # [-1]: blok zwraca $true/$false jako ostatni element (na wypadek, gdyby coś po drodze
+            # wypisało dodatkowy obiekt do potoku).
+            if (@(& $applyFieldsToConfig)[-1] -ne $true) { return }
             Save-Config $config
+            $state.Saved = $true
+            # Nowe domyślne zadania od razu w oknie głównym - ale tylko, gdy je zmieniono, żeby nie
+            # kasować bieżących zaznaczeń operatora po zmianie np. samego adresu URL.
+            if ($state.DefaultsChanged) {
+                foreach ($key in $defaultTaskChecks.Keys) {
+                    $isDefault = ($defaultTaskChecks[$key].IsChecked -eq $true)
+                    $checkboxOptions[$key].Enabled = $isDefault
+                    if ($null -ne $CheckboxControls[$key]) { $CheckboxControls[$key].IsChecked = $isDefault }
+                }
+            }
             Show-ThemedMessageBox -Message "Zapisano konfigurację." -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
             Get-AppSelection
-            # Profile dodane/zmienione w "Profile wdrożeniowe" od razu na liście w oknie głównym -
-            # wcześniej pojawiały się dopiero po ręcznym "Przeładuj config.json".
+            # Profile dodane/zmienione w zakładce "Profile" od razu na liście w oknie głównym.
             Load-Profiles
             $dlg.Close()
         }
@@ -6457,20 +6577,14 @@ if ($null -eq $global:PesterTesting) {
 [xml]$mainXaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Smart Tool for Deployment | Short: STD" Height="800" Width="940" MinHeight="680" MinWidth="820" WindowStartupLocation="CenterScreen"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
+        Title="Smart Tool for Deployment" Width="1000" Height="660" MinWidth="900" MinHeight="560" WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" FontSize="13">
     <Window.Resources>
         <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
-            <Setter Property="FontSize" Value="13.5"/>
-            <Setter Property="Margin" Value="2,6"/>
-        </Style>
-        <Style x:Key="SideButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Height" Value="34"/>
             <Setter Property="Margin" Value="0,0,0,8"/>
         </Style>
-        <Style x:Key="QuickButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Height" Value="30"/>
-            <Setter Property="Padding" Value="8,4"/>
+        <Style x:Key="BarButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Margin" Value="6,0,0,0"/>
         </Style>
     </Window.Resources>
 
@@ -6479,127 +6593,99 @@ if ($null -eq $global:PesterTesting) {
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Pasek nagłówka -->
+        <!-- Pasek nagłówka: tytuł po lewej, stan sieci i narzędzia po prawej (jak w ServerReview) -->
         <Border Grid.Row="0" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,0,0,1" Padding="20,12">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="Smart Tool for Deployment" FontSize="20" FontWeight="SemiBold"/>
-                    <TextBlock Text="Automatyczna konfiguracja stacji roboczych Windows  ·  v$script:ScriptVersion" Style="{StaticResource MutedText}" FontSize="11.5"/>
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Background="{DynamicResource ThemePanel}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="1" CornerRadius="14" Padding="12,5" MaxWidth="280" Margin="0,0,12,0" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Name="shpNetworkStatus" Width="9" Height="9" Fill="{DynamicResource ThemeWarning}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                            <TextBlock Name="txtNetworkStatus" Text="Sprawdzanie sieci..." FontSize="12" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
+                    <Button Name="btnLogs" Content="Logi" ToolTip="Przeglądarka logów: filtry, wyszukiwanie, eksport raportu"/>
+                    <Button Name="btnTools" Content="Narzędzia  ▾" Style="{StaticResource BarButton}" ToolTip="Narzędzia systemowe i plik konfiguracji">
+                        <Button.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Name="btnSysInfo" Header="Informacje o systemie"/>
+                                <MenuItem Name="btnUninstaller" Header="Odinstaluj programy..."/>
+                                <Separator/>
+                                <MenuItem Name="btnSysProps" Header="Właściwości systemu"/>
+                                <MenuItem Name="btnCompMgmt" Header="Zarządzanie komputerem"/>
+                                <MenuItem Name="btnRegEdit" Header="Edytor rejestru"/>
+                                <MenuItem Name="btnPrinters" Header="Urządzenia i drukarki"/>
+                                <Separator/>
+                                <MenuItem Name="btnEditConfig" Header="Edytuj config.json w Notatniku..."/>
+                                <MenuItem Name="btnReloadConfig" Header="Przeładuj config.json"/>
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
+                    <Button Name="btnSettings" Content="⚙  Ustawienia" Style="{StaticResource BarButton}" ToolTip="Ustawienia narzędzia (wymaga PIN)"/>
+                    <Button Name="btnThemeToggle" Content="☀" Padding="11,6" Style="{StaticResource BarButton}" ToolTip="Przełącz na jasny motyw"/>
                 </StackPanel>
-                <TextBlock Name="txtStopwatch" Grid.Column="1" Text="⏱ 00:00:00" VerticalAlignment="Center" FontWeight="SemiBold" FontSize="15" Margin="0,0,16,0" Visibility="Hidden"/>
-                <Border Grid.Column="2" Background="{DynamicResource ThemePanel}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="1" CornerRadius="14" Padding="12,6" VerticalAlignment="Center">
-                    <StackPanel Orientation="Horizontal">
-                        <Ellipse Name="shpNetworkStatus" Width="9" Height="9" Fill="{DynamicResource ThemeWarning}" Margin="0,0,8,0" VerticalAlignment="Center">
-                            <Ellipse.Triggers>
-                                <EventTrigger RoutedEvent="FrameworkElement.Loaded">
-                                    <BeginStoryboard>
-                                        <Storyboard RepeatBehavior="Forever">
-                                            <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1.0" To="0.3" Duration="0:0:1" AutoReverse="True"/>
-                                        </Storyboard>
-                                    </BeginStoryboard>
-                                </EventTrigger>
-                            </Ellipse.Triggers>
-                        </Ellipse>
-                        <TextBlock Name="txtNetworkStatus" Text="Sprawdzanie sieci..." VerticalAlignment="Center" FontSize="12.5"/>
-                    </StackPanel>
-                </Border>
-                <Button Name="btnThemeToggle" Grid.Column="3" Content="☀️ Jasny motyw" Padding="12,5" Margin="12,0,0,0" VerticalAlignment="Center"/>
-            </Grid>
+                <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Text="Smart Tool for Deployment" FontSize="18" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="Konfiguracja stacji roboczych Windows  ·  v$script:ScriptVersion" Foreground="{DynamicResource ThemeMuted}" FontSize="11.5" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+            </DockPanel>
         </Border>
 
-        <!-- Zadania + panel boczny -->
-        <Grid Grid.Row="1" Margin="20,16,20,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="5*"/>
-                <ColumnDefinition Width="4*"/>
-            </Grid.ColumnDefinitions>
-
-            <Border Style="{StaticResource Card}" Margin="0,0,14,0">
-                <DockPanel>
-                    <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+        <!-- Zadania wdrożenia: profil i aplikacje u góry, zadania pogrupowane w trzech kolumnach -->
+        <Border Grid.Row="1" Style="{StaticResource Card}" Margin="20,16,20,16" Padding="18,14,18,4">
+            <DockPanel>
+                <DockPanel DockPanel.Dock="Top">
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Bottom">
+                        <Button Name="btnSelectAll" Content="Zaznacz wszystko" ToolTip="Zaznacza wszystkie zadania (bez trybu testowego)"/>
+                        <Button Name="btnDeselectAll" Content="Odznacz wszystko" Style="{StaticResource BarButton}"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <StackPanel Margin="0,0,12,0">
+                            <TextBlock Text="PROFIL WDROŻENIA" Style="{StaticResource Caption}"/>
+                            <ComboBox Name="cmbProfiles" Width="240" ToolTip="Profil zaznacza zestaw aplikacji przypisany do roli (Ustawienia → Profile)"/>
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Text="APLIKACJE" Style="{StaticResource Caption}"/>
+                            <Button Name="btnChooseApps" Content="Wybierz aplikacje" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left"/>
+                        </StackPanel>
+                    </StackPanel>
+                </DockPanel>
+                <Border DockPanel.Dock="Top" Height="1" Background="{DynamicResource ThemeBorder}" Margin="0,14,0,14"/>
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="24"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="24"/>
+                            <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="Zadania wdrożenia" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center"/>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal">
-                            <Button Name="btnSelectAll" Content="Zaznacz wszystko" Style="{StaticResource QuickButton}" Margin="0,0,6,0"/>
-                            <Button Name="btnDeselectAll" Content="Odznacz" Style="{StaticResource QuickButton}" Margin="0,0,6,0" ToolTip="Odznacz wszystko"/>
-                            <Button Name="btnInvertSelection" Content="Odwróć" Style="{StaticResource QuickButton}" ToolTip="Odwróć zaznaczenie"/>
-                        </StackPanel>
+                        <StackPanel Name="spTaskCol0" Grid.Column="0"/>
+                        <StackPanel Name="spTaskCol1" Grid.Column="2"/>
+                        <StackPanel Name="spTaskCol2" Grid.Column="4"/>
                     </Grid>
-                    <Border DockPanel.Dock="Top" Height="1" Background="{DynamicResource ThemeBorder}" Margin="0,0,0,6"/>
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <StackPanel Name="spCheckboxes"/>
-                    </ScrollViewer>
-                </DockPanel>
-            </Border>
-
-            <Border Grid.Column="1" Style="{StaticResource Card}">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0,0,4,0">
-                    <StackPanel>
-                        <TextBlock Text="PROFIL WDROŻENIA (ROLA)" Style="{StaticResource Caption}"/>
-                        <ComboBox Name="cmbProfiles" Margin="0,0,0,10"/>
-                        <Button Name="btnChooseApps" Content="Wybierz aplikacje" Margin="0,0,0,16" Style="{StaticResource PrimaryButton}"/>
-
-                        <TextBlock Text="KONFIGURACJA I LOGI" Style="{StaticResource Caption}"/>
-                        <Button Name="btnSettings" Content="Ustawienia..." Style="{StaticResource SideButton}"/>
-                        <Button Name="btnEditConfig" Content="Edytuj config.json w Notatniku" Style="{StaticResource SideButton}"/>
-                        <Button Name="btnReloadConfig" Content="Przeładuj config.json (zaktualizuj GUI)" Style="{StaticResource SideButton}"/>
-                        <Button Name="btnLogs" Content="Przeglądaj / Zapisz logi" Style="{StaticResource SideButton}" Margin="0,0,0,16"/>
-
-                        <TextBlock Text="SZYBKIE NARZĘDZIA" Style="{StaticResource Caption}"/>
-                        <Grid>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                            </Grid.RowDefinitions>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <Button Name="btnSysProps" Content="SysProperties" Grid.Row="0" Grid.Column="0" Margin="0,0,4,8" Style="{StaticResource QuickButton}" ToolTip="Zaawansowane ustawienia systemu (Właściwości systemu)"/>
-                            <Button Name="btnCompMgmt" Content="Zarządzanie" Grid.Row="0" Grid.Column="1" Margin="4,0,0,8" Style="{StaticResource QuickButton}" ToolTip="Zarządzanie komputerem (compmgmt.msc)"/>
-                            <Button Name="btnRegEdit" Content="RegEdit" Grid.Row="1" Grid.Column="0" Margin="0,0,4,8" Style="{StaticResource QuickButton}" ToolTip="Edytor rejestru (regedit)"/>
-                            <Button Name="btnPrinters" Content="Drukarki" Grid.Row="1" Grid.Column="1" Margin="4,0,0,8" Style="{StaticResource QuickButton}" ToolTip="Klasyczny widok urządzeń i drukarek"/>
-                            <Button Name="btnSysInfo" Content="Informacje o systemie" Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,0,8" ToolTip="Podstawowe informacje o sprzęcie i systemie"/>
-                            <Button Name="btnUninstaller" Content="Odinstaluj programy" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Style="{StaticResource DangerButton}" ToolTip="Moduł do wymuszania cichej deinstalacji oprogramowania"/>
-                        </Grid>
-                    </StackPanel>
                 </ScrollViewer>
-            </Border>
-        </Grid>
+            </DockPanel>
+        </Border>
 
-        <!-- Postęp -->
-        <StackPanel Grid.Row="2" Margin="20,16,20,14">
-            <TextBlock Name="txtProgressInfo" Text="Oczekiwanie na rozpoczęcie..." Margin="0,0,0,8" FontWeight="SemiBold"/>
-            <ProgressBar Name="progressBar" Height="10" Minimum="0" Maximum="100" Margin="0,0,0,6"/>
-            <ProgressBar Name="progressBarDownload" Height="5" Minimum="0" Maximum="100" Foreground="{DynamicResource ThemeSuccess}"/>
-        </StackPanel>
-
-        <!-- Akcje -->
-        <Border Grid.Row="3" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,14">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="120"/>
-                    <ColumnDefinition Width="120"/>
-                </Grid.ColumnDefinitions>
-                <Button Name="btnStart" Grid.Column="0" Content="ROZPOCZNIJ KONFIGURACJĘ" FontSize="17" FontWeight="Bold" Style="{StaticResource SuccessButton}" Margin="0,0,10,0"/>
-                <Button Name="btnPause" Grid.Column="1" Content="Pauza" FontSize="16" FontWeight="Bold" Style="{StaticResource WarningButton}" Margin="0,0,10,0" IsEnabled="False"/>
-                <Button Name="btnCancelDeploy" Grid.Column="2" Content="Przerwij" FontSize="16" FontWeight="Bold" Style="{StaticResource DangerButton}" IsEnabled="False"/>
-            </Grid>
+        <!-- Pasek stanu: postęp po lewej, akcje po prawej (Pauza/Przerwij widoczne tylko w trakcie wdrożenia) -->
+        <Border Grid.Row="2" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,10">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="20,0,0,0">
+                    <Button Name="btnPause" Content="Pauza" Style="{StaticResource WarningButton}" MinWidth="90" Padding="16,9" Margin="0,0,8,0" IsEnabled="False" Visibility="Collapsed"/>
+                    <Button Name="btnCancelDeploy" Content="Przerwij" Style="{StaticResource DangerButton}" MinWidth="90" Padding="16,9" Margin="0,0,8,0" IsEnabled="False" Visibility="Collapsed"/>
+                    <Button Name="btnStart" Content="▶  Rozpocznij konfigurację" Style="{StaticResource SuccessButton}" FontSize="14" Padding="22,9" MinWidth="230"/>
+                </StackPanel>
+                <StackPanel VerticalAlignment="Center">
+                    <DockPanel Margin="0,0,0,6">
+                        <TextBlock Name="txtStopwatch" DockPanel.Dock="Right" Text="⏱ 00:00:00" Foreground="{DynamicResource ThemeMuted}" FontWeight="SemiBold" Margin="12,0,0,0" Visibility="Collapsed"/>
+                        <TextBlock Name="txtProgressInfo" Text="Gotowy do rozpoczęcia" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                    </DockPanel>
+                    <ProgressBar Name="progressBar" Height="6" Minimum="0" Maximum="100"/>
+                    <ProgressBar Name="progressBarDownload" Height="3" Minimum="0" Maximum="100" Margin="0,3,0,0" Foreground="{DynamicResource ThemeSuccess}" Visibility="Hidden" ToolTip="Postęp pobierania pliku"/>
+                </StackPanel>
+            </DockPanel>
         </Border>
     </Grid>
 </Window>
@@ -6610,9 +6696,8 @@ $Window = New-ThemedWindow -Xaml $mainXaml -NoOwner
 $btnThemeToggle      = $Window.FindName("btnThemeToggle")
 $btnSelectAll        = $Window.FindName("btnSelectAll")
 $btnDeselectAll      = $Window.FindName("btnDeselectAll")
-$btnInvertSelection  = $Window.FindName("btnInvertSelection")
-$spCheckboxes        = $Window.FindName("spCheckboxes")
 $btnChooseApps       = $Window.FindName("btnChooseApps")
+$btnTools            = $Window.FindName("btnTools")
 $btnSettings         = $Window.FindName("btnSettings")
 $btnEditConfig       = $Window.FindName("btnEditConfig")
 $btnReloadConfig     = $Window.FindName("btnReloadConfig")
@@ -6623,7 +6708,6 @@ $btnRegEdit         = $Window.FindName("btnRegEdit")
 $btnPrinters         = $Window.FindName("btnPrinters")
 $btnSysInfo          = $Window.FindName("btnSysInfo")
 $btnUninstaller      = $Window.FindName("btnUninstaller")
-$rtbLog              = $Window.FindName("rtbLog")
 $progressBar         = $Window.FindName("progressBar")
 $progressBarDownload = $Window.FindName("progressBarDownload")
 $txtProgressInfo     = $Window.FindName("txtProgressInfo")
@@ -6659,14 +6743,22 @@ try {
     }
 } catch { }
 
+# Każde zadanie trafia do swojej grupy ($script:TaskGroups). Etykieta jako zawijany TextBlock -
+# przy wąskim oknie przechodzi do drugiej linii zamiast się ucinać.
+$taskGroupPanels = Add-TaskGroupPanels -Columns @($Window.FindName("spTaskCol0"), $Window.FindName("spTaskCol1"), $Window.FindName("spTaskCol2"))
 foreach ($key in $checkboxOptions.Keys) {
+    $opt = $checkboxOptions[$key]
     $cb = New-Object System.Windows.Controls.CheckBox
-    $cb.Content = $checkboxOptions[$key].Text
+    $cbLabel = New-Object System.Windows.Controls.TextBlock
+    $cbLabel.Text = $opt.Text
+    $cbLabel.TextWrapping = [System.Windows.TextWrapping]::Wrap
+    $cb.Content = $cbLabel
     $cb.Name = $key
-    $cb.IsChecked = $checkboxOptions[$key].Enabled
-    $cb.ToolTip = $checkboxOptions[$key].Tooltip
-    
-    $spCheckboxes.Children.Add($cb) | Out-Null
+    $cb.IsChecked = $opt.Enabled
+    $cb.ToolTip = $opt.Tooltip
+    if ($key -eq "DryRun") { $cb.SetResourceReference([System.Windows.Controls.Control]::ForegroundProperty, "ThemeDryRun") }
+
+    [void]$taskGroupPanels[$opt.Group].Children.Add($cb)
     $CheckboxControls[$key] = $cb
 }
 
@@ -6685,7 +6777,8 @@ try {
 function Set-AppTheme {
     foreach ($w in (Get-OpenAppWindows)) { Update-WindowTheme $w }
     if ($null -ne $btnThemeToggle) {
-        $btnThemeToggle.Content = if ($script:isDarkTheme) { "☀️ Jasny motyw" } else { "🌙 Ciemny motyw" }
+        $btnThemeToggle.Content = if ($script:isDarkTheme) { "☀" } else { "☾" }
+        $btnThemeToggle.ToolTip = if ($script:isDarkTheme) { "Przełącz na jasny motyw" } else { "Przełącz na ciemny motyw" }
     }
     # Kolory wierszy logu są zapisane w danych wierszy (RowColorHex) - przebudowujemy tabelę,
     # żeby wzięła kolory z nowej palety.
@@ -6709,9 +6802,17 @@ $btnThemeToggle.Add_Click({
     } catch { }
 })
 
-$btnSelectAll.Add_Click({ foreach ($cb in $spCheckboxes.Children) { $cb.IsChecked = $true } })
-$btnDeselectAll.Add_Click({ foreach ($cb in $spCheckboxes.Children) { $cb.IsChecked = $false } })
-$btnInvertSelection.Add_Click({ foreach ($cb in $spCheckboxes.Children) { $cb.IsChecked = -not $cb.IsChecked } })
+# "Zaznacz wszystko" pomija tryb testowy - wcześniej po cichu zamieniał całe wdrożenie w symulację.
+$btnSelectAll.Add_Click({ foreach ($k in @($CheckboxControls.Keys)) { if ($k -ne "DryRun") { $CheckboxControls[$k].IsChecked = $true } } })
+$btnDeselectAll.Add_Click({ foreach ($cb in $CheckboxControls.Values) { $cb.IsChecked = $false } })
+
+# Menu "Narzędzia" otwierane zwykłym kliknięciem (nie tylko prawym przyciskiem).
+$btnTools.Add_Click({
+    $toolsMenu = $btnTools.ContextMenu
+    $toolsMenu.PlacementTarget = $btnTools
+    $toolsMenu.Placement = [System.Windows.Controls.Primitives.PlacementMode]::Bottom
+    $toolsMenu.IsOpen = $true
+})
 
 $cmbProfiles.Add_SelectionChanged({
     if ($script:ignoreProfileChange) { return }
@@ -6833,9 +6934,22 @@ $btnCancelDeploy.Add_Click({
     }
 })
 
-$CheckboxControls["InstallApplications"].Add_Click({
-    $btnChooseApps.IsEnabled = ($CheckboxControls["InstallApplications"].IsChecked -eq $true)
-})
+# Checked/Unchecked zamiast Click: Click nie zachodzi przy zmianie z kodu (profil, "Zaznacz
+# wszystko"), więc przycisk wyboru aplikacji rozjeżdżał się ze stanem zadania.
+$syncChooseApps = { $btnChooseApps.IsEnabled = ($CheckboxControls["InstallApplications"].IsChecked -eq $true) }
+$CheckboxControls["InstallApplications"].Add_Checked($syncChooseApps)
+$CheckboxControls["InstallApplications"].Add_Unchecked($syncChooseApps)
+& $syncChooseApps
+
+# Przy trybie testowym przycisk startu mówi wprost, że to symulacja.
+$syncStartLabel = {
+    if ($btnStart.IsEnabled) {
+        $btnStart.Content = if ($CheckboxControls["DryRun"].IsChecked -eq $true) { "▶  Rozpocznij symulację" } else { "▶  Rozpocznij konfigurację" }
+    }
+}
+$CheckboxControls["DryRun"].Add_Checked($syncStartLabel)
+$CheckboxControls["DryRun"].Add_Unchecked($syncStartLabel)
+& $syncStartLabel
 
 $Window.Add_KeyDown({
     if ($_.Key -eq [System.Windows.Input.Key]::Enter) {
@@ -7000,7 +7114,7 @@ $script:networkCheckTimer.Add_Tick({
                 if ($script:WebProbe.State -eq 'Idle') { Start-WebSourceProbe -Url $url }
                 # Do czasu pierwszej odpowiedzi pokazujemy sam adres IP; potem ostatni znany wynik.
                 if ($null -ne $script:LastWebStatus) {
-                    $statusText = "Sieć: $ipStr | $($script:LastWebStatus.Text)"
+                    $statusText = "Sieć: $ipStr  ·  $($script:LastWebStatus.Text)"
                     $statusColor = $script:LastWebStatus.Color
                 }
             } else {
@@ -7010,9 +7124,11 @@ $script:networkCheckTimer.Add_Tick({
 
         $shpNetworkStatus.SetResourceReference([System.Windows.Shapes.Shape]::FillProperty, $statusColor)
         $txtNetworkStatus.Text = $statusText
+        $txtNetworkStatus.ToolTip = $statusText
     } else {
         $shpNetworkStatus.SetResourceReference([System.Windows.Shapes.Shape]::FillProperty, "ThemeDanger")
         $txtNetworkStatus.Text = "Brak połączenia sieciowego"
+        $txtNetworkStatus.ToolTip = $null
     }
 })
 $script:networkCheckTimer.Start()
