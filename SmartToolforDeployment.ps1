@@ -2381,7 +2381,20 @@ function Join-Domain {
         Write-Log "Wymagane jest ponowne uruchomienie komputera, aby zmiany zaczęły obowiązywać."
     }
     catch {
-        Write-Log "Błąd dołączania do domeny: $_" -IsError
+        # Add-Computer -NewName najpierw dołącza (pod starą nazwą), a dopiero potem zmienia nazwę.
+        # Gdy zawiedzie tylko zmiana nazwy (np. konto o tej nazwie już jest w AD), komputer JEST
+        # w domenie - wtedy nie wolno już robić zapasowego Rename-Computer bez poświadczeń domeny
+        # (zmieniłby nazwę tylko lokalnie i rozjechał ją z kontem w AD).
+        $joinedAnyway = $_.FullyQualifiedErrorId -like 'FailToRenameAfterJoinDomain*'
+        if (-not $joinedAnyway -and -not [string]::IsNullOrWhiteSpace($script:PendingComputerName)) {
+            try { $joinedAnyway = [bool](Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop).PartOfDomain } catch { }
+        }
+        if ($joinedAnyway -and -not [string]::IsNullOrWhiteSpace($script:PendingComputerName)) {
+            Write-Log "Dołączono do domeny $DomainName, ale zmiana nazwy na '$($script:PendingComputerName)' nie powiodła się: $_ Zmień nazwę ręcznie (np. sysdm.cpl) albo usuń stare konto komputera w AD." -IsError
+            $script:PendingComputerName = $null
+        } else {
+            Write-Log "Błąd dołączania do domeny: $_" -IsError
+        }
     }
 }
 
@@ -2549,9 +2562,12 @@ function Test-ForAppUpdate {
     param([switch]$Silent)
     try {
         $cfg = Get-Config
-        if ($null -eq $cfg.AutoUpdate -or $cfg.AutoUpdate.Enabled -ne $true -or [string]::IsNullOrWhiteSpace([string]$cfg.AutoUpdate.VersionCheckPath)) {
+        # AutoUpdate.Enabled włącza tylko sprawdzanie przy starcie (-Silent); ręczne "Sprawdź teraz"
+        # potrzebuje jedynie ścieżki - wcześniej bez Enabled=true odmawiało działania.
+        if ($Silent -and ($null -eq $cfg.AutoUpdate -or $cfg.AutoUpdate.Enabled -ne $true)) { return }
+        if ($null -eq $cfg.AutoUpdate -or [string]::IsNullOrWhiteSpace([string]$cfg.AutoUpdate.VersionCheckPath)) {
             if (-not $Silent) {
-                Show-ThemedMessageBox -Message "Automatyczne aktualizacje nie są skonfigurowane.`nUstaw AutoUpdate.Enabled=true i AutoUpdate.VersionCheckPath w config.json (ścieżka UNC lub URL do katalogu z plikiem std_version.json)." -Title "Aktualizacje" -Button "OK" -Image "Information" | Out-Null
+                Show-ThemedMessageBox -Message "Nie ustawiono ścieżki aktualizacji.`nWpisz ją w Ustawienia → Zaawansowane (AutoUpdate.VersionCheckPath: ścieżka UNC lub URL do katalogu z plikiem std_version.json)." -Title "Aktualizacje" -Button "OK" -Image "Information" | Out-Null
             }
             return
         }
@@ -3242,7 +3258,9 @@ function Show-AppSelectionWindow {
 
         <Border Grid.Row="1" Style="{StaticResource Card}" Margin="20,0,20,0" Padding="14,10,4,10">
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                <WrapPanel Name="spApps" ItemWidth="275"/>
+                <!-- Bez ItemWidth: przy ItemWidth ukryte (Collapsed) pozycje nadal zajmują miejsce w wierszu
+                     i wyniki wyszukiwania rozsypywały się z dziurami. Szerokość ma każda pozycja. -->
+                <WrapPanel Name="spApps"/>
             </ScrollViewer>
         </Border>
 
@@ -3275,6 +3293,7 @@ function Show-AppSelectionWindow {
     foreach ($name in $programs.PSObject.Properties.Name | Sort-Object) {
         $cb = New-Object System.Windows.Controls.CheckBox
         $cb.Content = $name
+        $cb.Width = 263
         
         # Pamiętaj wybór w trakcie sesji za pomocą $script:SelectedApps
         if ($script:SelectedApps.ContainsKey($name)) {
@@ -4425,7 +4444,7 @@ function Show-SystemInfoWindow {
 
         <!-- Dwie zakładki zamiast jednej strony: lista programów nie jest już ściskana do zera przez
              karty dysków i sieci nad nią. -->
-        <TabControl Grid.Row="1" Margin="20,12,20,12">
+        <TabControl Name="tabSysInfo" Grid.Row="1" Margin="20,12,20,12">
             <TabItem Header="Sprzęt i system">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Margin="0,0,6,0">
@@ -5581,7 +5600,12 @@ function Show-ProfileEditDialog {
     if ($config.Programs) {
         foreach ($p in $config.Programs.PSObject.Properties.Name | Sort-Object) {
             $cb = New-Object System.Windows.Controls.CheckBox
-            $cb.Content = $p
+            # Zawijana etykieta - długie nazwy (np. IManageWorkDesktopforWindows) nie są ucinane.
+            $cbLabel = New-Object System.Windows.Controls.TextBlock
+            $cbLabel.Text = $p
+            $cbLabel.TextWrapping = [System.Windows.TextWrapping]::Wrap
+            $cb.Content = $cbLabel
+            $cb.ToolTip = $p
             if ($ProfileApps -and ($ProfileApps -contains $p)) {
                 $cb.IsChecked = $true
             }
@@ -5677,7 +5701,7 @@ function Show-ConfigEditor {
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Ustawienia" Width="920" Height="640" MinWidth="860" MinHeight="500" WindowStartupLocation="CenterOwner"
+        Title="Ustawienia" Width="920" Height="640" MinWidth="860" MinHeight="580" WindowStartupLocation="CenterOwner"
         Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" FontSize="13">
     <Window.Resources>
         <Style TargetType="TabItem" BasedOn="{StaticResource {x:Type TabItem}}">
@@ -6562,7 +6586,8 @@ function Show-ConfigEditor {
         }
     })
 
-    $btnCancel.Add_Click({ $dlg.Close() })
+    # Anuluj zamyka okno przez IsCancel="True" (DialogResult=false). Dodatkowe $dlg.Close() w Click
+    # powodowało dwukrotne pytanie o niezapisane zmiany po odpowiedzi "Nie".
 
     # Zamknięcie (Anuluj, Esc, krzyżyk) z niezapisanymi zmianami pyta o potwierdzenie - zmiany
     # ze wszystkich zakładek przepadłyby naraz.
@@ -7168,6 +7193,14 @@ $script:networkCheckTimer.Add_Tick({
     }
 })
 $script:networkCheckTimer.Start()
+
+# "Sprawdzaj przy starcie" (AutoUpdate.Enabled) - po pierwszym wyświetleniu okna głównego, żeby
+# ewentualne pytanie o aktualizację miało właściciela, a zamknięcie okna po pobraniu działało.
+$Window.Add_ContentRendered({
+    if ($script:StartupUpdateChecked) { return }
+    $script:StartupUpdateChecked = $true
+    Test-ForAppUpdate -Silent
+})
 
 if ($null -eq $global:PesterTesting) {
     Get-AppSelection

@@ -217,7 +217,7 @@ function global:Save-UiView {
 function global:Save-UiTabbedView {
     param([System.Windows.Window]$Win, [string]$Name)
     $tabs = $null
-    foreach ($tabName in 'tabSettings') { if ($null -eq $tabs) { $tabs = $Win.FindName($tabName) } }
+    foreach ($tabName in 'tabSettings', 'tabSysInfo') { if ($null -eq $tabs) { $tabs = $Win.FindName($tabName) } }
     if ($null -eq $tabs) { Save-UiView -Win $Win -Name $Name; return }
     for ($i = 0; $i -lt $tabs.Items.Count; $i++) {
         $tabs.SelectedIndex = $i

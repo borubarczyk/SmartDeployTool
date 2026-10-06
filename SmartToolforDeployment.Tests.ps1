@@ -443,6 +443,25 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
                 $script:PendingComputerName = $null
             }
         }
+
+        It "Gdy Add-Computer dołączy, a nie zmieni nazwy, nie zostawia nazwy do lokalnego Rename-Computer" {
+            $script:DryRun = $false
+            $configPath = Join-Path $TestDrive "config-domain2.json"
+            '{ "DomainJoin": { "DomainName": "firma.local", "Username": "FIRMA\\admin" } }' | Set-Content -Path $configPath -Encoding UTF8
+            try {
+                Mock Get-Credential { New-Object System.Management.Automation.PSCredential("FIRMA\admin", (ConvertTo-SecureString "x" -AsPlainText -Force)) }
+                Mock Add-Computer {
+                    throw (New-Object System.Management.Automation.ErrorRecord((New-Object System.Exception "Konto już istnieje"), 'FailToRenameAfterJoinDomain,Microsoft.PowerShell.Commands.AddComputerCommand', 'OperationStopped', $null))
+                }
+                Mock Write-Log { }
+                $script:PendingComputerName = "PC-NOWY"
+                Join-Domain
+                $script:PendingComputerName | Should -BeNullOrEmpty
+                Should -Invoke Write-Log -ParameterFilter { $Text -match "Dołączono do domeny firma.local, ale zmiana nazwy" }
+            } finally {
+                $script:PendingComputerName = $null
+            }
+        }
     }
 
     Context "Zapis ustawień (Set-ConfigValue, Get-ConfigSection)" {
