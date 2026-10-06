@@ -433,4 +433,66 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             $cfg.DomainJoin.DomainName | Should -Be 'firma.local'
         }
     }
+
+    Context "Motyw graficzny (wspólny wygląd wszystkich okien)" {
+        BeforeAll {
+            # Wszystkie bloki XAML okien ze skryptu (logowanie, komunikaty, Ustawienia, okno główne...).
+            $script:ThemeTestSource = Get-Content "$PSScriptRoot\SmartToolforDeployment.ps1" -Raw -Encoding UTF8
+            $script:ThemeTestBlocks = @([regex]::Matches($script:ThemeTestSource, '(?s)\[xml\]\$\w+ = @"\r?\n(.*?)\r?\n"@') | ForEach-Object { $_.Groups[1].Value })
+
+            # Wczytuje okno przez New-ThemedWindow i wymusza nałożenie szablonów kontrolek (Measure/
+            # Arrange), żeby błąd w stylu lub szablonie wyszedł w teście, a nie dopiero po kliknięciu.
+            $script:LoadAllThemedWindows = {
+                foreach ($block in $script:ThemeTestBlocks) {
+                    try {
+                        [xml]$xaml = $ExecutionContext.InvokeCommand.ExpandString($block)
+                        $w = New-ThemedWindow -Xaml $xaml -NoOwner
+                        $content = $w.Content
+                        $content.Measure((New-Object System.Windows.Size 1200, 900))
+                        $content.Arrange((New-Object System.Windows.Rect 0, 0, 1200, 900))
+                    } catch {
+                        # Nazwa okna i najgłębszy wyjątek - sam XamlParseException mówi niewiele.
+                        $inner = $_.Exception
+                        while ($null -ne $inner.InnerException) { $inner = $inner.InnerException }
+                        $title = if ($block -match 'Title="([^"]*)"') { $Matches[1] } else { $block.Substring(0, [Math]::Min(80, $block.Length)) }
+                        throw "Okno '$title': $($inner.Message)"
+                    }
+                }
+            }
+        }
+
+        AfterAll {
+            $script:isDarkTheme = $true
+        }
+
+        It "Paleta jasna i ciemna mają ten sam zestaw kluczy" {
+            @($script:ThemePalettes.Light.Keys) | Should -Be @($script:ThemePalettes.Dark.Keys)
+        }
+
+        It "Znajduje okna XAML w skrypcie" {
+            $script:ThemeTestBlocks.Count | Should -BeGreaterThan 20
+        }
+
+        It "Każde okno wczytuje się z motywem ciemnym" {
+            $script:isDarkTheme = $true
+            { & $script:LoadAllThemedWindows } | Should -Not -Throw
+        }
+
+        It "Każde okno wczytuje się z motywem jasnym" {
+            $script:isDarkTheme = $false
+            { & $script:LoadAllThemedWindows } | Should -Not -Throw
+        }
+
+        It "Przełączenie motywu podmienia kolory w już otwartym oknie" {
+            $script:isDarkTheme = $true
+            [xml]$xaml = '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Background="{DynamicResource ThemeBackground}"><Grid/></Window>'
+            $w = New-ThemedWindow -Xaml $xaml -NoOwner
+            $w.Background.Color.ToString() | Should -Be ('#FF' + (Get-ThemeColor 'ThemeBackground').TrimStart('#'))
+
+            $script:isDarkTheme = $false
+            Update-WindowTheme $w
+            $w.Background.Color.ToString() | Should -Be ('#FF' + (Get-ThemeColor 'ThemeBackground').TrimStart('#'))
+            $w.Background.Color.ToString() | Should -Be ('#FF' + $script:ThemePalettes.Light.ThemeBackground.TrimStart('#'))
+        }
+    }
 }
