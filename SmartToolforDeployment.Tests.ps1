@@ -444,11 +444,19 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             # Arrange), żeby błąd w stylu lub szablonie wyszedł w teście, a nie dopiero po kliknięciu.
             $script:LoadAllThemedWindows = {
                 foreach ($block in $script:ThemeTestBlocks) {
-                    [xml]$xaml = $ExecutionContext.InvokeCommand.ExpandString($block)
-                    $w = New-ThemedWindow -Xaml $xaml -NoOwner
-                    $content = $w.Content
-                    $content.Measure((New-Object System.Windows.Size 1200, 900))
-                    $content.Arrange((New-Object System.Windows.Rect 0, 0, 1200, 900))
+                    try {
+                        [xml]$xaml = $ExecutionContext.InvokeCommand.ExpandString($block)
+                        $w = New-ThemedWindow -Xaml $xaml -NoOwner
+                        $content = $w.Content
+                        $content.Measure((New-Object System.Windows.Size 1200, 900))
+                        $content.Arrange((New-Object System.Windows.Rect 0, 0, 1200, 900))
+                    } catch {
+                        # Nazwa okna i najgłębszy wyjątek - sam XamlParseException mówi niewiele.
+                        $inner = $_.Exception
+                        while ($null -ne $inner.InnerException) { $inner = $inner.InnerException }
+                        $title = if ($block -match 'Title="([^"]*)"') { $Matches[1] } else { $block.Substring(0, [Math]::Min(80, $block.Length)) }
+                        throw "Okno '$title': $($inner.Message)"
+                    }
                 }
             }
         }

@@ -132,16 +132,17 @@ $script:ThemePalettes = @{
 }
 # Systemowe pędzle Windows, z których korzystają domyślne szablony kontrolek (np. róg między
 # paskami przewijania w ScrollViewerze był jasnoszarym kwadratem w trybie ciemnym).
+# UWAGA: bez InactiveSelectionHighlight(Text)BrushKey - w .NET Framework są to aliasy
+# ControlBrushKey/ControlTextBrushKey, więc w słowniku pojawiał się zdublowany klucz
+# ("Item has already been added. Key in dictionary: 'ControlBrush'") i żadne okno się nie wczytywało.
 $script:ThemeSystemBrushKeys = [ordered]@{
-    ControlBrushKey                        = 'ThemePanel'
-    WindowBrushKey                         = 'ThemeTextBoxBg'
-    ControlTextBrushKey                    = 'ThemeText'
-    WindowTextBrushKey                     = 'ThemeText'
-    GrayTextBrushKey                       = 'ThemeFaint'
-    HighlightBrushKey                      = 'AccentColor'
-    HighlightTextBrushKey                  = 'ThemeOnAccent'
-    InactiveSelectionHighlightBrushKey     = 'ThemeSelection'
-    InactiveSelectionHighlightTextBrushKey = 'ThemeText'
+    ControlBrushKey       = 'ThemePanel'
+    WindowBrushKey        = 'ThemeTextBoxBg'
+    ControlTextBrushKey   = 'ThemeText'
+    WindowTextBrushKey    = 'ThemeText'
+    GrayTextBrushKey      = 'ThemeFaint'
+    HighlightBrushKey     = 'AccentColor'
+    HighlightTextBrushKey = 'ThemeOnAccent'
 }
 $script:isDarkTheme = $true
 
