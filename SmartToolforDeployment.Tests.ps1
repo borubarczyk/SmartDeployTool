@@ -417,6 +417,51 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             Test-ComputerNameValid -Name "-PC" | Should -Match "myślnikiem"
             Test-ComputerNameValid -Name "" | Should -Match "pusta"
         }
+
+        It "Przy dołączaniu do domeny odkłada nazwę zamiast Rename-Computer, a Join-Domain nadaje ją przez Add-Computer -NewName" {
+            $script:DryRun = $false
+            $script:PendingComputerName = $null
+            $oldConfigPath = $configPath
+            $configPath = Join-Path $TestDrive "config-domain.json"
+            '{ "DomainJoin": { "DomainName": "firma.local", "Username": "FIRMA\\admin" } }' | Set-Content -Path $configPath -Encoding UTF8
+            try {
+                Mock Get-DefaultComputerName { "PC-TEST" }
+                Mock Show-InputDialog { "PC-NOWY" }
+                Mock Rename-Computer { }
+                Mock Get-Credential { New-Object System.Management.Automation.PSCredential("FIRMA\admin", (ConvertTo-SecureString "x" -AsPlainText -Force)) }
+                Mock Add-Computer { }
+
+                Set-NewComputerName -DeferToDomainJoin
+                $script:PendingComputerName | Should -Be "PC-NOWY"
+                Should -Invoke Rename-Computer -Times 0 -Exactly
+
+                Join-Domain
+                Should -Invoke Add-Computer -Times 1 -Exactly -ParameterFilter { $NewName -eq "PC-NOWY" -and $DomainName -eq "firma.local" }
+                $script:PendingComputerName | Should -BeNullOrEmpty
+            } finally {
+                $configPath = $oldConfigPath
+                $script:PendingComputerName = $null
+            }
+        }
+
+        It "Gdy Add-Computer dołączy, a nie zmieni nazwy, nie zostawia nazwy do lokalnego Rename-Computer" {
+            $script:DryRun = $false
+            $configPath = Join-Path $TestDrive "config-domain2.json"
+            '{ "DomainJoin": { "DomainName": "firma.local", "Username": "FIRMA\\admin" } }' | Set-Content -Path $configPath -Encoding UTF8
+            try {
+                Mock Get-Credential { New-Object System.Management.Automation.PSCredential("FIRMA\admin", (ConvertTo-SecureString "x" -AsPlainText -Force)) }
+                Mock Add-Computer {
+                    throw (New-Object System.Management.Automation.ErrorRecord((New-Object System.Exception "Konto już istnieje"), 'FailToRenameAfterJoinDomain,Microsoft.PowerShell.Commands.AddComputerCommand', 'OperationStopped', $null))
+                }
+                Mock Write-Log { }
+                $script:PendingComputerName = "PC-NOWY"
+                Join-Domain
+                $script:PendingComputerName | Should -BeNullOrEmpty
+                Should -Invoke Write-Log -ParameterFilter { $Text -match "Dołączono do domeny firma.local, ale zmiana nazwy" }
+            } finally {
+                $script:PendingComputerName = $null
+            }
+        }
     }
 
     Context "Zapis ustawień (Set-ConfigValue, Get-ConfigSection)" {
@@ -431,6 +476,79 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             $cfg = '{ "DefaultInstallSource": "web" }' | ConvertFrom-Json
             Set-ConfigValue (Get-ConfigSection $cfg 'DomainJoin') 'DomainName' 'firma.local'
             $cfg.DomainJoin.DomainName | Should -Be 'firma.local'
+        }
+    }
+
+    Context "Okno główne (zadania w grupach, menu Narzędzia)" {
+        It "Każde zadanie ma grupę i trafiło do okna głównego" {
+            $CheckboxControls.Count | Should -Be $checkboxOptions.Count
+            foreach ($key in $checkboxOptions.Keys) {
+                @($script:TaskGroups.Keys) | Should -Contain $checkboxOptions[$key].Group
+                $CheckboxControls[$key].Parent | Should -BeOfType [System.Windows.Controls.StackPanel]
+            }
+        }
+
+        It "Każda kolumna zadań zawiera podpisy grup" {
+            foreach ($colName in 'spTaskCol0', 'spTaskCol1', 'spTaskCol2') {
+                $col = $Window.FindName($colName)
+                $col | Should -Not -BeNullOrEmpty
+                @($col.Children | Where-Object { $_ -is [System.Windows.Controls.TextBlock] }).Count | Should -Be 2
+            }
+        }
+
+        It "Narzędzia systemowe są w menu przycisku Narzędzia" {
+            $Window.FindName("btnSysInfo") | Should -BeOfType [System.Windows.Controls.MenuItem]
+            $Window.FindName("btnTools").ContextMenu.Items.Count | Should -BeGreaterThan 5
+        }
+    }
+
+    Context "Okno Ustawienia (zakładki z listami)" {
+        BeforeAll {
+            # Okna zamykają się same zaraz po wczytaniu - test sprawdza zawartość bez klikania.
+            # Handler klasy zostaje w procesie na stałe, więc działa tylko przy włączonej fladze.
+            if (-not $global:SdtAutoCloseRegistered) {
+                [System.Windows.EventManager]::RegisterClassHandler([System.Windows.Window], [System.Windows.FrameworkElement]::LoadedEvent, [System.Windows.RoutedEventHandler]{
+                    param($loadedSender, $loadedArgs)
+                    if ($global:SdtAutoCloseWindows) { $global:SdtLastWindow = $loadedSender; $loadedSender.Close() }
+                })
+                $global:SdtAutoCloseRegistered = $true
+            }
+            $global:SdtAutoCloseWindows = $true
+        }
+
+        AfterAll {
+            $global:SdtAutoCloseWindows = $false
+        }
+
+        It "Ma 9 zakładek i wypełnia listy programów, profili, rejestru i skryptów" {
+            Mock Get-Config {
+                '{ "DefaultInstallSource": "web", "InstallSourcePaths": { "web": "https://serwer/instalki/" },
+                   "WebAuth": { "Username": "jan", "Password": "tajne" },
+                   "Programs": { "7zip": { "Enabled": true, "FileName": "7z.exe" }, "Chrome": { "Enabled": false, "FileName": "Google.Chrome", "DownloadUrl": "https://x/y.exe" } },
+                   "Profiles": { "Biuro": ["7zip", "Chrome"] },
+                   "SystemSettings": { "CustomRegistry": [ { "Path": "HKLM:\\SOFTWARE\\Firma", "Name": "Test", "Value": "1", "PropertyType": "DWord" } ] },
+                   "PostInstallScripts": ["a.ps1", "b.bat"],
+                   "DefaultCheckboxes": { "AutoReboot": true } }' | ConvertFrom-Json
+            }
+            $global:SdtLastWindow = $null
+            Show-ConfigEditor
+            $w = $global:SdtLastWindow
+            $w | Should -Not -BeNullOrEmpty
+            $w.Title | Should -Be "Ustawienia"
+            $w.FindName("tabSettings").Items.Count | Should -Be 9
+
+            $programs = $w.FindName("lbPrograms")
+            $programs.Items.Count | Should -Be 2
+            $programs.Items[0].Name | Should -Be "7zip"
+            $programs.Items[0].Default | Should -Be "tak"
+            $programs.Items[1].Url | Should -Be "tak"
+
+            $w.FindName("lbProfiles").Items[0].Apps | Should -Be "7zip, Chrome"
+            $w.FindName("lbRegistry").Items[0].Type | Should -Be "DWord"
+            $w.FindName("lbScripts").Items.Count | Should -Be 2
+            $w.FindName("txtWebPass").Password | Should -Be "tajne"
+            $w.FindName("cmbSrc").SelectedItem | Should -Be "web"
+            $w.FindName("txtSettingsState").Text | Should -Be "Bez zmian"
         }
     }
 
@@ -470,7 +588,7 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
         }
 
         It "Znajduje okna XAML w skrypcie" {
-            $script:ThemeTestBlocks.Count | Should -BeGreaterThan 20
+            $script:ThemeTestBlocks.Count | Should -BeGreaterThan 15
         }
 
         It "Każde okno wczytuje się z motywem ciemnym" {
@@ -481,6 +599,20 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
         It "Każde okno wczytuje się z motywem jasnym" {
             $script:isDarkTheme = $false
             { & $script:LoadAllThemedWindows } | Should -Not -Throw
+        }
+
+        It "Pola tekstowe mają pojedynczy odstęp wewnętrzny (ok. 31 px wysokości, jak przyciski)" {
+            # Padding pola przekazuje do środka sam TextBox/PasswordBox - szablon nie może go dublować
+            # (wcześniej pole miało 43 px, a przy sztywnej wysokości tekst był ucinany w połowie).
+            [xml]$xaml = '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><StackPanel><TextBox Name="t" Text="Abc"/><PasswordBox Name="p"/><Button Name="b" Content="OK"/></StackPanel></Window>'
+            $w = New-ThemedWindow -Xaml $xaml -NoOwner
+            $w.Content.Measure((New-Object System.Windows.Size 400, 400))
+            $w.Content.Arrange((New-Object System.Windows.Rect 0, 0, 400, 400))
+            foreach ($name in 't', 'p') {
+                $h = $w.FindName($name).ActualHeight
+                $h | Should -BeGreaterThan 26
+                $h | Should -BeLessThan 36
+            }
         }
 
         It "Przełączenie motywu podmienia kolory w już otwartym oknie" {

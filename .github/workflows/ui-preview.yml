@@ -1,0 +1,34 @@
+name: UI Preview
+
+# Renderuje wszystkie okna narzędzia (motyw ciemny i jasny) do plików PNG - podgląd wyglądu bez
+# uruchamiania aplikacji. Pliki są do pobrania jako artefakt "ui-preview" przy przebiegu workflow.
+on:
+  push:
+    paths:
+      - 'SmartToolforDeployment.ps1'
+      - 'tools/Render-UiPreview.ps1'
+      - '.github/workflows/ui-preview.yml'
+  workflow_dispatch:
+
+jobs:
+  render:
+    name: Render UI preview
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Render windows (dark + light)
+        shell: powershell
+        run: |
+          powershell -NoProfile -STA -ExecutionPolicy Bypass -File tools\Render-UiPreview.ps1 -Theme Dark -DumpLayout
+          powershell -NoProfile -STA -ExecutionPolicy Bypass -File tools\Render-UiPreview.ps1 -Theme Light
+          Get-ChildItem ui-preview -Recurse -Filter *.png | Measure-Object | ForEach-Object { "PNG: $($_.Count)" }
+
+      - name: Upload preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-preview
+          path: ui-preview
+          if-no-files-found: error
