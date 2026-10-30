@@ -307,10 +307,10 @@ Invoke-UiShot 'wpisz-tekst' { Show-InputDialog -Title "Zmiana nazwy komputera" -
 Invoke-UiShot 'wpisz-haslo' { Show-InputDialog -Title "Konto lokalnego administratora" -Message "Podaj hasło dla nowego konta 'LokalnyIT' (co najmniej 8 znaków):" -Password }
 Invoke-UiShot 'pin' { Show-PinPrompt }
 Invoke-UiShot 'wybor-aplikacji' { Show-AppSelectionWindow }
-Invoke-UiShot 'informacja' { Show-CustomInfoDialog -Title "Zakończono" -Message "Przetwarzanie deinstalacji zakończone.`n`nPoprawnie odinstalowane aplikacje zostały automatycznie usunięte z listy.`nJeśli instalator zwrócił błąd, aplikacja pozostała na liście oznaczona krzyżykiem (❌)." -ShowCopy -HtmlData "<html></html>" }
+Invoke-UiShot 'informacja' { Show-CustomInfoDialog -Title "Zakończono" -Message "Przetwarzanie deinstalacji zakończone.`n`nPoprawnie odinstalowane aplikacje zostały automatycznie usunięte z listy.`nJeśli instalator zwrócił błąd, aplikacja pozostała na liście oznaczona jako «Błąd»." -ShowCopy -HtmlData "<html></html>" }
 Invoke-UiShot 'potwierdzenie-deinstalacji' { Show-UninstallConfirmDialog -AppCount 3 -AppListText "- 7-Zip 23.01 (x64)`n- Google Chrome`n- Microsoft OneDrive" }
 Invoke-UiShot 'logi' { Show-LogWindow; Wait-UiCondition -Until { $null -eq $script:ActiveLogWindow -or -not $script:ActiveLogWindow.IsVisible } }
-Invoke-UiShot 'szczegoly-wpisu-logu' { Show-LogEntryDetail -Entry ([PSCustomObject]@{ RodzajText = '❌ Błąd'; DataText = '06.10.2026 09:12:44'; Kontekst = 'Automat'; Informacja = "Instalator 7-Zip zakończył się błędem (kod wyjścia: 1603).`r`nSzczegóły: Fatal error during installation."; RowColorHex = (Get-ThemeColor 'ThemeDanger') }) }
+Invoke-UiShot 'szczegoly-wpisu-logu' { Show-LogEntryDetail -Entry ([PSCustomObject]@{ RodzajText = 'Błąd'; RodzajKey = 'Error'; DataText = '06.10.2026 09:12:44'; Kontekst = 'Automat'; Informacja = "Instalator 7-Zip zakończył się błędem (kod wyjścia: 1603).`r`nSzczegóły: Fatal error during installation."; RowColorHex = (Get-ThemeColor 'ThemeDanger') }) }
 Invoke-UiShot 'informacje-o-systemie' { Show-SystemInfoWindow }
 Invoke-UiShot 'deinstalator' { Show-SoftwareUninstaller }
 Invoke-UiShot 'ustawienia' { Show-ConfigEditor }

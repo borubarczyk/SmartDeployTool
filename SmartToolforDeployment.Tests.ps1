@@ -536,6 +536,10 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             $w | Should -Not -BeNullOrEmpty
             $w.Title | Should -Be "Ustawienia"
             $w.FindName("tabSettings").Items.Count | Should -Be 9
+            # Nawigacja po lewej (NavTabControl): każda pozycja ma ikonę - encję czcionki ikon w Tag.
+            foreach ($tab in $w.FindName("tabSettings").Items) {
+                [string]$tab.Tag | Should -Not -BeNullOrEmpty -Because "zakładka $($tab.Header)"
+            }
 
             $programs = $w.FindName("lbPrograms")
             $programs.Items.Count | Should -Be 2
@@ -894,6 +898,105 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             } finally {
                 Set-DeployStatusDot Idle
             }
+        }
+
+        It "Teksty okien bez emoji (ikony tylko z czcionki ikon)" {
+            # Emoji (np. krzyżyk, ostrzeżenie, probówka) WPF rysuje czcionką zastępczą: inny rozmiar i kolor,
+            # w motywie jasnym bywają nieczytelne. Raporty HTML (nagłówki, linki, komórki) są poza zakresem.
+            $emoji = '[\u2300-\u23FF\u2600-\u27BF\u2B00-\u2BFF\u25B6\u25BE\u2139\uFE0F]|[\uD83C-\uDBFF][\uDC00-\uDFFF]'
+            $bad = New-Object System.Collections.Generic.List[string]
+            $xamlSources = New-Object System.Collections.Generic.List[string]
+            foreach ($block in $script:ThemeTestBlocks) { $xamlSources.Add($block) }
+            $xamlSources.Add($script:ThemeStylesXaml)
+            foreach ($block in $xamlSources) {
+                foreach ($line in ($block -split "`r?`n")) { if ($line -match $emoji) { $bad.Add($line.Trim()) } }
+            }
+            # Linie kodu, które ustawiają tekst kontrolek, komunikatów, powiadomień albo wpisów logu.
+            $uiLine = '(\.|\b)(Text|Content|Header|ToolTip|Title|StatusText|RodzajText)\s*=|-(Text|Message|Title)\s|Write-Log\s'
+            foreach ($line in ($script:ThemeTestSource -split "`r?`n")) {
+                if ($line -match '<h\d|<a |<td|<th|<input') { continue }
+                if ($line -match $uiLine -and $line -match $emoji) { $bad.Add($line.Trim()) }
+            }
+            ($bad -join "`n") | Should -Be ''
+        }
+
+        It "Ikony w XAML (encje &#xE...;) zawsze w czcionce ikon" {
+            # Encja ikony w zwykłej czcionce (Segoe UI) rysuje się jako pusty prostokąt.
+            $xamlSources = New-Object System.Collections.Generic.List[string]
+            foreach ($block in $script:ThemeTestBlocks) { $xamlSources.Add($block) }
+            $xamlSources.Add($script:ThemeStylesXaml)
+            $bad = foreach ($block in $xamlSources) {
+                foreach ($line in ($block -split "`r?`n")) {
+                    if ($line -match '&#xE[0-9A-F]{3};' -and $line -notmatch 'StaticResource Glyph|MDL2|<TabItem [^>]*Tag=') { $line.Trim() }
+                }
+            }
+            ($bad -join "`n") | Should -Be ''
+        }
+
+        It "Wiersze logu i deinstalatora: pastylka i kolor tekstu wg tonu z palety (DataTrigger)" {
+            $script:isDarkTheme = $true
+            $dark = $script:ThemePalettes.Dark
+            # Pierwszy element drzewa wizualnego o podanej nazwie (nazwy z DataTemplate nie są w FindName okna).
+            $findNamed = {
+                param($Root, [string]$Name)
+                $stack = New-Object System.Collections.Stack
+                $stack.Push($Root)
+                while ($stack.Count -gt 0) {
+                    $v = $stack.Pop()
+                    if ($v -is [System.Windows.FrameworkElement] -and $v.Name -eq $Name) { return $v }
+                    for ($i = 0; $i -lt [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($v); $i++) { $stack.Push([System.Windows.Media.VisualTreeHelper]::GetChild($v, $i)) }
+                }
+                return $null
+            }
+            $loadWindow = {
+                param([string]$Title)
+                $block = @($script:ThemeTestBlocks | Where-Object { $_ -match ('Title="' + [regex]::Escape($Title) + '"') })[0]
+                [xml]$xaml = $ExecutionContext.InvokeCommand.ExpandString($block)
+                return (New-ThemedWindow -Xaml $xaml -NoOwner)
+            }
+            $doLayout = {
+                param($Win)
+                $Win.Content.Measure((New-Object System.Windows.Size 1200, 900))
+                $Win.Content.Arrange((New-Object System.Windows.Rect 0, 0, 1200, 900))
+            }
+            $argb = { param([string]$Key) '#FF' + $dark[$Key].TrimStart('#') }
+
+            # Przeglądarka logów: pastylka "Rodzaj" i kolor wiersza wg RodzajKey.
+            $w = & $loadWindow 'Przeglądarka logów'
+            $lv = $w.FindName('lvLogs')
+            $lv.ItemsSource = @(
+                [PSCustomObject]@{ RodzajKey = 'Error'; RodzajText = 'Błąd'; DataText = '01.01.2026 10:00:00'; Kontekst = 'System'; Informacja = 'a' }
+                [PSCustomObject]@{ RodzajKey = 'Success'; RodzajText = 'Sukces'; DataText = '01.01.2026 10:00:01'; Kontekst = 'System'; Informacja = 'b' }
+                [PSCustomObject]@{ RodzajKey = 'Info'; RodzajText = 'Informacja'; DataText = '01.01.2026 10:00:02'; Kontekst = 'System'; Informacja = 'c' }
+            )
+            & $doLayout $w
+            $rows = foreach ($i in 0..2) { $lv.ItemContainerGenerator.ContainerFromIndex($i) }
+            @($rows | Where-Object { $null -ne $_ }).Count | Should -Be 3
+            (& $findNamed $rows[0] 'pill').Background.Color.ToString() | Should -Be (& $argb 'ThemeCritBack')
+            (& $findNamed $rows[0] 'txt').Foreground.Color.ToString() | Should -Be (& $argb 'ThemeCritFore')
+            $rows[0].Foreground.Color.ToString() | Should -Be (& $argb 'ThemeCritFore')
+            (& $findNamed $rows[1] 'pill').Background.Color.ToString() | Should -Be (& $argb 'ThemeOkBack')
+            $rows[1].Foreground.Color.ToString() | Should -Be (& $argb 'ThemeOkFore')
+            (& $findNamed $rows[2] 'pill').Background.Color.ToString() | Should -Be (& $argb 'ThemeChip')
+            $rows[2].Foreground.Color.ToString() | Should -Be (& $argb 'ThemeGridText')
+
+            # Deinstalator: pastylka stanu wg StatusTone, ukryta, dopóki program nie był przetwarzany.
+            $w = & $loadWindow 'Deinstalator Oprogramowania (Wybór zbiorczy)'
+            $lv = $w.FindName('lvApps')
+            $lv.ItemsSource = @(
+                [PSCustomObject]@{ IsChecked = $false; Icon = $null; StatusText = 'Usunięto'; StatusTone = 'Ok'; DisplayName = 'A'; DisplayVersion = '1.0'; InstallDate = ''; Publisher = '' }
+                [PSCustomObject]@{ IsChecked = $false; Icon = $null; StatusText = 'Błąd (kod: 1603)'; StatusTone = 'Crit'; DisplayName = 'B'; DisplayVersion = '1.0'; InstallDate = ''; Publisher = '' }
+                [PSCustomObject]@{ IsChecked = $false; Icon = $null; StatusText = ''; StatusTone = ''; DisplayName = 'C'; DisplayVersion = '1.0'; InstallDate = ''; Publisher = '' }
+            )
+            & $doLayout $w
+            $rows = foreach ($i in 0..2) { $lv.ItemContainerGenerator.ContainerFromIndex($i) }
+            @($rows | Where-Object { $null -ne $_ }).Count | Should -Be 3
+            $pill = & $findNamed $rows[0] 'pill'
+            $pill.Visibility | Should -Be ([System.Windows.Visibility]::Visible)
+            $pill.Background.Color.ToString() | Should -Be (& $argb 'ThemeOkBack')
+            (& $findNamed $rows[1] 'pill').Background.Color.ToString() | Should -Be (& $argb 'ThemeCritBack')
+            (& $findNamed $rows[1] 'txt').Foreground.Color.ToString() | Should -Be (& $argb 'ThemeCritFore')
+            (& $findNamed $rows[2] 'pill').Visibility | Should -Be ([System.Windows.Visibility]::Collapsed)
         }
     }
 }

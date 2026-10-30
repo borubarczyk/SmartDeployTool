@@ -4382,7 +4382,9 @@ function Show-LogWindow {
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Przeglądarka logów" Height="680" Width="1000" MinHeight="420" MinWidth="820" WindowStartupLocation="CenterOwner"
         Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" FontSize="13">
-    <Grid>
+    <!-- Duże okno jak Ustawienia w ServerReview / AD Manager Diamond: tytuł, pasek filtrów, karta z tabelą,
+         stopka z akcjami (drugorzędne po lewej, główna po prawej) - bez pasków nagłówka i stopki. -->
+    <Grid Margin="20,16,20,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -4390,56 +4392,88 @@ function Show-LogWindow {
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,0,0,1" Padding="20,12">
+        <DockPanel Grid.Row="0" Margin="0,0,0,14">
             <StackPanel>
-                <TextBlock Text="Przeglądarka logów" FontSize="18" FontWeight="SemiBold"/>
-                <TextBlock Name="txtStats" Style="{StaticResource MutedText}" FontSize="11.5"/>
-            </StackPanel>
-        </Border>
-
-        <!-- Filtry jak w NPS Event Viewer: podpis nad polem. -->
-        <DockPanel Grid.Row="1" Margin="20,14,20,12">
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Bottom">
-                <StackPanel Margin="12,0,0,0">
-                    <TextBlock Text="Rodzaj" Style="{StaticResource Caption}"/>
-                    <ComboBox Name="cmbRodzajFilter" MinWidth="150" SelectedIndex="0">
-                        <ComboBoxItem Content="Wszystkie"/>
-                        <ComboBoxItem Content="❌ Błędy"/>
-                        <ComboBoxItem Content="⚠️ Ostrzeżenia"/>
-                        <ComboBoxItem Content="✔️ Sukcesy"/>
-                        <ComboBoxItem Content="🧪 Dry-Run"/>
-                        <ComboBoxItem Content="ℹ️ Informacyjne"/>
-                    </ComboBox>
-                </StackPanel>
-                <StackPanel Margin="12,0,0,0">
-                    <TextBlock Text="Kontekst" Style="{StaticResource Caption}"/>
-                    <ComboBox Name="cmbKontekstFilter" MinWidth="130" SelectedIndex="0">
-                        <ComboBoxItem Content="Wszystkie"/>
-                        <ComboBoxItem Content="System"/>
-                        <ComboBoxItem Content="Automat"/>
-                        <ComboBoxItem Content="Użytkownik"/>
-                    </ComboBox>
-                </StackPanel>
-                <CheckBox Name="chkAutoRefresh" Content="Auto-odświeżanie" IsChecked="True" VerticalAlignment="Bottom" Margin="16,0,12,7"/>
-                <Button Name="btnRefresh" Content="Odśwież" VerticalAlignment="Bottom"/>
-            </StackPanel>
-            <StackPanel>
-                <TextBlock Text="Szukaj" Style="{StaticResource Caption}"/>
-                <TextBox Name="txtSearch" Tag="Szukaj w treści wpisów..." ToolTip="Szukaj w treści wpisów"/>
+                <TextBlock Text="Przeglądarka logów" Style="{StaticResource WindowTitle}"/>
+                <TextBlock Name="txtStats" Style="{StaticResource WindowSubtitle}"/>
             </StackPanel>
         </DockPanel>
 
-        <Border Grid.Row="2" Style="{StaticResource Card}" Margin="20,0,20,0" Padding="1">
+        <!-- Filtry w jednym wierszu: wyszukiwarka wypełnia miejsce, rodzaj i kontekst z podpisem obok pola. -->
+        <DockPanel Grid.Row="1" Margin="0,0,0,12">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Rodzaj" Foreground="{DynamicResource ThemeMuted}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <ComboBox Name="cmbRodzajFilter" MinWidth="130" SelectedIndex="0">
+                    <ComboBoxItem Content="Wszystkie"/>
+                    <ComboBoxItem Content="Błędy"/>
+                    <ComboBoxItem Content="Ostrzeżenia"/>
+                    <ComboBoxItem Content="Sukcesy"/>
+                    <ComboBoxItem Content="Dry-Run"/>
+                    <ComboBoxItem Content="Informacyjne"/>
+                </ComboBox>
+                <TextBlock Text="Kontekst" Foreground="{DynamicResource ThemeMuted}" VerticalAlignment="Center" Margin="12,0,8,0"/>
+                <ComboBox Name="cmbKontekstFilter" MinWidth="115" SelectedIndex="0">
+                    <ComboBoxItem Content="Wszystkie"/>
+                    <ComboBoxItem Content="System"/>
+                    <ComboBoxItem Content="Automat"/>
+                    <ComboBoxItem Content="Użytkownik"/>
+                </ComboBox>
+                <CheckBox Name="chkAutoRefresh" Content="Auto-odświeżanie" IsChecked="True" VerticalAlignment="Center" Margin="12,0,8,0" ToolTip="Wczytuje nowe wpisy z pliku logu co sekundę"/>
+                <Button Name="btnRefresh" Style="{StaticResource GhostButton}" ToolTip="Wczytaj plik logu ponownie">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE72C;" FontSize="12" Margin="0,0,7,0"/>
+                        <TextBlock Text="Odśwież" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+            <TextBox Name="txtSearch" Margin="0,0,16,0" Tag="Szukaj w treści wpisów..." ToolTip="Szukaj w treści wpisów"/>
+        </DockPanel>
+
+        <Border Grid.Row="2" Style="{StaticResource Card}" Padding="1">
             <ListView Name="lvLogs" FontFamily="Consolas" FontSize="12" ScrollViewer.HorizontalScrollBarVisibility="Auto">
                 <ListView.ItemContainerStyle>
-                    <!-- Kolor tekstu wiersza zależy od rodzaju wpisu (błąd, ostrzeżenie, sukces...). -->
+                    <!-- Kolor tekstu wiersza wg rodzaju wpisu (RodzajKey) - pędzle z palety, więc wiersze
+                         przemalowują się razem z motywem. Wpis informacyjny ma zwykły kolor tabeli. -->
                     <Style TargetType="ListViewItem" BasedOn="{StaticResource {x:Type ListViewItem}}">
-                        <Setter Property="Foreground" Value="{Binding RowColorHex}"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding RodzajKey}" Value="Error"><Setter Property="Foreground" Value="{DynamicResource ThemeCritFore}"/></DataTrigger>
+                            <DataTrigger Binding="{Binding RodzajKey}" Value="Warning"><Setter Property="Foreground" Value="{DynamicResource ThemeWarnFore}"/></DataTrigger>
+                            <DataTrigger Binding="{Binding RodzajKey}" Value="Success"><Setter Property="Foreground" Value="{DynamicResource ThemeOkFore}"/></DataTrigger>
+                            <DataTrigger Binding="{Binding RodzajKey}" Value="DryRun"><Setter Property="Foreground" Value="{DynamicResource ThemeDryRun}"/></DataTrigger>
+                        </Style.Triggers>
                     </Style>
                 </ListView.ItemContainerStyle>
                 <ListView.View>
                     <GridView>
-                        <GridViewColumn Header="Rodzaj" Width="130" DisplayMemberBinding="{Binding RodzajText}"/>
+                        <!-- Rodzaj jako pastylka w kolorach tonu (jak w AD Manager Diamond); sortowanie po
+                             kliknięciu nagłówka rozpoznaje kolumnę po tekście nagłówka, więc działa bez zmian. -->
+                        <GridViewColumn Header="Rodzaj" Width="130">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Border x:Name="pill" CornerRadius="9" Padding="9,2" HorizontalAlignment="Left" Background="{DynamicResource ThemeChip}">
+                                        <TextBlock x:Name="txt" Text="{Binding RodzajText}" FontFamily="Segoe UI" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource ThemeGhostText}"/>
+                                    </Border>
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding RodzajKey}" Value="Error">
+                                            <Setter TargetName="pill" Property="Background" Value="{DynamicResource ThemeCritBack}"/>
+                                            <Setter TargetName="txt" Property="Foreground" Value="{DynamicResource ThemeCritFore}"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding RodzajKey}" Value="Warning">
+                                            <Setter TargetName="pill" Property="Background" Value="{DynamicResource ThemeWarnBack}"/>
+                                            <Setter TargetName="txt" Property="Foreground" Value="{DynamicResource ThemeWarnFore}"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding RodzajKey}" Value="Success">
+                                            <Setter TargetName="pill" Property="Background" Value="{DynamicResource ThemeOkBack}"/>
+                                            <Setter TargetName="txt" Property="Foreground" Value="{DynamicResource ThemeOkFore}"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding RodzajKey}" Value="DryRun">
+                                            <Setter TargetName="pill" Property="Background" Value="{DynamicResource ThemeDryRunBack}"/>
+                                            <Setter TargetName="txt" Property="Foreground" Value="{DynamicResource ThemeDryRun}"/>
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
                         <GridViewColumn Header="Data zdarzenia" Width="160" DisplayMemberBinding="{Binding DataText}"/>
                         <GridViewColumn Header="Kontekst" Width="110" DisplayMemberBinding="{Binding Kontekst}"/>
                         <GridViewColumn Header="Informacja" Width="540" DisplayMemberBinding="{Binding Informacja}"/>
@@ -4447,26 +4481,43 @@ function Show-LogWindow {
                 </ListView.View>
             </ListView>
         </Border>
+        <!-- Powiadomienia (toast) nad tabelą, w prawym dolnym rogu -->
+        <StackPanel Name="toastHost" Grid.Row="2" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,14,14"/>
 
-        <!-- Jedna główna akcja (raport HTML) + rzadziej używane operacje na pliku w menu. -->
-        <Border Grid.Row="3" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,10" Margin="0,14,0,0">
-            <DockPanel>
-                <Button Name="btnClearLogs" DockPanel.Dock="Right" Content="Wyczyść logi" Style="{StaticResource DangerButton}"/>
-                <StackPanel Orientation="Horizontal">
-                    <Button Name="btnExportHtml" Content="Eksportuj raport (HTML)" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}"/>
-                    <Button Name="btnLogFile" Content="Plik logu  ▾" ToolTip="Zapisz, otwórz lub spakuj pliki logów">
-                        <Button.ContextMenu>
-                            <ContextMenu>
-                                <MenuItem Name="btnSave" Header="Zapisz jako..."/>
-                                <MenuItem Name="btnOpenLog" Header="Otwórz plik w Notatniku"/>
-                                <MenuItem Name="btnOpenDir" Header="Otwórz folder z logami"/>
-                                <MenuItem Name="btnZipLogs" Header="Spakuj logi do ZIP..."/>
-                            </ContextMenu>
-                        </Button.ContextMenu>
-                    </Button>
-                </StackPanel>
-            </DockPanel>
-        </Border>
+        <!-- Stopka: operacje na pliku (menu) i czyszczenie po lewej, jedna główna akcja (raport HTML) po prawej. -->
+        <DockPanel Grid.Row="3" Margin="0,14,0,0">
+            <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                <Button Name="btnLogFile" ToolTip="Zapisz, otwórz lub spakuj pliki logów">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE8E5;" FontSize="12" Margin="0,0,8,0"/>
+                        <TextBlock Text="Plik logu" VerticalAlignment="Center"/>
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE70D;" FontSize="9" Margin="7,1,0,0" Foreground="{DynamicResource ThemeSubtle}"/>
+                    </StackPanel>
+                    <Button.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Name="btnSave" Header="Zapisz jako..."><MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE74E;" FontSize="13"/></MenuItem.Icon></MenuItem>
+                            <MenuItem Name="btnOpenLog" Header="Otwórz plik w Notatniku"><MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE8E5;" FontSize="13"/></MenuItem.Icon></MenuItem>
+                            <MenuItem Name="btnOpenDir" Header="Otwórz folder z logami"><MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE838;" FontSize="13"/></MenuItem.Icon></MenuItem>
+                            <MenuItem Name="btnZipLogs" Header="Spakuj logi do ZIP..."><MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE8B7;" FontSize="13"/></MenuItem.Icon></MenuItem>
+                        </ContextMenu>
+                    </Button.ContextMenu>
+                </Button>
+                <Button Name="btnClearLogs" Style="{StaticResource DangerButton}" Margin="8,0,0,0" ToolTip="Usuwa wszystkie wpisy z plików logów">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE74D;" FontSize="12" Margin="0,0,8,0"/>
+                        <TextBlock Text="Wyczyść logi" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Name="btnExportHtml" Style="{StaticResource PrimaryButton}" ToolTip="Raport z wpisami widocznymi w tabeli (z bieżącymi filtrami)">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xEDE1;" FontSize="12" Margin="0,0,8,0"/>
+                        <TextBlock Text="Eksportuj raport (HTML)" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </DockPanel>
     </Grid>
 </Window>
 "@
@@ -4500,9 +4551,10 @@ function Show-LogWindow {
     $script:LogSortColumn = "Data zdarzenia"
     $script:LogSortAscending = $false   # najnowsze na górze domyślnie
 
-    # Kolory wierszy (tekst HEX, bo wiązanie Foreground="{Binding RowColorHex}" oczekuje stringa)
-    # brane z palety AKTUALNEGO motywu. Wcześniej były stałe, dobrane pod jasne tło - np. ciemna
-    # czerwień błędów (#C50F1F) i ciemna zieleń sukcesów (#107C10) były słabo czytelne na ciemnym.
+    # Kolor wiersza i pastylki "Rodzaj" wybiera XAML (DataTrigger na RodzajKey -> pędzle z palety), więc
+    # tabela przemalowuje się razem z motywem. RodzajText to zwykły tekst bez emoji (trafia też do
+    # raportu HTML). RowColorHex (HEX z bieżącej palety) zostaje w danych tylko dla starszych
+    # wywołań - XAML już go nie używa.
 
     # Parsuje jedną linię pliku logu do obiektu z polami do wyświetlenia w tabeli. Rozumie trzy
     # warianty formatu (najnowszy jest zapisywany od teraz przez Write-Log, starsze to wpisy
@@ -4539,11 +4591,11 @@ function Show-LogWindow {
             $dataText = "— (godz. $time)"
         }
 
-        $rodzajKey = 'Info'; $rodzajText = 'ℹ️ Informacja'; $colorHex = $script:LogRowPalette.ThemeText
-        if ($level -eq 'ERROR') { $rodzajKey = 'Error'; $rodzajText = '❌ Błąd'; $colorHex = $script:LogRowPalette.ThemeDanger }
-        elseif ($text -match '\[DRY-RUN\]') { $rodzajKey = 'DryRun'; $rodzajText = '🧪 Dry-Run'; $colorHex = $script:LogRowPalette.ThemeDryRun }
-        elseif ($text -match 'Mało wolnego|Nie udało się|Pominięto|Błąd dostępu|BRAK POLECENIA') { $rodzajKey = 'Warning'; $rodzajText = '⚠️ Ostrzeżenie'; $colorHex = $script:LogRowPalette.ThemeWarning }
-        elseif ($text -match 'zakończon[ao] pomyślnie|Konfiguracja zakończona|Utworzono|zainstalowany\.|utworzony pomyślnie|Dołączono do domeny') { $rodzajKey = 'Success'; $rodzajText = '✔️ Sukces'; $colorHex = $script:LogRowPalette.ThemeSuccess }
+        $rodzajKey = 'Info'; $rodzajText = 'Informacja'; $colorHex = $script:LogRowPalette.ThemeText
+        if ($level -eq 'ERROR') { $rodzajKey = 'Error'; $rodzajText = 'Błąd'; $colorHex = $script:LogRowPalette.ThemeDanger }
+        elseif ($text -match '\[DRY-RUN\]') { $rodzajKey = 'DryRun'; $rodzajText = 'Dry-Run'; $colorHex = $script:LogRowPalette.ThemeDryRun }
+        elseif ($text -match 'Mało wolnego|Nie udało się|Pominięto|Błąd dostępu|BRAK POLECENIA') { $rodzajKey = 'Warning'; $rodzajText = 'Ostrzeżenie'; $colorHex = $script:LogRowPalette.ThemeWarning }
+        elseif ($text -match 'zakończon[ao] pomyślnie|Konfiguracja zakończona|Utworzono|zainstalowany\.|utworzony pomyślnie|Dołączono do domeny') { $rodzajKey = 'Success'; $rodzajText = 'Sukces'; $colorHex = $script:LogRowPalette.ThemeSuccess }
 
         [PSCustomObject]@{
             RodzajKey    = $rodzajKey
@@ -4959,19 +5011,16 @@ function Show-SystemInfoWindow {
         Title="Informacje o systemie" Width="820" Height="640" MinWidth="620" MinHeight="420" WindowStartupLocation="CenterOwner"
         Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" FontSize="13">
     <Window.Resources>
+        <!-- Karty wartości: Card (promień 10) z mniejszym odstępem; klikalne = Tile (kursor ręki i
+             obramowanie po najechaniu daje sam styl Tile). -->
         <Style x:Key="ChipBorder" TargetType="Border" BasedOn="{StaticResource Card}">
-            <Setter Property="CornerRadius" Value="8"/>
             <Setter Property="Padding" Value="12,8"/>
             <Setter Property="Margin" Value="0,0,10,10"/>
         </Style>
-        <Style x:Key="ChipBorderClickable" TargetType="Border" BasedOn="{StaticResource ChipBorder}">
-            <Setter Property="Cursor" Value="Hand"/>
+        <Style x:Key="ChipBorderClickable" TargetType="Border" BasedOn="{StaticResource Tile}">
+            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="Margin" Value="0,0,10,10"/>
             <Setter Property="ToolTip" Value="Kliknij, aby skopiować"/>
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="BorderBrush" Value="{DynamicResource ThemeFocus}"/>
-                </Trigger>
-            </Style.Triggers>
         </Style>
         <!-- Bez zawijania: w WrapPanel ramka ma dokładnie szerokość napisu, a po zaokrągleniu układu
              ostatnie słowo spadało do drugiej, uciętej linii ("ucięty w połowie" podpis). -->
@@ -4989,27 +5038,29 @@ function Show-SystemInfoWindow {
             </Style.Triggers>
         </Style>
     </Window.Resources>
-    <Grid>
+    <Grid Margin="20,16,20,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,0,0,1" Padding="20,12">
+        <!-- Duże okno jak Ustawienia w ServerReview / AD Manager Diamond: tytuł (nazwa komputera) i podtytuł,
+             zakładki-segmenty, stopka z akcjami - bez pasków nagłówka i stopki. -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,14">
             <StackPanel>
-                <TextBlock Name="txtHeader" FontSize="18" FontWeight="SemiBold"/>
-                <TextBlock Name="txtMeta" Style="{StaticResource MutedText}" FontSize="11.5" Margin="0,2,0,0"/>
+                <TextBlock Name="txtHeader" Style="{StaticResource WindowTitle}"/>
+                <TextBlock Name="txtMeta" Style="{StaticResource WindowSubtitle}"/>
             </StackPanel>
-        </Border>
+        </DockPanel>
 
         <!-- Dwie zakładki zamiast jednej strony: lista programów nie jest już ściskana do zera przez
              karty dysków i sieci nad nią. -->
-        <TabControl Name="tabSysInfo" Grid.Row="1" Margin="20,12,20,12">
+        <TabControl Name="tabSysInfo" Grid.Row="1" Margin="0">
             <TabItem Header="Sprzęt i system">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Margin="0,0,6,0">
-                        <TextBlock Text="Kliknij wartość, aby ją skopiować do schowka." Style="{StaticResource MutedText}" FontSize="11.5" Margin="0,0,0,10"/>
+                        <TextBlock Text="Kliknij wartość, aby ją skopiować do schowka." Style="{StaticResource HintText}" Margin="0,0,0,10"/>
                         <WrapPanel>
                             <Border Name="chipOs" Style="{StaticResource ChipBorderClickable}">
                                 <StackPanel>
@@ -5075,25 +5126,41 @@ function Show-SystemInfoWindow {
                         <TextBox Name="txtSearch" DockPanel.Dock="Right" Width="260" Tag="Szukaj programu..." ToolTip="Szukaj po nazwie programu"/>
                         <TextBlock Name="txtAppsHeader" Style="{StaticResource CardTitle}" Margin="0,0,16,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                     </DockPanel>
-                    <ListView Name="lvApps">
-                        <ListView.View>
-                            <GridView>
-                                <GridViewColumn Header="Nazwa programu" Width="500" DisplayMemberBinding="{Binding DisplayName}"/>
-                                <GridViewColumn Header="Wersja" Width="200" DisplayMemberBinding="{Binding DisplayVersion}"/>
-                            </GridView>
-                        </ListView.View>
-                    </ListView>
+                    <Border Style="{StaticResource Card}" Padding="1">
+                        <ListView Name="lvApps">
+                            <ListView.View>
+                                <GridView>
+                                    <GridViewColumn Header="Nazwa programu" Width="500" DisplayMemberBinding="{Binding DisplayName}"/>
+                                    <GridViewColumn Header="Wersja" Width="200" DisplayMemberBinding="{Binding DisplayVersion}"/>
+                                </GridView>
+                            </ListView.View>
+                        </ListView>
+                    </Border>
                 </DockPanel>
             </TabItem>
         </TabControl>
+        <!-- Powiadomienia (np. skopiowano do schowka) w prawym dolnym rogu zawartości -->
+        <StackPanel Name="toastHost" Grid.Row="1" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,14,14"/>
 
-        <Border Grid.Row="2" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,10">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnCopy" Content="Kopiuj do schowka" Margin="0,0,8,0"/>
-                <Button Name="btnExportHtml" Content="Zapisz jako HTML" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}"/>
-                <Button Name="btnClose" Content="Zamknij" MinWidth="90" IsCancel="True"/>
+        <DockPanel Grid.Row="2" Margin="0,14,0,0">
+            <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                <Button Name="btnCopy" Style="{StaticResource GhostButton}" ToolTip="Kopiuje pełny raport tekstowy do schowka">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE8C8;" FontSize="12" Margin="0,0,7,0"/>
+                        <TextBlock Text="Kopiuj do schowka" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
             </StackPanel>
-        </Border>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Name="btnClose" Content="Zamknij" MinWidth="96" IsCancel="True"/>
+                <Button Name="btnExportHtml" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xEDE1;" FontSize="12" Margin="0,0,8,0"/>
+                        <TextBlock Text="Zapisz jako HTML" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </DockPanel>
     </Grid>
 </Window>
 "@
@@ -5108,30 +5175,33 @@ function Show-SystemInfoWindow {
     $dlg.FindName("txtRam").Text = "$($audit.RamGb) GB"
 
     # Kopiowanie pojedynczych wartości (np. numeru seryjnego BIOS) do schowka jednym kliknięciem -
-    # z krótkim wizualnym potwierdzeniem ("✅ Skopiowano!") zamiast modalnego okienka.
-    # UWAGA: Tick NIE zatrzymuje się przez $script:CopyFeedbackTimer (ten zasięg rozwiązuje się na
-    # żywo, a nie jest "zamrożony" przez .GetNewClosure()) - jeśli okno zostanie zamknięte i
-    # otwarte ponownie zanim poprzedni timer wygaśnie, zmienna skryptowa zostaje nadpisana/
-    # wyzerowana i osierocony timer wywołuje Stop() na $null. Zamiast tego używamy parametru
-    # "sender" samego zdarzenia Tick - to zawsze dokładnie TEN konkretny timer, bez dwuznaczności.
-    $script:CopyFeedbackTimer = $null
+    # z krótkim potwierdzeniem w miejscu wartości ("Skopiowano" w zielonym kolorze tonu przez 900 ms)
+    # zamiast modalnego okienka. Prawdziwa wartość czeka w Tag pola, a pole w Tag jego własnego timera:
+    # zmienne funkcji i skryptu nie są potrzebne, gdy timer zadziała (okno mogło zostać zamknięte
+    # i otwarte ponownie). Klik w pole, które właśnie pokazuje potwierdzenie, nic nie robi - wcześniej
+    # kopiował do schowka sam napis potwierdzenia, a zatrzymany timer zostawiał go w polu na stałe.
     $copyTextWithFeedback = {
         param([System.Windows.Controls.TextBlock]$TextBlock, [string]$Value)
+        if ($null -eq $TextBlock -or $null -ne $TextBlock.Tag) { return }
         if ([string]::IsNullOrWhiteSpace($Value)) { return }
         try { Set-Clipboard -Value $Value } catch { return }
 
-        if ($null -ne $script:CopyFeedbackTimer) { try { $script:CopyFeedbackTimer.Stop() } catch {} }
-        $originalText = $TextBlock.Text
-        $TextBlock.Text = "✅ Skopiowano!"
-        $timer = New-Object System.Windows.Threading.DispatcherTimer
-        $timer.Interval = [TimeSpan]::FromMilliseconds(900)
-        $timer.Add_Tick({
+        $TextBlock.Tag = $TextBlock.Text
+        $TextBlock.Text = "Skopiowano"
+        # ThemeOkFore zamiast ThemeSuccess: w motywie jasnym ThemeSuccess ma na karcie kontrast poniżej 4,5:1.
+        $TextBlock.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'ThemeOkFore')
+        $feedbackTimer = New-Object System.Windows.Threading.DispatcherTimer
+        $feedbackTimer.Interval = [TimeSpan]::FromMilliseconds(900)
+        $feedbackTimer.Tag = $TextBlock
+        $feedbackTimer.Add_Tick({
             param($senderObj, $tickArgs)
-            $TextBlock.Text = $originalText
             $senderObj.Stop()
-        }.GetNewClosure())
-        $script:CopyFeedbackTimer = $timer
-        $timer.Start()
+            $copiedBlock = $senderObj.Tag
+            $copiedBlock.Text = [string]$copiedBlock.Tag
+            $copiedBlock.Tag = $null
+            $copiedBlock.ClearValue([System.Windows.Controls.TextBlock]::ForegroundProperty)
+        })
+        $feedbackTimer.Start()
     }
 
     foreach ($pair in @(
@@ -5230,7 +5300,8 @@ function Show-SystemInfoWindow {
     $dlg.FindName("btnCopy").Add_Click({
         try {
             Set-Clipboard -Value (Get-HardwareAudit)
-            Show-ThemedMessageBox -Message "Skopiowano do schowka!" -Title "Informacja" -Button "OK" -Image "Information" | Out-Null
+            # Powiadomienie w tym oknie zamiast okna komunikatu do zamknięcia.
+            Show-Toast -Text "Skopiowano do schowka" -Kind Ok -TargetWindow $dlg
         } catch {}
     })
 
@@ -5259,7 +5330,9 @@ function Show-SoftwareUninstaller {
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Deinstalator Oprogramowania (Wybór zbiorczy)" Height="640" Width="1010" MinHeight="420" MinWidth="820" WindowStartupLocation="CenterOwner"
         Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
-    <Grid>
+    <!-- Duże okno jak Ustawienia w ServerReview / AD Manager Diamond: tytuł, pasek narzędzi, karta z tabelą,
+         stopka (licznik i postęp po lewej, akcje po prawej, nieodwracalna akcja skrajnie po prawej). -->
+    <Grid Margin="20,16,20,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -5267,35 +5340,54 @@ function Show-SoftwareUninstaller {
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,0,0,1" Padding="20,12">
+        <DockPanel Grid.Row="0" Margin="0,0,0,14">
             <StackPanel>
-                <TextBlock Text="Deinstalator oprogramowania" FontSize="18" FontWeight="SemiBold"/>
-                <TextBlock Text="Zaznacz programy do cichej deinstalacji. Dwuklik - interaktywny deinstalator, prawy przycisk - pokaż w eksploratorze." Style="{StaticResource MutedText}" FontSize="11.5"/>
+                <TextBlock Text="Deinstalator oprogramowania" Style="{StaticResource WindowTitle}"/>
+                <TextBlock Text="Zaznacz programy do cichej deinstalacji. Dwuklik - interaktywny deinstalator, prawy przycisk - pokaż w eksploratorze." Style="{StaticResource WindowSubtitle}"/>
             </StackPanel>
-        </Border>
+        </DockPanel>
 
-        <Grid Grid.Row="1" Margin="20,14,20,12">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <TextBox Name="txtSearch" Grid.Column="0" Margin="0,0,10,0" Tag="Szukaj po nazwie programu lub wydawcy..." ToolTip="Szukaj po nazwie programu lub wydawcy"/>
-            <Button Name="btnSelectAllApps" Content="Zaznacz widoczne" Grid.Column="1" MinWidth="130" Margin="0,0,6,0"/>
-            <Button Name="btnDeselectAllApps" Content="Odznacz widoczne" Grid.Column="2" MinWidth="130" Margin="0,0,10,0"/>
-            <Button Name="btnExportCSV" Content="Eksportuj CSV" Grid.Column="3" MinWidth="110" Margin="0,0,6,0"/>
-            <Button Name="btnExportHTML" Content="Eksportuj HTML" Grid.Column="4" MinWidth="120" Margin="0,0,10,0"/>
-            <Button Name="btnRefresh" Content="Odśwież listę" Grid.Column="5" MinWidth="110"/>
-        </Grid>
+        <DockPanel Grid.Row="1" Margin="0,0,0,12">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Name="btnSelectAllApps" Style="{StaticResource GhostButton}" ToolTip="Zaznacza wszystkie programy widoczne na liście (z bieżącym wyszukiwaniem)">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE8B3;" FontSize="12" Margin="0,0,7,0"/>
+                        <TextBlock Text="Zaznacz widoczne" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+                <Button Name="btnDeselectAllApps" Style="{StaticResource GhostButton}" Margin="2,0,0,0" ToolTip="Odznacza wszystkie programy widoczne na liście">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE894;" FontSize="12" Margin="0,0,7,0"/>
+                        <TextBlock Text="Odznacz widoczne" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+                <Button Name="btnExportCSV" Style="{StaticResource GhostButton}" Margin="2,0,0,0" ToolTip="Eksportuj widoczną listę programów do pliku CSV">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE896;" FontSize="12" Margin="0,0,7,0"/>
+                        <TextBlock Text="CSV" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+                <Button Name="btnExportHTML" Style="{StaticResource GhostButton}" Margin="2,0,0,0" ToolTip="Eksportuj widoczną listę programów do raportu HTML">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xEDE1;" FontSize="12" Margin="0,0,7,0"/>
+                        <TextBlock Text="HTML" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+                <Button Name="btnRefresh" Style="{StaticResource GhostButton}" Margin="2,0,0,0" ToolTip="Wczytaj listę zainstalowanych programów ponownie">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE72C;" FontSize="12" Margin="0,0,7,0"/>
+                        <TextBlock Text="Odśwież listę" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+            <TextBox Name="txtSearch" Margin="0,0,12,0" Tag="Szukaj po nazwie programu lub wydawcy..." ToolTip="Szukaj po nazwie programu lub wydawcy"/>
+        </DockPanel>
 
-        <Border Grid.Row="2" Style="{StaticResource Card}" Margin="20,0,20,0" Padding="1">
+        <Border Grid.Row="2" Style="{StaticResource Card}" Padding="1">
             <ListView Name="lvApps">
                 <ListView.ContextMenu>
                     <ContextMenu>
-                        <MenuItem Name="miOpenLocation" Header="Pokaż w eksploratorze"/>
+                        <MenuItem Name="miOpenLocation" Header="Pokaż w eksploratorze"><MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE838;" FontSize="13"/></MenuItem.Icon></MenuItem>
                     </ContextMenu>
                 </ListView.ContextMenu>
                 <ListView.View>
@@ -5312,9 +5404,30 @@ function Show-SoftwareUninstaller {
                                 <DataTemplate>
                                     <StackPanel Orientation="Horizontal">
                                         <Image Source="{Binding Icon}" Width="16" Height="16" Margin="0,0,6,0"/>
-                                        <TextBlock Text="{Binding StatusText}" Foreground="{Binding StatusColor}" FontWeight="Bold" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                        <!-- Stan po deinstalacji jako pastylka w kolorach tonu (StatusTone: Ok / Warn / Crit),
+                                             ukryta, dopóki program nie był przetwarzany. -->
+                                        <Border x:Name="pill" CornerRadius="9" Padding="8,1" Margin="0,0,8,0" VerticalAlignment="Center" Background="{DynamicResource ThemeChip}" Visibility="Collapsed">
+                                            <TextBlock x:Name="txt" Text="{Binding StatusText}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource ThemeGhostText}"/>
+                                        </Border>
                                         <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center"/>
                                     </StackPanel>
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding StatusTone}" Value="Ok">
+                                            <Setter TargetName="pill" Property="Visibility" Value="Visible"/>
+                                            <Setter TargetName="pill" Property="Background" Value="{DynamicResource ThemeOkBack}"/>
+                                            <Setter TargetName="txt" Property="Foreground" Value="{DynamicResource ThemeOkFore}"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding StatusTone}" Value="Warn">
+                                            <Setter TargetName="pill" Property="Visibility" Value="Visible"/>
+                                            <Setter TargetName="pill" Property="Background" Value="{DynamicResource ThemeWarnBack}"/>
+                                            <Setter TargetName="txt" Property="Foreground" Value="{DynamicResource ThemeWarnFore}"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding StatusTone}" Value="Crit">
+                                            <Setter TargetName="pill" Property="Visibility" Value="Visible"/>
+                                            <Setter TargetName="pill" Property="Background" Value="{DynamicResource ThemeCritBack}"/>
+                                            <Setter TargetName="txt" Property="Foreground" Value="{DynamicResource ThemeCritFore}"/>
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
                                 </DataTemplate>
                             </GridViewColumn.CellTemplate>
                         </GridViewColumn>
@@ -5325,27 +5438,32 @@ function Show-SoftwareUninstaller {
                 </ListView.View>
             </ListView>
         </Border>
+        <!-- Powiadomienia (toast) nad tabelą, w prawym dolnym rogu -->
+        <StackPanel Name="toastHost" Grid.Row="2" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,14,14"/>
 
-        <Border Grid.Row="3" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,12" Margin="0,14,0,0">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock Name="lblSelectedCount" Grid.Column="0" Text="Wybrano: 0" VerticalAlignment="Center" Margin="0,0,16,0" FontWeight="SemiBold" FontSize="14"/>
-                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                    <TextBlock Name="lblUninstallStatus" Text="" FontSize="11" Style="{StaticResource MutedText}" TextWrapping="NoWrap" Margin="0,0,0,4" Visibility="Hidden" TextTrimming="CharacterEllipsis"/>
-                    <ProgressBar Name="pbUninstall" Height="6" Minimum="0" Maximum="100" Foreground="{DynamicResource ThemeDangerFill}" Visibility="Hidden"/>
-                </StackPanel>
-                <StackPanel Grid.Column="2" Orientation="Horizontal">
-                    <Button Name="btnPauseUninstall" Content="Pauza" MinWidth="90" Margin="0,0,8,0" Style="{StaticResource WarningButton}" IsEnabled="False"/>
-                    <Button Name="btnKill" Content="Zabij proces" MinWidth="120" Margin="0,0,8,0" Style="{StaticResource DangerButton}" IsEnabled="False" ToolTip="Wymuś zamknięcie zawieszonego deinstalatora"/>
-                    <Button Name="btnUninstall" Content="Odinstaluj (Cicho)" MinWidth="170" Margin="0,0,8,0" Style="{StaticResource DangerPrimaryButton}"/>
-                    <Button Name="btnClose" Content="Zamknij" MinWidth="90" IsCancel="True"/>
-                </StackPanel>
-            </Grid>
-        </Border>
+        <Grid Grid.Row="3" Margin="0,14,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Name="lblSelectedCount" Grid.Column="0" Text="Wybrano: 0" VerticalAlignment="Center" Margin="0,0,16,0" FontWeight="SemiBold" FontSize="13"/>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                <TextBlock Name="lblUninstallStatus" Text="" Style="{StaticResource HintText}" TextWrapping="NoWrap" Margin="0,0,0,4" Visibility="Hidden" TextTrimming="CharacterEllipsis"/>
+                <ProgressBar Name="pbUninstall" Height="6" Minimum="0" Maximum="100" Foreground="{DynamicResource ThemeDangerFill}" Visibility="Hidden"/>
+            </StackPanel>
+            <StackPanel Grid.Column="2" Orientation="Horizontal">
+                <Button Name="btnPauseUninstall" Content="Pauza" MinWidth="90" Margin="0,0,8,0" Style="{StaticResource WarningButton}" IsEnabled="False"/>
+                <Button Name="btnKill" Content="Zabij proces" MinWidth="110" Margin="0,0,8,0" Style="{StaticResource DangerButton}" IsEnabled="False" ToolTip="Wymuś zamknięcie zawieszonego deinstalatora"/>
+                <Button Name="btnClose" Content="Zamknij" MinWidth="96" Margin="0,0,8,0" IsCancel="True"/>
+                <Button Name="btnUninstall" MinWidth="170" Style="{StaticResource DangerPrimaryButton}" ToolTip="Cicha deinstalacja zaznaczonych programów (po potwierdzeniu)">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE74D;" FontSize="12" Margin="0,0,8,0"/>
+                        <TextBlock Text="Odinstaluj (Cicho)" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </Grid>
     </Grid>
 </Window>
 "@
@@ -5430,7 +5548,9 @@ function Show-SoftwareUninstaller {
                                 IsChecked = $false
                                 Icon = $iconSrc
                                 StatusText = ""
-                                StatusColor = "Transparent"
+                                # Ton pastylki stanu (Ok / Warn / Crit, pusty = bez pastylki) - właściwość musi
+                                # istnieć od początku, bo wiązanie DataTrigger w XAML jest zakładane przy wczytaniu wiersza.
+                                StatusTone = ""
                                 DisplayName = $displayName
                                 DisplayVersion = $key.GetValue("DisplayVersion")
                                 InstallDate = $dateStr
@@ -5746,8 +5866,8 @@ function Show-SoftwareUninstaller {
                     if ([string]::IsNullOrWhiteSpace($cmd)) {
                         Write-Log "Pominięto $($app.DisplayName) - brak polecenia deinstalacji w rejestrze." -IsError
                         $uninstWindow.Dispatcher.Invoke([Action]{
-                            $app.StatusText = "❌ BRAK POLECENIA"
-                            $app.StatusColor = Get-ThemeColor "ThemeWarning"
+                            $app.StatusText = "Brak polecenia"
+                            $app.StatusTone = "Warn"
                             $app.IsChecked = $false
                             $lvApps.Items.Refresh()
                         }) | Out-Null
@@ -5791,11 +5911,11 @@ function Show-SoftwareUninstaller {
 
                     $uninstWindow.Dispatcher.Invoke([Action]{
                         if ($exitCode -eq 0 -or $exitCode -eq 3010) {
-                            $app.StatusText = "✔️ SUKCES"
-                            $app.StatusColor = Get-ThemeColor "ThemeSuccess"
+                            $app.StatusText = "Usunięto"
+                            $app.StatusTone = "Ok"
                         } else {
-                            $app.StatusText = "❌ BŁĄD (kod: $exitCode)"
-                            $app.StatusColor = Get-ThemeColor "ThemeDanger"
+                            $app.StatusText = "Błąd (kod: $exitCode)"
+                            $app.StatusTone = "Crit"
                         }
                         $lvApps.Items.Refresh()
                     }) | Out-Null
@@ -5819,7 +5939,7 @@ function Show-SoftwareUninstaller {
                 if ($null -ne $notifyIcon) {
                     $notifyIcon.ShowBalloonTip(3000, "Deinstalacja zakończona", "Przetworzono wybrane programy.", [System.Windows.Forms.ToolTipIcon]::Info)
                 }
-                Show-CustomInfoDialog -Title "Zakończono" -Message "Przetwarzanie deinstalacji zakończone.`n`nPoprawnie odinstalowane aplikacje zostały automatycznie usunięte z listy.`nJeśli instalator zwrócił błąd, aplikacja pozostała na liście oznaczona krzyżykiem (❌)."
+                Show-CustomInfoDialog -Title "Zakończono" -Message "Przetwarzanie deinstalacji zakończone.`n`nPoprawnie odinstalowane aplikacje zostały automatycznie usunięte z listy.`nJeśli instalator zwrócił błąd, aplikacja pozostała na liście oznaczona jako «Błąd»."
             } catch {
             Show-ThemedMessageBox -Message "Wystąpił błąd podczas uruchamiania deinstalatora:`n$($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             } finally {
@@ -6321,10 +6441,10 @@ function Show-PinPrompt {
 function Show-ConfigEditor {
     try { $config = Get-Config } catch { Write-Log "Nie udało się wczytać config.json: $_" -IsError; return }
 
-    # Jedno okno z zakładkami (jak w NPS Event Viewer) zamiast długiej przewijanej strony i osobnych
-    # okien "Zarządzaj ...". Listy (programy, profile, rejestr, skrypty, domyślne zadania) są w
-    # zakładkach; edycja pojedynczego wpisu nadal w małym oknie dialogowym. Wszystko zmienia tylko
-    # $config w pamięci - do pliku trafia dopiero po "Zapisz".
+    # Jedno okno z nawigacją po lewej (jak Ustawienia w ServerReview / AD Manager Diamond) zamiast
+    # długiej przewijanej strony i osobnych okien "Zarządzaj ...". Listy (programy, profile, rejestr,
+    # skrypty, domyślne zadania) są w zakładkach; edycja pojedynczego wpisu nadal w małym oknie
+    # dialogowym. Wszystko zmienia tylko $config w pamięci - do pliku trafia dopiero po "Zapisz".
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -6347,29 +6467,29 @@ function Show-ConfigEditor {
             <Setter Property="Margin" Value="0,2,0,0"/>
         </Style>
     </Window.Resources>
-    <Grid>
+    <!-- Układ jak Ustawienia w ServerReview / AD Manager Diamond: tytuł z pastylką stanu, nawigacja po lewej
+         (NavTabControl), stopka Anuluj / Zapisz - bez pasków nagłówka i stopki. -->
+    <Grid Margin="20,16,20,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,0,0,1" Padding="20,12">
-            <DockPanel>
-                <Border DockPanel.Dock="Right" Background="{DynamicResource ThemePanel}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="1" CornerRadius="14" Padding="12,5" VerticalAlignment="Center">
-                    <StackPanel Orientation="Horizontal">
-                        <Ellipse Name="dotSettingsState" Width="9" Height="9" Fill="{DynamicResource ThemeSuccess}" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                        <TextBlock Name="txtSettingsState" Text="Bez zmian" FontSize="12" VerticalAlignment="Center"/>
-                    </StackPanel>
-                </Border>
-                <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
-                    <TextBlock Text="Ustawienia" FontSize="18" FontWeight="SemiBold"/>
-                    <TextBlock Text="Zmiany trafiają do config.json dopiero po kliknięciu &#x201E;Zapisz&#x201D;." Foreground="{DynamicResource ThemeMuted}" FontSize="11.5" TextTrimming="CharacterEllipsis"/>
+        <DockPanel Grid.Row="0" Margin="0,0,0,14">
+            <Border DockPanel.Dock="Right" Style="{StaticResource Chip}" Padding="10,4" Margin="16,0,0,0" ToolTip="Stan zmian w tym oknie">
+                <StackPanel Orientation="Horizontal">
+                    <Ellipse Name="dotSettingsState" Width="8" Height="8" Fill="{DynamicResource ThemeSuccess}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                    <TextBlock Name="txtSettingsState" Text="Bez zmian" FontSize="12" Foreground="{DynamicResource ThemeGhostText}" VerticalAlignment="Center"/>
                 </StackPanel>
-            </DockPanel>
-        </Border>
+            </Border>
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="Ustawienia" Style="{StaticResource WindowTitle}"/>
+                <TextBlock Text="Zmiany trafiają do config.json dopiero po kliknięciu &#x201E;Zapisz&#x201D;." Style="{StaticResource WindowSubtitle}"/>
+            </StackPanel>
+        </DockPanel>
 
-        <TabControl Name="tabSettings" Style="{StaticResource NavTabControl}" Grid.Row="1" Margin="20,12,20,12">
+        <TabControl Name="tabSettings" Style="{StaticResource NavTabControl}" Grid.Row="1" Margin="0">
             <TabItem Header="Źródła" Tag="&#xE8B7;">
                 <ScrollViewer Style="{StaticResource TabScroll}">
                     <StackPanel>
@@ -6683,13 +6803,16 @@ function Show-ConfigEditor {
                 </ScrollViewer>
             </TabItem>
         </TabControl>
+        <!-- Powiadomienia (toast) w prawym dolnym rogu zawartości -->
+        <StackPanel Name="toastHost" Grid.Row="1" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,14,14"/>
 
-        <Border Grid.Row="2" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,10">
+        <!-- Stopka: Anuluj, potem jedyny przycisk główny (Zapisz) skrajnie po prawej. -->
+        <DockPanel Grid.Row="2" Margin="0,14,0,0">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnSave" Content="Zapisz" MinWidth="100" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}"/>
-                <Button Name="btnCancel" Content="Anuluj" MinWidth="100" IsCancel="True"/>
+                <Button Name="btnCancel" Content="Anuluj" MinWidth="96" IsCancel="True"/>
+                <Button Name="btnSave" Content="Zapisz" MinWidth="96" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}"/>
             </StackPanel>
-        </Border>
+        </DockPanel>
     </Grid>
 </Window>
 "@
@@ -6748,6 +6871,18 @@ function Show-ConfigEditor {
     $dotSettingsState = $dlg.FindName("dotSettingsState")
     $btnSave = $dlg.FindName("btnSave")
     $btnCancel = $dlg.FindName("btnCancel")
+
+    # Ikony przycisków w paskach zakładek (czcionka ikon, jak w ServerReview / AD Manager Diamond);
+    # tekst bez zmian - brany z XAML.
+    foreach ($toolbarIcon in @(
+        @($btnProgAdd, 'E710'), @($btnProgEdit, 'E70F'), @($btnProgClone, 'E8C8'), @($btnProgRemove, 'E74D'),
+        @($btnProfAdd, 'E710'), @($btnProfEdit, 'E70F'), @($btnProfRemove, 'E74D'),
+        @($btnRegAdd, 'E710'), @($btnRegEdit, 'E70F'), @($btnRegRemove, 'E74D'),
+        @($btnScriptAdd, 'E710'), @($btnScriptEdit, 'E70F'), @($btnScriptRemove, 'E74D'),
+        @($btnDefaultsAll, 'E8B3'), @($btnDefaultsNone, 'E894')
+    )) {
+        Set-ButtonContent -Button $toolbarIcon[0] -Text (Get-ButtonText $toolbarIcon[0]) -Icon $toolbarIcon[1]
+    }
 
     $txtVersionInfo.Text = "Zainstalowana wersja: $script:ScriptVersion"
     $txtConfigPath.Text = $configPath
@@ -7240,7 +7375,9 @@ function Show-ConfigEditor {
                     if ($null -ne $CheckboxControls[$key]) { $CheckboxControls[$key].IsChecked = $isDefault }
                 }
             }
-            Show-ThemedMessageBox -Message "Zapisano konfigurację." -Title "Sukces" -Button "OK" -Image "Success" | Out-Null
+            # Okno Ustawień zaraz się zamyka - potwierdzenie jako powiadomienie w oknie głównym
+            # zamiast kolejnego okna komunikatu do kliknięcia.
+            Show-Toast -Text 'Zapisano konfigurację.' -Kind Ok -TargetWindow $Window
             Get-AppSelection
             # Profile dodane/zmienione w zakładce "Profile" od razu na liście w oknie głównym.
             Load-Profiles
@@ -7549,8 +7686,8 @@ function Set-AppTheme {
         $btnThemeToggle.Content = New-GlyphBlock -Code $(if ($script:isDarkTheme) { 'E706' } else { 'E708' }) -Size 15
         $btnThemeToggle.ToolTip = if ($script:isDarkTheme) { "Przełącz na jasny motyw" } else { "Przełącz na ciemny motyw" }
     }
-    # Kolory wierszy logu są zapisane w danych wierszy (RowColorHex) - przebudowujemy tabelę,
-    # żeby wzięła kolory z nowej palety.
+    # Kolory wierszy i pastylek logu idą z palety przez DataTrigger (RodzajKey), więc same się
+    # przemalowują; przebudowa tabeli odświeża jeszcze RowColorHex w danych (starsze wywołania).
     if ($null -ne $script:ActiveLogWindow -and $script:ActiveLogWindow.IsLoaded -and $null -ne $script:RenderLogView) {
         try { & $script:RenderLogView } catch {}
     }
