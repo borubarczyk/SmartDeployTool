@@ -652,10 +652,21 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
                 $b = Get-TestLuminance $Back
                 return ([Math]::Max($a, $b) + 0.05) / ([Math]::Min($a, $b) + 0.05)
             }
+
+            # Okna pokazywane przez ShowDialog() zamykają się same zaraz po wczytaniu (jak w kontekście
+            # "Okno Ustawienia"); handler klasy działa tylko przy włączonej fladze SdtAutoCloseWindows.
+            if (-not $global:SdtAutoCloseRegistered) {
+                [System.Windows.EventManager]::RegisterClassHandler([System.Windows.Window], [System.Windows.FrameworkElement]::LoadedEvent, [System.Windows.RoutedEventHandler]{
+                    param($loadedSender, $loadedArgs)
+                    if ($global:SdtAutoCloseWindows) { $global:SdtLastWindow = $loadedSender; $loadedSender.Close() }
+                })
+                $global:SdtAutoCloseRegistered = $true
+            }
         }
 
         AfterAll {
             $script:isDarkTheme = $true
+            $global:SdtAutoCloseWindows = $false
         }
 
         It "Każdy klucz koloru użyty w skrypcie jest w obu paletach (literówka = przezroczysta kontrolka)" {
@@ -770,6 +781,119 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             Set-ButtonContent -Button $b -Text 'Start'
             $b.Content | Should -Be 'Start'
             Get-ButtonText $b | Should -Be 'Start'
+        }
+
+        It "Okno komunikatu: kafelek i ikona w kolorach tonu, przycisk główny skrajnie po prawej" {
+            try {
+                $script:isDarkTheme = $true
+                $global:SdtAutoCloseWindows = $true
+
+                $global:SdtLastWindow = $null
+                Show-ThemedMessageBox -Message 'x' -Title 'Błąd' -Image Error -Button YesNo | Out-Null
+                $w = $global:SdtLastWindow
+                $w | Should -Not -BeNullOrEmpty
+                $w.FindName('iconTile').Background.Color.ToString() | Should -Be ('#FF' + $script:ThemePalettes.Dark.ThemeCritBack.TrimStart('#'))
+                $w.FindName('txtIcon').Foreground.Color.ToString() | Should -Be ('#FF' + $script:ThemePalettes.Dark.ThemeCritFore.TrimStart('#'))
+                $w.FindName('txtIcon').Text | Should -Be (Get-Glyph 'EA39')
+                $w.FindName('txtTitle').Text | Should -Be 'Błąd'
+                $buttons = $w.FindName('spButtons').Children
+                $buttons.Count | Should -Be 2
+                $buttons[0].Content | Should -Be 'Nie'
+                $buttons[0].IsCancel | Should -BeTrue
+                $buttons[1].Content | Should -Be 'Tak'
+                $buttons[1].IsDefault | Should -BeTrue
+
+                $global:SdtLastWindow = $null
+                Show-ThemedMessageBox -Message 'x' -Title 'Sukces' -Image Success | Out-Null
+                $w = $global:SdtLastWindow
+                $w | Should -Not -BeNullOrEmpty
+                $w.FindName('iconTile').Background.Color.ToString() | Should -Be ('#FF' + $script:ThemePalettes.Dark.ThemeOkBack.TrimStart('#'))
+                $w.FindName('txtIcon').Text | Should -Be (Get-Glyph 'E930')
+                $w.FindName('spButtons').Children.Count | Should -Be 1
+
+                # -Danger: przycisk domyślny czerwony (DangerPrimaryButton), Anuluj/Nie bez zmian.
+                $global:SdtLastWindow = $null
+                Show-ThemedMessageBox -Message 'x' -Title 'Przerwij' -Image Warning -Button YesNoCancel -Danger | Out-Null
+                $w = $global:SdtLastWindow
+                $w | Should -Not -BeNullOrEmpty
+                $buttons = $w.FindName('spButtons').Children
+                @($buttons | ForEach-Object { [string]$_.Content }) -join ',' | Should -Be 'Anuluj,Nie,Tak'
+                [object]::ReferenceEquals($buttons[2].Style, $w.FindResource('DangerPrimaryButton')) | Should -BeTrue
+            } finally {
+                $global:SdtAutoCloseWindows = $false
+            }
+        }
+
+        It "Okno dialogowe bez widocznego właściciela jest na wierzchu, na pasku zadań i na środku ekranu" {
+            # W testach okno główne nigdy nie jest pokazane, więc Get-DialogOwner nie zwraca właściciela
+            # (tak samo jak w trakcie wdrożenia z oknem głównym schowanym w zasobniku).
+            $Window.IsLoaded | Should -BeFalse
+            [xml]$xaml = '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Width="300" SizeToContent="Height" WindowStartupLocation="CenterOwner" ShowInTaskbar="False"><Grid/></Window>'
+            $w = New-ThemedWindow -Xaml $xaml
+            $w.Owner | Should -BeNullOrEmpty
+            $w.Topmost | Should -BeTrue
+            $w.ShowInTaskbar | Should -BeTrue
+            $w.WindowStartupLocation | Should -Be ([System.Windows.WindowStartupLocation]::CenterScreen)
+
+            # -NoOwner (logowanie, okno główne): okno decyduje samo, fabryka niczego nie zmienia.
+            $w2 = New-ThemedWindow -Xaml $xaml -NoOwner
+            $w2.Topmost | Should -BeFalse
+            $w2.WindowStartupLocation | Should -Be ([System.Windows.WindowStartupLocation]::CenterOwner)
+        }
+
+        It "Powiadomienia (Show-Toast) w oknie głównym: najwyżej 4 naraz, najstarsze znika pierwsze" {
+            $toastPanel = $Window.FindName('toastHost')
+            $toastPanel | Should -Not -BeNullOrEmpty
+            try {
+                $toastPanel.Children.Clear()
+                for ($i = 1; $i -le 6; $i++) { Show-Toast -Text "Powiadomienie $i" -Kind Ok }
+                $toastPanel.Children.Count | Should -Be 4
+                $texts = foreach ($toast in $toastPanel.Children) { $toast.Child.Children[1].Text }
+                ($texts -join ',') | Should -Be 'Powiadomienie 3,Powiadomienie 4,Powiadomienie 5,Powiadomienie 6'
+                { Show-Toast -Text 'Okno bez panelu' -Kind Crit -TargetWindow (New-Object System.Windows.Window) } | Should -Not -Throw
+            } finally {
+                $toastPanel.Children.Clear()
+            }
+        }
+
+        It "Okno główne: przycisk startu zależy od trybu testowego, licznik zaznaczonych zadań" {
+            $dry = $CheckboxControls['DryRun']
+            $dryBefore = $dry.IsChecked
+            $taskKey = @($CheckboxControls.Keys | Where-Object { $_ -notin 'DryRun', 'InstallApplications' })[0]
+            $taskBox = $CheckboxControls[$taskKey]
+            $taskBefore = $taskBox.IsChecked
+            $countText = $Window.FindName('txtTaskCount')
+            try {
+                $dry.IsChecked = $true
+                Get-ButtonText $btnStart | Should -Match 'symulacj'
+                $dry.IsChecked = $false
+                Get-ButtonText $btnStart | Should -Match 'konfiguracj'
+
+                $countText.Text | Should -Match '^Zaznaczone: \d+ z \d+$'
+                $total = [int]([regex]::Match($countText.Text, ' z (\d+)$').Groups[1].Value)
+                $total | Should -Be ($CheckboxControls.Count - 1)   # bez trybu testowego
+                $taskBox.IsChecked = $false
+                $before = [int]([regex]::Match($countText.Text, '^Zaznaczone: (\d+)').Groups[1].Value)
+                $taskBox.IsChecked = $true
+                $after = [int]([regex]::Match($countText.Text, '^Zaznaczone: (\d+)').Groups[1].Value)
+                $after | Should -Be ($before + 1)
+            } finally {
+                $dry.IsChecked = $dryBefore
+                $taskBox.IsChecked = $taskBefore
+            }
+        }
+
+        It "Kropka stanu wdrożenia zmienia kolor (Busy / Paused / Error / Idle)" {
+            $dot = $Window.FindName('statusDot')
+            $dot | Should -Not -BeNullOrEmpty
+            try {
+                foreach ($pair in @(@('Busy', 'ThemeFocus'), @('Paused', 'ThemeWarning'), @('Error', 'ThemeDanger'), @('Idle', 'ThemeSuccess'))) {
+                    Set-DeployStatusDot $pair[0]
+                    $dot.Fill.Color.ToString() | Should -Be $Window.FindResource($pair[1]).Color.ToString() -Because "stan $($pair[0])"
+                }
+            } finally {
+                Set-DeployStatusDot Idle
+            }
         }
     }
 }

@@ -315,6 +315,79 @@ function global:Set-DeployStatusDot {
     else { $statusDot.Dispatcher.Invoke([Action]{ $statusDot.SetResourceReference([System.Windows.Shapes.Shape]::FillProperty, $key) }) }
 }
 
+# Krótkie powiadomienie w prawym dolnym rogu okna, znika samo (jak w AD Manager Diamond: 220 ms
+# pojawiania się, najwyżej 4 naraz - najstarsze znika pierwsze). Okno musi mieć panel "toastHost";
+# bez -TargetWindow trafia do okna, w którym użytkownik właśnie pracuje, a gdy ono panelu nie ma -
+# do okna głównego. Kolory przez SetResourceReference, więc toast przemalowuje się razem z motywem.
+# Stan timera trzymamy w jego Tag: zmienne lokalne funkcji znikają, zanim timer zadziała.
+function global:Show-Toast {
+    param(
+        [Parameter(Mandatory)][string]$Text,
+        [ValidateSet('Info', 'Ok', 'Warn', 'Crit')][string]$Kind = 'Info',
+        [int]$Seconds = 4,
+        [System.Windows.Window]$TargetWindow
+    )
+    try {
+        if ($null -eq $TargetWindow) { $TargetWindow = Get-DialogOwner }
+        $toastHost = $null
+        if ($TargetWindow -is [System.Windows.Window]) { $toastHost = $TargetWindow.FindName('toastHost') }
+        if ($null -eq $toastHost -and $Window -is [System.Windows.Window]) { $toastHost = $Window.FindName('toastHost') }
+        if ($null -eq $toastHost) { return }
+        $glyph = @{ Info = 'E946'; Ok = 'E930'; Warn = 'E7BA'; Crit = 'EA39' }[$Kind]
+
+        $b = New-Object System.Windows.Controls.Border
+        $b.SetResourceReference([System.Windows.Controls.Border]::BackgroundProperty, 'ThemeToast')
+        $b.SetResourceReference([System.Windows.Controls.Border]::BorderBrushProperty, 'ThemePopupBorder')
+        $b.BorderThickness = New-Object System.Windows.Thickness(1)
+        $b.CornerRadius = New-Object System.Windows.CornerRadius(9)
+        $b.Padding = New-Object System.Windows.Thickness(14, 10, 14, 10)
+        $b.Margin = New-Object System.Windows.Thickness(0, 8, 0, 0)
+        $b.MaxWidth = 420
+        $b.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Right
+        # Cień to efekt, nie pędzel - jego krycie dobieramy do motywu w chwili tworzenia toastu.
+        $fx = New-Object System.Windows.Media.Effects.DropShadowEffect
+        $fx.BlurRadius = 18
+        $fx.ShadowDepth = 3
+        $fx.Color = [System.Windows.Media.Colors]::Black
+        $fx.Opacity = $(if ($script:isDarkTheme) { 0.45 } else { 0.18 })
+        $b.Effect = $fx
+
+        $sp = New-Object System.Windows.Controls.StackPanel
+        $sp.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+        $ic = New-GlyphBlock -Code $glyph -Size 15 -ColorKey "Theme$($Kind)Fore"
+        $ic.Margin = New-Object System.Windows.Thickness(0, 0, 10, 0)
+        $tx = New-Object System.Windows.Controls.TextBlock
+        $tx.Text = $Text
+        $tx.TextWrapping = [System.Windows.TextWrapping]::Wrap
+        $tx.MaxWidth = 360
+        $tx.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+        $tx.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'ThemeText')
+        [void]$sp.Children.Add($ic)
+        [void]$sp.Children.Add($tx)
+        $b.Child = $sp
+
+        while ($toastHost.Children.Count -ge 4) { $toastHost.Children.RemoveAt(0) }
+        [void]$toastHost.Children.Add($b)
+        # Podgląd UI i testy renderują okno od razu - animacja zostawiłaby na zrzucie krycie 0.
+        if ($null -eq $global:PesterTesting) {
+            try {
+                $fade = New-Object System.Windows.Media.Animation.DoubleAnimation -ArgumentList 0.0, 1.0, (New-Object System.Windows.Duration ([TimeSpan]::FromMilliseconds(220)))
+                $b.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $fade)
+            } catch { }
+        }
+        $toastTimer = New-Object System.Windows.Threading.DispatcherTimer
+        $toastTimer.Interval = [TimeSpan]::FromSeconds([Math]::Max(2, $Seconds))
+        $toastTimer.Tag = @{ Panel = $toastHost; Toast = $b }
+        $toastTimer.Add_Tick({
+            param($s, $e)
+            $s.Stop()
+            $t = $s.Tag
+            if ($t.Panel.Children.Contains($t.Toast)) { $t.Panel.Children.Remove($t.Toast) }
+        })
+        $toastTimer.Start()
+    } catch { }
+}
+
 $script:ThemeStylesXaml = @'
     <!-- Style kontrolek wspólne dla wszystkich okien, jak w ServerReview / AD Manager Diamond: każdy kolor
          przez {DynamicResource} (przełączanie motywu w locie), każdy styl bazowy przez {StaticResource}.
@@ -1251,63 +1324,71 @@ function global:New-ThemedWindow {
     return $win
 }
 
+# Okno komunikatu w wyglądzie ServerReview / AD Manager Diamond: kafelek z ikoną w kolorze tonu,
+# tytuł 16 px, treść, przyciski od prawej (drugorzędne najpierw, główny na końcu). Sygnatura i wynik
+# ([System.Windows.MessageBoxResult]) bez zmian - korzysta z nich kilkadziesiąt miejsc w skrypcie.
+# -Image: Information (domyślnie), Question, Warning, Error albo Success (zielony "ok").
+# -Danger: przycisk domyślny czerwony (DangerPrimaryButton) - dla nieodwracalnych operacji.
 function global:Show-ThemedMessageBox {
     param(
         [string]$Message,
         [string]$Title = "Informacja",
         [string]$Button = "OK",
-        [string]$Image = "Information"
+        [string]$Image = "Information",
+        [switch]$Danger
     )
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Width="460" SizeToContent="Height" WindowStartupLocation="CenterScreen"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize" Topmost="True" WindowStyle="ToolWindow">
-    <Grid>
+        Width="480" SizeToContent="Height" WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False"
+        Background="{DynamicResource ThemeHeader}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
+    <Grid Margin="22,20,22,18">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <Grid Margin="22,22,22,20">
+        <Grid Margin="0,0,0,14">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <Grid Width="38" Height="38" VerticalAlignment="Top" Margin="0,0,16,0">
-                <Ellipse Name="iconBg" Opacity="0.18"/>
-                <TextBlock Name="txtIcon" FontSize="18" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            </Grid>
-            <ScrollViewer Grid.Column="1" MaxHeight="420" VerticalScrollBarVisibility="Auto" VerticalAlignment="Center">
-                <TextBlock Name="txtMessage" TextWrapping="Wrap"/>
-            </ScrollViewer>
+            <Border Name="iconTile" Style="{StaticResource IconTile}">
+                <TextBlock Name="txtIcon" Style="{StaticResource Glyph}" FontSize="17" HorizontalAlignment="Center"/>
+            </Border>
+            <TextBlock Name="txtTitle" Grid.Column="1" Style="{StaticResource DialogTitle}" VerticalAlignment="Center"/>
         </Grid>
-        <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
-            <StackPanel Name="spButtons" Orientation="Horizontal" HorizontalAlignment="Right"/>
-        </Border>
+        <ScrollViewer Grid.Row="1" MaxHeight="420" VerticalScrollBarVisibility="Auto">
+            <TextBlock Name="txtMessage" Style="{StaticResource DialogBody}"/>
+        </ScrollViewer>
+        <StackPanel Name="spButtons" Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0"/>
     </Grid>
 </Window>
 "@
     $dlg = New-ThemedWindow -Xaml $xaml
     # Tytuł i treść ustawiamy po wczytaniu XAML - znak & albo " w tekście nie zepsuje XML-a.
     $dlg.Title = $Title
+    $dlg.FindName("txtTitle").Text = $Title
     $dlg.FindName("txtMessage").Text = $Message
 
     if ($Image -match 'Error') { $imgStr = 'Error' }
     elseif ($Image -match 'Warning') { $imgStr = 'Warning' }
     elseif ($Image -match 'Question') { $imgStr = 'Question' }
+    elseif ($Image -match 'Success') { $imgStr = 'Success' }
     else { $imgStr = 'Information' }
 
-    # Ikona = znak na tle koła w kolorze statusu z palety motywu (wcześniej emoji z kolorami
-    # dobranymi pod jasne tło - np. ciemnoczerwony ❌ na ciemnym tle był słabo widoczny).
+    # Ton (para kolorów tła kafelka i ikony z palety: Theme<Ton>Back / Theme<Ton>Fore) i znak ikony
+    # z czcionki Segoe MDL2 Assets. Kolory przez SetResourceReference - zmieniają się razem z motywem.
     $iconSpec = switch ($imgStr) {
-        "Error"    { @("✕", "ThemeDanger") }
-        "Warning"  { @("!", "ThemeWarning") }
-        "Question" { @("?", "ThemeAccentText") }
-        default    { @("i", "ThemeInfo") }
+        'Error'    { @{ T = 'Crit'; G = 'EA39' } }
+        'Warning'  { @{ T = 'Warn'; G = 'E7BA' } }
+        'Question' { @{ T = 'Info'; G = 'E897' } }
+        'Success'  { @{ T = 'Ok';   G = 'E930' } }
+        default    { @{ T = 'Info'; G = 'E946' } }
     }
+    $dlg.FindName("iconTile").SetResourceReference([System.Windows.Controls.Border]::BackgroundProperty, "Theme$($iconSpec.T)Back")
     $txtIcon = $dlg.FindName("txtIcon")
-    $txtIcon.Text = $iconSpec[0]
-    $txtIcon.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, $iconSpec[1])
-    $dlg.FindName("iconBg").SetResourceReference([System.Windows.Shapes.Shape]::FillProperty, $iconSpec[1])
+    $txtIcon.Text = Get-Glyph $iconSpec.G
+    $txtIcon.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, "Theme$($iconSpec.T)Fore")
 
     $spButtons = $dlg.FindName("spButtons")
     $script:msgBoxResult = [System.Windows.MessageBoxResult]::None
@@ -1318,9 +1399,9 @@ function global:Show-ThemedMessageBox {
         $btn.IsDefault = $isDef
         $btn.IsCancel = $isCanc
         $btn.Tag = $resVal
-        $btn.MinWidth = 90
-        $btn.Margin = "8,0,0,0"
-        if ($isDef) { $btn.Style = $dlg.FindResource("PrimaryButton") }
+        $btn.MinWidth = 96
+        if ($spButtons.Children.Count -gt 0) { $btn.Margin = "8,0,0,0" }
+        if ($isDef) { $btn.Style = $dlg.FindResource($(if ($Danger) { "DangerPrimaryButton" } else { "PrimaryButton" })) }
         $btn.Add_Click({
             $script:msgBoxResult = $this.Tag
             $dlg.Close()
@@ -1338,13 +1419,14 @@ function global:Show-ThemedMessageBox {
     # jest wyliczane, tylko przekazywane jako zwykły napis "[System.Windows.MessageBoxResult]::Yes".
     # Porównanie takiego napisu z enumem (-eq [System.Windows.MessageBoxResult]::Yes) zawsze dawało
     # $false, więc każde "Tak" działało jak "Nie". Nawias wymusza wyliczenie wyrażenia.
+    # Kolejność jak w ServerReview / AD Manager Diamond: przyciski drugorzędne najpierw, główny
+    # (domyślny, Enter) skrajnie po prawej. Flagi IsDefault/IsCancel - bez zmian (Enter i Esc).
     switch ($btnStr) {
-        "OKCancel" { & $AddBtn "OK" ([System.Windows.MessageBoxResult]::OK) $true $false; & $AddBtn "Anuluj" ([System.Windows.MessageBoxResult]::Cancel) $false $true }
-        "YesNo" { & $AddBtn "Tak" ([System.Windows.MessageBoxResult]::Yes) $true $false; & $AddBtn "Nie" ([System.Windows.MessageBoxResult]::No) $false $true }
-        "YesNoCancel" { & $AddBtn "Tak" ([System.Windows.MessageBoxResult]::Yes) $true $false; & $AddBtn "Nie" ([System.Windows.MessageBoxResult]::No) $false $false; & $AddBtn "Anuluj" ([System.Windows.MessageBoxResult]::Cancel) $false $true }
+        "OKCancel" { & $AddBtn "Anuluj" ([System.Windows.MessageBoxResult]::Cancel) $false $true; & $AddBtn "OK" ([System.Windows.MessageBoxResult]::OK) $true $false }
+        "YesNo" { & $AddBtn "Nie" ([System.Windows.MessageBoxResult]::No) $false $true; & $AddBtn "Tak" ([System.Windows.MessageBoxResult]::Yes) $true $false }
+        "YesNoCancel" { & $AddBtn "Anuluj" ([System.Windows.MessageBoxResult]::Cancel) $false $true; & $AddBtn "Nie" ([System.Windows.MessageBoxResult]::No) $false $false; & $AddBtn "Tak" ([System.Windows.MessageBoxResult]::Yes) $true $false }
         default { & $AddBtn "OK" ([System.Windows.MessageBoxResult]::OK) $true $false }
     }
-    if ($null -ne $dlg.Owner) { $dlg.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterOwner }
     $dlg.ShowDialog() | Out-Null
     return $script:msgBoxResult
 }
@@ -1389,21 +1471,22 @@ try {
 } catch {}
 
 # ---------- Ekran autoryzacji (PIN) ----------
+# Jak ekran odblokowania w ServerReview / AD Manager Diamond: kafelek z kłódką, nazwa narzędzia,
+# podpowiedź i pola. Topmost zostaje (okno bez właściciela, przed oknem głównym), bez ToolWindow.
 [xml]$authXaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Title="Autoryzacja STD" Width="380" SizeToContent="Height" WindowStartupLocation="CenterScreen"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize" Topmost="True" WindowStyle="ToolWindow">
-    <StackPanel Margin="22">
-        <TextBlock Text="Smart Tool for Deployment" FontSize="18" FontWeight="SemiBold"/>
-        <TextBlock Text="Wprowadź dane dostępowe, aby odblokować narzędzie" Style="{StaticResource MutedText}" FontSize="12" Margin="0,3,0,18"/>
-        <Border Style="{StaticResource Card}">
-            <StackPanel>
-                <TextBlock Text="Identyfikator / login" Style="{StaticResource Caption}"/>
-                <TextBox Name="txtLogin" Margin="0,0,0,14"/>
-                <TextBlock Text="PIN" Style="{StaticResource Caption}"/>
-                <PasswordBox Name="txtPin"/>
-            </StackPanel>
+        Title="Autoryzacja STD" Width="360" SizeToContent="Height" WindowStartupLocation="CenterScreen" ResizeMode="NoResize" Topmost="True"
+        Background="{DynamicResource ThemeHeader}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
+    <StackPanel Margin="28,26,28,22">
+        <Border Width="52" Height="52" CornerRadius="14" Background="{DynamicResource ThemeInfoBack}" HorizontalAlignment="Center">
+            <TextBlock Style="{StaticResource Glyph}" Text="&#xE72E;" FontSize="22" Foreground="{DynamicResource ThemeInfoFore}" HorizontalAlignment="Center"/>
         </Border>
+        <TextBlock Text="Smart Tool for Deployment" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource ThemeTitle}" HorizontalAlignment="Center" Margin="0,14,0,0"/>
+        <TextBlock Text="Wprowadź dane dostępowe, aby odblokować narzędzie" Foreground="{DynamicResource ThemeMuted}" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,4,0,18"/>
+        <TextBlock Text="Identyfikator / login" Style="{StaticResource Caption}"/>
+        <TextBox Name="txtLogin" Margin="0,0,0,12"/>
+        <TextBlock Text="PIN" Style="{StaticResource Caption}"/>
+        <PasswordBox Name="txtPin"/>
         <Button Name="btnLogin" Content="Odblokuj narzędzie" Margin="0,18,0,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
     </StackPanel>
 </Window>
@@ -1466,32 +1549,39 @@ if ($null -eq $global:PesterTesting) {
 # ---------- Utworzenie formularza (WPF) ----------
 [xml]$welcomeXaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Title="Potwierdzenie" Width="620" SizeToContent="Height" WindowStartupLocation="CenterScreen"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize"
-        WindowStyle="ToolWindow" Topmost="True">
-    <Grid>
+        Title="Potwierdzenie" Width="600" SizeToContent="Height" WindowStartupLocation="CenterScreen" ResizeMode="NoResize" Topmost="True"
+        Background="{DynamicResource ThemeHeader}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
+    <Grid Margin="22,20,22,18">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <Border Style="{StaticResource Card}" Margin="22,22,22,20" Padding="22,20">
-            <StackPanel>
-                <TextBlock Text="Smart Tool for Deployment" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource ThemeAccentText}"/>
-                <TextBlock Name="txtWelcomeVersion" Style="{StaticResource MutedText}" FontSize="12" Margin="0,2,0,16"/>
-                <TextBlock TextWrapping="Wrap" LineHeight="21">
-                    <Run Text="Celem niniejszego skryptu jest wsparcie przy szybkiej i skutecznej konfiguracji komputera."/>
-                    <LineBreak/>
-                    <Run Text="Skrypt nie zastępuje decyzji ani uwag inżynierów IT." Foreground="{DynamicResource ThemeMuted}"/>
-                </TextBlock>
-                <TextBlock Text="Czy chcesz kontynuować?" FontWeight="SemiBold" Margin="0,16,0,0"/>
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Border Style="{StaticResource IconTile}">
+                <TextBlock Style="{StaticResource Glyph}" Text="&#xE946;" FontSize="17" Foreground="{DynamicResource ThemeInfoFore}" HorizontalAlignment="Center"/>
+            </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock Text="Smart Tool for Deployment" Style="{StaticResource DialogTitle}"/>
+                <TextBlock Name="txtWelcomeVersion" Style="{StaticResource DialogSubtitle}"/>
             </StackPanel>
-        </Border>
-        <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="22,14">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnOk" Content="OK (3)" MinWidth="120" Margin="0,0,10,0" Style="{StaticResource PrimaryButton}" IsEnabled="False"/>
-                <Button Name="btnCancel" Content="Anuluj" MinWidth="120" IsEnabled="False" IsCancel="True"/>
-            </StackPanel>
-        </Border>
+        </Grid>
+        <StackPanel Grid.Row="1">
+            <TextBlock Style="{StaticResource DialogBody}">
+                <Run Text="Celem niniejszego skryptu jest wsparcie przy szybkiej i skutecznej konfiguracji komputera."/>
+                <LineBreak/>
+                <Run Text="Skrypt nie zastępuje decyzji ani uwag inżynierów IT." Foreground="{DynamicResource ThemeMuted}"/>
+            </TextBlock>
+            <TextBlock Text="Czy chcesz kontynuować?" FontWeight="SemiBold" Foreground="{DynamicResource ThemeText}" Margin="0,14,0,0"/>
+        </StackPanel>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Name="btnCancel" Content="Anuluj" MinWidth="120" IsEnabled="False" IsCancel="True"/>
+            <Button Name="btnOk" Content="OK (3)" MinWidth="120" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" IsEnabled="False"/>
+        </StackPanel>
     </Grid>
 </Window>
 "@
@@ -1574,7 +1664,7 @@ function Add-TaskGroupPanels {
 # w kolumnie; pełny opis jest w Tooltip.
 $checkboxOptions = [ordered]@{
     "DryRun"               = @{
-        "Text"    = "🧪 Tryb testowy (Dry-Run)"
+        "Text"    = "Tryb testowy (Dry-Run)"
         "Tooltip" = "Symuluje wdrożenie: loguje co zostałoby zrobione (instalacje, deinstalacje, zmiany rejestru, dołączenie do domeny, BitLocker itd.), ale nie wykonuje żadnej z tych operacji naprawdę. Przydatne do sprawdzenia poprawności konfiguracji przed wdrożeniem na realnej stacji."
         "Enabled" = $false
         "Group"   = "Prep"
@@ -2623,27 +2713,39 @@ function Show-InputDialog {
     )
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Width="440" SizeToContent="Height" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize" Topmost="True" WindowStyle="ToolWindow">
-    <Grid>
+        Width="480" SizeToContent="Height" WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False"
+        Background="{DynamicResource ThemeHeader}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
+    <Grid Margin="22,20,22,18">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <StackPanel Margin="22,20,22,18">
-            <TextBlock Name="txtMessage" TextWrapping="Wrap" Margin="0,0,0,12"/>
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Border Style="{StaticResource IconTile}">
+                <TextBlock Name="txtIcon" Style="{StaticResource Glyph}" Text="&#xE70F;" FontSize="17" Foreground="{DynamicResource ThemeInfoFore}" HorizontalAlignment="Center"/>
+            </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock Name="txtTitle" Style="{StaticResource DialogTitle}"/>
+                <TextBlock Name="txtMessage" Style="{StaticResource DialogSubtitle}"/>
+            </StackPanel>
+        </Grid>
+        <StackPanel Grid.Row="1">
             <TextBox Name="txtInput"/>
+            <TextBlock Name="lblPassword" Text="Hasło" Style="{StaticResource Caption}" Visibility="Collapsed"/>
             <PasswordBox Name="pwdInput" Visibility="Collapsed"/>
             <TextBlock Name="lblConfirm" Text="Powtórz hasło" Style="{StaticResource Caption}" Margin="0,12,0,5" Visibility="Collapsed"/>
             <PasswordBox Name="pwdConfirm" Visibility="Collapsed"/>
-            <TextBlock Name="txtError" Foreground="{DynamicResource ThemeDanger}" TextWrapping="Wrap" Margin="0,10,0,0" Visibility="Collapsed"/>
+            <TextBlock Name="txtError" Foreground="{DynamicResource ThemeDanger}" FontSize="12" TextWrapping="Wrap" Margin="0,10,0,0" Visibility="Collapsed"/>
         </StackPanel>
-        <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnOk" Content="OK" MinWidth="90" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                <Button Name="btnCancel" Content="Anuluj" MinWidth="90" IsCancel="True"/>
-            </StackPanel>
-        </Border>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Name="btnCancel" Content="Anuluj" MinWidth="96" IsCancel="True"/>
+            <Button Name="btnOk" Content="OK" MinWidth="96" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+        </StackPanel>
     </Grid>
 </Window>
 "@
@@ -2651,6 +2753,7 @@ function Show-InputDialog {
     # Tytuł i treść ustawiamy po wczytaniu XAML, a nie przez wklejenie do XAML - znak & albo "
     # w tekście nie zepsuje wtedy XML-a.
     $dlg.Title = $Title
+    $dlg.FindName("txtTitle").Text = $Title
     $dlg.FindName("txtMessage").Text = $Message
     $txtInput = $dlg.FindName("txtInput")
     $pwdInput = $dlg.FindName("pwdInput")
@@ -2661,7 +2764,10 @@ function Show-InputDialog {
         $txtInput.Visibility = [System.Windows.Visibility]::Collapsed
         $pwdInput.Visibility = [System.Windows.Visibility]::Visible
         $pwdConfirm.Visibility = [System.Windows.Visibility]::Visible
+        $dlg.FindName("lblPassword").Visibility = [System.Windows.Visibility]::Visible
         $dlg.FindName("lblConfirm").Visibility = [System.Windows.Visibility]::Visible
+        # Kłódka zamiast ołówka w kafelku - okno pyta o hasło.
+        $dlg.FindName("txtIcon").Text = Get-Glyph 'E72E'
     } else {
         $txtInput.Text = $DefaultText
     }
@@ -3613,31 +3719,60 @@ function Show-AppSelectionWindow {
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Wybór aplikacji" Width="640" Height="600" MinWidth="520" MinHeight="400" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" FontSize="13">
+        Title="Wybór aplikacji" Width="640" Height="600" MinWidth="520" MinHeight="400" WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{DynamicResource ThemeHeader}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" FontSize="13">
     <Window.Resources>
         <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
             <Setter Property="Margin" Value="0,4,12,4"/>
         </Style>
     </Window.Resources>
-    <Grid>
+    <Grid Margin="22,20,22,18">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Border Style="{StaticResource IconTile}">
+                <TextBlock Style="{StaticResource Glyph}" Text="&#xE71D;" FontSize="17" Foreground="{DynamicResource ThemeInfoFore}" HorizontalAlignment="Center"/>
+            </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock Text="Wybór aplikacji" Style="{StaticResource DialogTitle}"/>
+                <TextBlock Text="Aplikacje instalowane w zadaniu &#x201E;Zainstaluj wybrane aplikacje&#x201D;" Style="{StaticResource DialogSubtitle}"/>
+            </StackPanel>
+        </Grid>
 
         <!-- Wyszukiwarka i zaznaczanie w jednym wierszu, aplikacje w dwóch kolumnach (krótsza lista). -->
-        <DockPanel Grid.Row="0" Margin="20,18,20,12">
+        <DockPanel Grid.Row="1" Margin="0,0,0,12">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="10,0,0,0">
-                <Button Name="btnSelectAll" Content="Wszystkie" ToolTip="Zaznacz wszystkie widoczne"/>
-                <Button Name="btnDeselectAll" Content="Żadne" Margin="6,0,0,0" ToolTip="Odznacz wszystkie widoczne"/>
-                <Button Name="btnInvertSelection" Content="Odwróć" Margin="6,0,0,0" ToolTip="Odwróć zaznaczenie widocznych"/>
+                <Button Name="btnSelectAll" Style="{StaticResource GhostButton}" ToolTip="Zaznacz wszystkie widoczne">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE8B3;" FontSize="12" Margin="0,0,7,0"/>
+                        <TextBlock Text="Wszystkie" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+                <Button Name="btnDeselectAll" Style="{StaticResource GhostButton}" Margin="2,0,0,0" ToolTip="Odznacz wszystkie widoczne">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE894;" FontSize="12" Margin="0,0,7,0"/>
+                        <TextBlock Text="Żadne" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+                <Button Name="btnInvertSelection" Style="{StaticResource GhostButton}" Margin="2,0,0,0" ToolTip="Odwróć zaznaczenie widocznych">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE8AB;" FontSize="12" Margin="0,0,7,0"/>
+                        <TextBlock Text="Odwróć" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
             </StackPanel>
             <TextBox Name="txtSearch" Tag="Szukaj aplikacji..."/>
         </DockPanel>
 
-        <Border Grid.Row="1" Style="{StaticResource Card}" Margin="20,0,20,0" Padding="14,10,4,10">
+        <Border Grid.Row="2" Style="{StaticResource Card}" Padding="14,10,4,10">
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <!-- Bez ItemWidth: przy ItemWidth ukryte (Collapsed) pozycje nadal zajmują miejsce w wierszu
                      i wyniki wyszukiwania rozsypywały się z dziurami. Szerokość ma każda pozycja. -->
@@ -3645,15 +3780,13 @@ function Show-AppSelectionWindow {
             </ScrollViewer>
         </Border>
 
-        <Border Grid.Row="2" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,10" Margin="0,14,0,0">
-            <DockPanel>
-                <TextBlock Name="txtSelectedApps" Foreground="{DynamicResource ThemeMuted}" VerticalAlignment="Center"/>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                    <Button Name="btnOk" Content="OK" MinWidth="90" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                    <Button Name="btnCancel" Content="Anuluj" MinWidth="90" IsCancel="True"/>
-                </StackPanel>
-            </DockPanel>
-        </Border>
+        <DockPanel Grid.Row="3" Margin="0,18,0,0">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button Name="btnCancel" Content="Anuluj" MinWidth="96" IsCancel="True"/>
+                <Button Name="btnOk" Content="OK" MinWidth="96" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+            </StackPanel>
+            <TextBlock Name="txtSelectedApps" Style="{StaticResource HintText}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+        </DockPanel>
     </Grid>
 </Window>
 "@
@@ -3674,7 +3807,8 @@ function Show-AppSelectionWindow {
     foreach ($name in $programs.PSObject.Properties.Name | Sort-Object) {
         $cb = New-Object System.Windows.Controls.CheckBox
         $cb.Content = $name
-        $cb.Width = 263
+        # 2 kolumny: 2 x (256 + 12 marginesu) mieści się z zapasem w karcie okna 640 px (także przy 125-150%).
+        $cb.Width = 256
         
         # Pamiętaj wybór w trakcie sesji za pomocą $script:SelectedApps
         if ($script:SelectedApps.ContainsKey($name)) {
@@ -3736,7 +3870,7 @@ function Show-AppSelectionWindow {
         $script:ignoreProfileChange = $false
         
         if ($null -ne $btnChooseApps) {
-            $btnChooseApps.Content = "Wybierz aplikacje ($($script:SelectedApps.Count))"
+            Set-ButtonContent -Button $btnChooseApps -Text "Wybierz aplikacje ($($script:SelectedApps.Count))" -Icon 'E71D'
             $checkboxControls["InstallApplications"].IsChecked = $script:SelectedApps.Count -gt 0
         }
         
@@ -3761,6 +3895,8 @@ function Start-Deployment {
     Write-Log "Użytkownik rozpoczął wdrożenie (przycisk 'Rozpocznij')." -Context "Użytkownik"
     $btnStart.IsEnabled = $false
     $btnStart.Content = "Trwa konfiguracja..."
+    $script:LastDeployFailed = $false
+    Set-DeployStatusDot Busy
     $btnPause.IsEnabled = $true
     $btnCancelDeploy.IsEnabled = $true
     $btnPause.Visibility = [System.Windows.Visibility]::Visible
@@ -3782,6 +3918,7 @@ function Start-Deployment {
         & $syncStartLabel
         Set-ProgressText "Wdrożenie nie wystartowało - popraw konfigurację (szczegóły w logach)."
         $txtProgressInfo.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, "ThemeDanger")
+        Set-DeployStatusDot Error
         return
     }
 
@@ -3801,7 +3938,7 @@ function Start-Deployment {
     $txtStopwatch.Visibility = [System.Windows.Visibility]::Visible
     $script:stopwatchStartTime = Get-Date
     $script:stopwatchAccumulated = [TimeSpan]::Zero
-    $txtStopwatch.Text = "⏱ 00:00:00"
+    $txtStopwatch.Text = "00:00:00"
     $script:stopwatchTimer.Start()
 
     # Od tego miejsca wpisy Write-Log bez jawnego -Context oznaczane są jako "Automat" (kroki
@@ -3936,6 +4073,7 @@ function Start-Deployment {
         Write-Log "Nieoczekiwany błąd podczas wdrożenia - przerwano: $_" -IsError
         Show-ThemedMessageBox -Message "Wystąpił nieoczekiwany błąd i wdrożenie zostało przerwane:`n`n$($_.Exception.Message)`n`nSzczegóły w logu." -Title "Błąd wdrożenia" -Button "OK" -Image "Error" | Out-Null
         $script:isCancelled = $true
+        $script:LastDeployFailed = $true
     } finally {
         if ($null -ne $script:stopwatchTimer) { $script:stopwatchTimer.Stop() }
         $btnStart.IsEnabled = $true
@@ -3954,8 +4092,10 @@ function Start-Deployment {
         $script:isCancelled = $false
         $script:DryRun = $false
         $script:CurrentLogContext = "System"
-        $btnPause.Content = "Pauza"
+        Set-ButtonContent $btnPause 'Pauza' 'E769'
         $btnPause.Style = $Window.FindResource("WarningButton")
+        # Kropka stanu: czerwona po nieoczekiwanym błędzie, zielona po zakończeniu albo przerwaniu.
+        Set-DeployStatusDot $(if ($script:LastDeployFailed) { 'Error' } else { 'Idle' })
 
         if ($wasCancelled) {
             Set-ProgressText "Wdrożenie zostało przerwane."
@@ -3991,7 +4131,7 @@ function Get-AppSelection {
     $appsList = if ($count -gt 0) { $script:SelectedApps.Keys -join ', ' } else { "Brak" }
     Write-Log "Załadowano domyślnie zaznaczone aplikacje ($count): $appsList"
     if ($null -ne $btnChooseApps) {
-        $btnChooseApps.Content = "Wybierz aplikacje ($count)"
+        Set-ButtonContent -Button $btnChooseApps -Text "Wybierz aplikacje ($count)" -Icon 'E71D'
         $CheckboxControls["InstallApplications"].IsChecked = ($count -gt 0)
     }
 }
@@ -4152,36 +4292,38 @@ function Show-LogEntryDetail {
 
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Title="Szczegóły wpisu logu" Width="640" Height="460" MinWidth="420" MinHeight="280" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
-    <Grid>
+        Title="Szczegóły wpisu logu" Width="640" Height="460" MinWidth="420" MinHeight="280" WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{DynamicResource ThemeHeader}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
+    <Grid Margin="22,20,22,18">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <WrapPanel Grid.Row="0" Margin="20,18,20,12">
-            <Border Style="{StaticResource Chip}" Margin="0,0,8,0">
-                <TextBlock Name="txtRodzaj" FontWeight="SemiBold"/>
+        <!-- Rodzaj (kolor tonu wpisu), data i kontekst jako pastylki -->
+        <WrapPanel Grid.Row="0" Margin="0,0,0,8">
+            <Border Name="chipRodzaj" Style="{StaticResource Chip}" Margin="0,0,8,6">
+                <TextBlock Name="txtRodzaj" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource ThemeGhostText}"/>
             </Border>
-            <Border Style="{StaticResource Chip}" Margin="0,0,8,0">
-                <TextBlock Name="txtData" FontFamily="Consolas"/>
+            <Border Style="{StaticResource Chip}" Margin="0,0,8,6">
+                <TextBlock Name="txtData" FontFamily="Consolas" FontSize="12" Foreground="{DynamicResource ThemeGhostText}"/>
             </Border>
-            <Border Style="{StaticResource Chip}">
-                <TextBlock Name="txtKontekst" Foreground="{DynamicResource ThemeMuted}"/>
+            <Border Style="{StaticResource Chip}" Margin="0,0,0,6">
+                <TextBlock Name="txtKontekst" FontSize="12" Foreground="{DynamicResource ThemeGhostText}"/>
             </Border>
         </WrapPanel>
-        <Border Grid.Row="1" Style="{StaticResource Card}" Margin="20,0,20,0" Padding="2">
-            <TextBox Name="txtInformacja" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" BorderThickness="0" Background="Transparent"
-                     FontFamily="Consolas" FontSize="13" Padding="12" VerticalContentAlignment="Stretch"
-                     VerticalScrollBarVisibility="Auto"/>
+        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="2">
+            <TextBox Name="txtInformacja" Style="{StaticResource ReadOnlyText}" Padding="10,8"/>
         </Border>
-        <Border Grid.Row="2" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,12" Margin="0,16,0,0">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnCopy" Content="Kopiuj" MinWidth="100" Margin="0,0,8,0"/>
-                <Button Name="btnClose" Content="Zamknij" MinWidth="100" IsCancel="True"/>
-            </StackPanel>
-        </Border>
+        <Grid Grid.Row="2" Margin="0,18,0,0">
+            <Button Name="btnCopy" Style="{StaticResource GhostButton}" HorizontalAlignment="Left" ToolTip="Kopiuj treść wpisu do schowka">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE8C8;" FontSize="12" Margin="0,0,7,0"/>
+                    <TextBlock Text="Kopiuj" VerticalAlignment="Center"/>
+                </StackPanel>
+            </Button>
+            <Button Name="btnClose" Content="Zamknij" MinWidth="96" HorizontalAlignment="Right" IsCancel="True"/>
+        </Grid>
     </Grid>
 </Window>
 "@
@@ -4189,7 +4331,22 @@ function Show-LogEntryDetail {
 
     $txtRodzaj = $dlg.FindName("txtRodzaj")
     $txtRodzaj.Text = $Entry.RodzajText
-    try { $txtRodzaj.Foreground = New-ThemeBrush $Entry.RowColorHex } catch {}
+    # Pastylka rodzaju w kolorach tonu (tło + tekst z palety, przemalowują się razem z motywem).
+    # Wpis bez RodzajKey (np. starszy obiekt) - jak dawniej kolor tekstu z danych wiersza.
+    $entryKind = [string]$Entry.RodzajKey
+    if ([string]::IsNullOrWhiteSpace($entryKind)) {
+        try { $txtRodzaj.Foreground = New-ThemeBrush $Entry.RowColorHex } catch {}
+    } else {
+        $kindKeys = switch ($entryKind) {
+            'Error'   { @('ThemeCritBack', 'ThemeCritFore') }
+            'Warning' { @('ThemeWarnBack', 'ThemeWarnFore') }
+            'Success' { @('ThemeOkBack', 'ThemeOkFore') }
+            'DryRun'  { @('ThemeDryRunBack', 'ThemeDryRun') }
+            default   { @('ThemeChip', 'ThemeGhostText') }
+        }
+        $dlg.FindName("chipRodzaj").SetResourceReference([System.Windows.Controls.Border]::BackgroundProperty, $kindKeys[0])
+        $txtRodzaj.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, $kindKeys[1])
+    }
     $dlg.FindName("txtData").Text = $Entry.DataText
     $dlg.FindName("txtKontekst").Text = "Kontekst: $($Entry.Kontekst)"
     $txtInformacja = $dlg.FindName("txtInformacja")
@@ -4201,8 +4358,12 @@ function Show-LogEntryDetail {
     $dlg.FindName("btnClose").Add_Click({ $dlg.Close() })
 
     $dlg.Add_Loaded({ $txtInformacja.Focus() | Out-Null; $txtInformacja.SelectAll() })
-    if ($null -ne $script:ActiveLogWindow -and $script:ActiveLogWindow.IsLoaded) {
+    if ($null -ne $script:ActiveLogWindow -and $script:ActiveLogWindow.IsLoaded -and $script:ActiveLogWindow.IsVisible) {
         $dlg.Owner = $script:ActiveLogWindow
+        # Właściciel jest widoczny - cofamy regułę New-ThemedWindow dla okien bez właściciela.
+        $dlg.Topmost = $false
+        $dlg.ShowInTaskbar = $false
+        $dlg.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterOwner
     }
     $dlg.ShowDialog() | Out-Null
 }
@@ -4539,7 +4700,7 @@ function Show-LogWindow {
     })
 
     $btnClearLogs.Add_Click({
-        if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz bezpowrotnie usunąć wszystkie wpisy z plików logów (C:\deploy-log.txt)?" -Title "Potwierdzenie czyszczenia" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
+        if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz bezpowrotnie usunąć wszystkie wpisy z plików logów (C:\deploy-log.txt)?" -Title "Potwierdzenie czyszczenia" -Button "YesNo" -Image "Warning" -Danger) -eq [System.Windows.MessageBoxResult]::Yes) {
             try { Clear-Content -Path "C:\deploy-log.txt" -ErrorAction SilentlyContinue } catch {}
             try { Clear-Content -Path "C:\deploy-error-log.txt" -ErrorAction SilentlyContinue } catch {}
             $script:rawLogText = ""
@@ -4561,7 +4722,7 @@ function Show-LogWindow {
                 $filtersText = if ($filtersSummary.Count -gt 0) { $filtersSummary -join ", " } else { "brak (pokazano wszystkie wpisy)" }
 
                 Export-LogReportHtml -Entries $script:LastRenderedEntries -FiltersText $filtersText -OutFile $sfd.FileName
-                Show-ThemedMessageBox -Message "Wyeksportowano raport do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
+                Show-ThemedMessageBox -Message "Wyeksportowano raport do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Success" | Out-Null
                 Start-Process $sfd.FileName
             } catch {
                 Show-ThemedMessageBox -Message "Błąd podczas eksportu raportu: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
@@ -4576,7 +4737,7 @@ function Show-LogWindow {
         if ($sfd.ShowDialog() -eq $true) {
             try {
                 $script:rawLogText | Set-Content -Path $sfd.FileName -Encoding UTF8
-                Show-ThemedMessageBox -Message "Zapisano logi do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
+                Show-ThemedMessageBox -Message "Zapisano logi do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Success" | Out-Null
             } catch {
                 Show-ThemedMessageBox -Message "Błąd podczas zapisywania: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             }
@@ -4612,7 +4773,7 @@ function Show-LogWindow {
         if ($sfd.ShowDialog() -eq $true) {
             try {
                 Compress-Archive -Path $logFiles -DestinationPath $sfd.FileName -Force
-                Show-ThemedMessageBox -Message "Spakowano logi do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
+                Show-ThemedMessageBox -Message "Spakowano logi do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Success" | Out-Null
             } catch {
                 Show-ThemedMessageBox -Message "Błąd podczas pakowania: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             }
@@ -4644,34 +4805,36 @@ function Show-UninstallConfirmDialog {
     param($AppCount, $AppListText)
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Title="Potwierdzenie deinstalacji" Width="560" SizeToContent="Height" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize">
-    <Grid>
+        Title="Potwierdzenie deinstalacji" Width="560" SizeToContent="Height" WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False"
+        Background="{DynamicResource ThemeHeader}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
+    <!-- Lista programów w wierszu "*": przy niskim ekranie kurczy się ona (i przewija), a nie przyciski. -->
+    <Grid Margin="22,20,22,18">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <!-- Lista programów w wierszu "*": przy niskim ekranie kurczy się ona (i przewija), a nie przyciski. -->
-        <Grid Margin="22,20,22,18">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-                <RowDefinition Height="Auto"/>
-            </Grid.RowDefinitions>
-            <TextBlock Name="txtHeader" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource ThemeDanger}" TextWrapping="Wrap" Margin="0,0,0,12"/>
-            <Border Grid.Row="1" Style="{StaticResource Card}" Padding="12,10" MaxHeight="260" Margin="0,0,0,14">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <TextBlock Name="txtAppList" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"/>
-                </ScrollViewer>
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Border Style="{StaticResource IconTile}" Background="{DynamicResource ThemeCritBack}">
+                <TextBlock Style="{StaticResource Glyph}" Text="&#xE74D;" FontSize="17" Foreground="{DynamicResource ThemeCritFore}" HorizontalAlignment="Center"/>
             </Border>
-            <TextBlock Grid.Row="2" Text="Czy na pewno chcesz kontynuować? Ta operacja usunie wybrane aplikacje." TextWrapping="Wrap"/>
+            <TextBlock Name="txtHeader" Grid.Column="1" Style="{StaticResource DialogTitle}" VerticalAlignment="Center"/>
         </Grid>
-        <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnYes" Content="Tak, odinstaluj" MinWidth="140" Margin="0,0,8,0" Style="{StaticResource DangerPrimaryButton}" IsDefault="True"/>
-                <Button Name="btnNo" Content="Anuluj" MinWidth="100" IsCancel="True"/>
-            </StackPanel>
+        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="12,10" MaxHeight="260" Margin="0,0,0,14">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <TextBlock Name="txtAppList" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12" Foreground="{DynamicResource ThemeGridText}"/>
+            </ScrollViewer>
         </Border>
+        <TextBlock Grid.Row="2" Text="Czy na pewno chcesz kontynuować? Ta operacja usunie wybrane aplikacje." Style="{StaticResource DialogBody}"/>
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Name="btnNo" Content="Anuluj" MinWidth="96" IsCancel="True"/>
+            <Button Name="btnYes" Content="Tak, odinstaluj" MinWidth="140" Margin="8,0,0,0" Style="{StaticResource DangerPrimaryButton}" IsDefault="True"/>
+        </StackPanel>
     </Grid>
 </Window>
 "@
@@ -4706,23 +4869,38 @@ function Show-CustomInfoDialog {
     param($Title, $Message, [switch]$ShowCopy, [string]$HtmlData)
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Width="480" SizeToContent="Height" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize" Topmost="True">
-    <Grid>
+        Width="520" SizeToContent="Height" WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False"
+        Background="{DynamicResource ThemeHeader}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
+    <Grid Margin="22,20,22,18">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <ScrollViewer Grid.Row="0" MaxHeight="500" VerticalScrollBarVisibility="Auto" Margin="22,20,12,18" Padding="0,0,10,0">
-            <TextBlock Name="txtMessage" TextWrapping="Wrap"/>
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Border Style="{StaticResource IconTile}" Background="{DynamicResource ThemeOkBack}">
+                <TextBlock Style="{StaticResource Glyph}" Text="&#xE930;" FontSize="17" Foreground="{DynamicResource ThemeOkFore}" HorizontalAlignment="Center"/>
+            </Border>
+            <TextBlock Name="txtTitle" Grid.Column="1" Style="{StaticResource DialogTitle}" VerticalAlignment="Center"/>
+        </Grid>
+        <ScrollViewer Grid.Row="1" MaxHeight="500" VerticalScrollBarVisibility="Auto">
+            <TextBlock Name="txtMessage" Style="{StaticResource DialogBody}"/>
         </ScrollViewer>
-        <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <Grid Grid.Row="2" Margin="0,18,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
                 <Button Name="btnExportHTML" Content="Zapisz HTML" MinWidth="110" Margin="0,0,8,0" Visibility="Collapsed"/>
-                <Button Name="btnCopy" Content="Kopiuj do schowka" MinWidth="140" Margin="0,0,8,0" Visibility="Collapsed"/>
-                <Button Name="btnOk" Content="OK" MinWidth="100" Style="{StaticResource PrimaryButton}" IsDefault="True" IsCancel="True"/>
+                <Button Name="btnCopy" Content="Kopiuj do schowka" MinWidth="140" Visibility="Collapsed"/>
             </StackPanel>
-        </Border>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Name="btnOk" Content="OK" MinWidth="96" Style="{StaticResource PrimaryButton}" IsDefault="True" IsCancel="True"/>
+            </StackPanel>
+        </Grid>
+        <!-- Powiadomienia (np. skopiowano do schowka) nad przyciskami; RowSpan, żeby nie powiększały okna -->
+        <StackPanel Name="toastHost" Grid.RowSpan="3" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,0,48"/>
     </Grid>
 </Window>
 "@
@@ -4730,6 +4908,7 @@ function Show-CustomInfoDialog {
     # Tytuł ustawiamy po wczytaniu XAML - wklejony wprost do XAML (Title="$Title") tekst ze znakiem
     # & albo " psuł XML i okno w ogóle się nie otwierało.
     $dlg.Title = $Title
+    $dlg.FindName("txtTitle").Text = $Title
     
     $txtMessage = $dlg.FindName("txtMessage")
     $txtMessage.Text = $Message
@@ -4739,7 +4918,8 @@ function Show-CustomInfoDialog {
         $btnCopy.Visibility = [System.Windows.Visibility]::Visible
         $btnCopy.Add_Click({
             Set-Clipboard -Value $Message
-            Show-ThemedMessageBox -Message "Skopiowano do schowka!" -Title "Informacja" -Button "OK" -Image "Information" | Out-Null
+            # Krótkie powiadomienie w tym oknie zamiast kolejnego okna do zamknięcia.
+            Show-Toast -Text "Skopiowano do schowka" -Kind Ok -TargetWindow $dlg
         })
     }
     
@@ -4753,7 +4933,7 @@ function Show-CustomInfoDialog {
             if ($sfd.ShowDialog() -eq $true) {
                 try {
                     $HtmlData | Set-Content -Path $sfd.FileName -Encoding UTF8
-                    Show-ThemedMessageBox -Message "Zapisano raport do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
+                    Show-ThemedMessageBox -Message "Zapisano raport do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Success" | Out-Null
                 } catch {
                     Show-ThemedMessageBox -Message "Błąd podczas zapisywania: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
                 }
@@ -5061,7 +5241,7 @@ function Show-SystemInfoWindow {
         if ($sfd.ShowDialog() -eq $true) {
             try {
                 Get-HardwareAudit -AsHtml | Set-Content -Path $sfd.FileName -Encoding UTF8
-                Show-ThemedMessageBox -Message "Zapisano raport do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
+                Show-ThemedMessageBox -Message "Zapisano raport do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Success" | Out-Null
                 Start-Process $sfd.FileName
             } catch {
                 Show-ThemedMessageBox -Message "Błąd podczas zapisywania: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
@@ -5184,6 +5364,7 @@ function Show-SoftwareUninstaller {
     $miOpenLocation = $uninstWindow.FindName("miOpenLocation")
     $btnUninstall = $uninstWindow.FindName("btnUninstall")
     $btnPauseUninstall = $uninstWindow.FindName("btnPauseUninstall")
+    Set-ButtonContent $btnPauseUninstall 'Pauza' 'E769'
     $btnKill = $uninstWindow.FindName("btnKill")
     $btnClose = $uninstWindow.FindName("btnClose")
     $script:uninstProc = $null
@@ -5316,7 +5497,7 @@ function Show-SoftwareUninstaller {
         if ($sfd.ShowDialog() -eq $true) {
             try {
                 $itemsToExport | Select-Object DisplayName, DisplayVersion, InstallDate, Publisher | Export-Csv -Path $sfd.FileName -NoTypeInformation -Encoding UTF8 -Delimiter ";"
-                Show-ThemedMessageBox -Message "Wyeksportowano pomyślnie do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
+                Show-ThemedMessageBox -Message "Wyeksportowano pomyślnie do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Success" | Out-Null
             } catch {
                 Show-ThemedMessageBox -Message "Błąd eksportu: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             }
@@ -5370,7 +5551,7 @@ function Show-SoftwareUninstaller {
 </html>
 "@
                 $html | Set-Content -Path $sfd.FileName -Encoding UTF8
-                Show-ThemedMessageBox -Message "Wyeksportowano pomyślnie do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
+                Show-ThemedMessageBox -Message "Wyeksportowano pomyślnie do $($sfd.FileName)" -Title "Sukces" -Button "OK" -Image "Success" | Out-Null
             } catch {
                 Show-ThemedMessageBox -Message "Błąd eksportu: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             }
@@ -5498,12 +5679,12 @@ function Show-SoftwareUninstaller {
     $btnPauseUninstall.Add_Click({
         if ($script:isUninstallPaused) {
             $script:isUninstallPaused = $false
-            $btnPauseUninstall.Content = "Pauza"
+            Set-ButtonContent $btnPauseUninstall 'Pauza' 'E769'
             $btnPauseUninstall.Style = $uninstWindow.FindResource("WarningButton")
             Write-Log "Wznowiono deinstalację zbiorczą."
         } else {
             $script:isUninstallPaused = $true
-            $btnPauseUninstall.Content = "Wznów"
+            Set-ButtonContent $btnPauseUninstall 'Wznów' 'E768'
             $btnPauseUninstall.Style = $uninstWindow.FindResource("SuccessButton")
             Write-Log "Deinstalacja zbiorcza wstrzymana. Oczekiwanie na interakcję..."
         }
@@ -5646,7 +5827,7 @@ function Show-SoftwareUninstaller {
                 $btnUninstall.IsEnabled = $true
                 $btnPauseUninstall.IsEnabled = $false
                 $script:isUninstallPaused = $false
-                $btnPauseUninstall.Content = "Pauza"
+                Set-ButtonContent $btnPauseUninstall 'Pauza' 'E769'
                 $btnPauseUninstall.Style = $uninstWindow.FindResource("WarningButton")
                 $btnSelectAllApps.IsEnabled = $true
                 $btnDeselectAllApps.IsEnabled = $true
@@ -5671,36 +5852,50 @@ function Show-ProgramEditDialog {
     param($IsNew, $ProgramName, $ProgramData)
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Title="Edytuj program" Width="500" SizeToContent="Height" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize">
-    <Grid>
+        Title="Edytuj program" Width="540" SizeToContent="Height" WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False"
+        Background="{DynamicResource ThemeHeader}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
+    <Grid Margin="22,20,22,18">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <StackPanel Margin="22,20,22,18">
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Border Style="{StaticResource IconTile}">
+                <TextBlock Name="txtIcon" Style="{StaticResource Glyph}" Text="&#xE70F;" FontSize="17" Foreground="{DynamicResource ThemeInfoFore}" HorizontalAlignment="Center"/>
+            </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock Name="txtTitle" Text="Edytuj program" Style="{StaticResource DialogTitle}"/>
+                <TextBlock Text="Program dla zadania &#x201E;Zainstaluj wybrane aplikacje&#x201D;" Style="{StaticResource DialogSubtitle}"/>
+            </StackPanel>
+        </Grid>
+        <StackPanel Grid.Row="1">
             <TextBlock Text="Identyfikator (np. Chrome)" Style="{StaticResource Caption}"/>
-            <TextBox Name="txtName" Margin="0,0,0,14"/>
+            <TextBox Name="txtName" Margin="0,0,0,12"/>
             <TextBlock Text="Nazwa pliku / Winget ID" Style="{StaticResource Caption}"/>
-            <TextBox Name="txtFile" Margin="0,0,0,14"/>
+            <TextBox Name="txtFile" Margin="0,0,0,12"/>
             <TextBlock Text="Argumenty cichej instalacji" Style="{StaticResource Caption}"/>
             <TextBox Name="txtArgs" Margin="0,0,0,16"/>
             <CheckBox Name="chkForceUrl" Content="Zawsze pobieraj z niestandardowego adresu URL" Margin="0,0,0,8" ToolTip="Nadpisuje globalne źródło instalacji dla tego konkretnego programu."/>
             <TextBox Name="txtUrl" Margin="24,0,0,16" IsEnabled="False" ToolTip="Pełny bezpośredni adres URL do instalatora (np. https://.../plik.exe)"/>
             <CheckBox Name="chkEnabled" Content="Domyślnie zaznaczone do instalacji"/>
         </StackPanel>
-        <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnSave" Content="Zapisz" MinWidth="90" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                <Button Name="btnCancel" Content="Anuluj" MinWidth="90" IsCancel="True"/>
-            </StackPanel>
-        </Border>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Name="btnCancel" Content="Anuluj" MinWidth="96" IsCancel="True"/>
+            <Button Name="btnSave" Content="Zapisz" MinWidth="96" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+        </StackPanel>
     </Grid>
 </Window>
 "@
     $dlg = New-ThemedWindow -Xaml $xaml
     
     $dlg.Title = if ($IsNew) { "Dodaj program" } else { "Edytuj program" }
+    $dlg.FindName("txtTitle").Text = $dlg.Title
+    if ($IsNew) { $dlg.FindName("txtIcon").Text = Get-Glyph 'E710' }
     $txtName = $dlg.FindName("txtName")
     $txtFile = $dlg.FindName("txtFile")
     $txtArgs = $dlg.FindName("txtArgs")
@@ -5761,16 +5956,30 @@ function Show-RegistryEditDialog {
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Edytuj wpis rejestru" Width="480" SizeToContent="Height" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize">
-    <Grid>
+        Title="Edytuj wpis rejestru" Width="520" SizeToContent="Height" WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False"
+        Background="{DynamicResource ThemeHeader}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
+    <Grid Margin="22,20,22,18">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <StackPanel Margin="22,20,22,18">
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Border Style="{StaticResource IconTile}">
+                <TextBlock Name="txtIcon" Style="{StaticResource Glyph}" Text="&#xE943;" FontSize="17" Foreground="{DynamicResource ThemeInfoFore}" HorizontalAlignment="Center"/>
+            </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock Name="txtTitle" Text="Edytuj wpis rejestru" Style="{StaticResource DialogTitle}"/>
+                <TextBlock Text="Wpis ustawiany w zadaniu &#x201E;Rejestr i ustawienia systemowe&#x201D;" Style="{StaticResource DialogSubtitle}"/>
+            </StackPanel>
+        </Grid>
+        <StackPanel Grid.Row="1">
             <TextBlock Text="Klucz główny i subklucz (np. SOFTWARE\MójKlucz)" Style="{StaticResource Caption}"/>
-            <Grid Margin="0,0,0,14">
+            <Grid Margin="0,0,0,12">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="96"/>
                     <ColumnDefinition Width="*"/>
@@ -5782,9 +5991,9 @@ function Show-RegistryEditDialog {
                 <TextBox Name="txtSubKey" Grid.Column="1"/>
             </Grid>
             <TextBlock Text="Nazwa (Name)" Style="{StaticResource Caption}"/>
-            <TextBox Name="txtName" Margin="0,0,0,14"/>
+            <TextBox Name="txtName" Margin="0,0,0,12"/>
             <TextBlock Text="Wartość (Value)" Style="{StaticResource Caption}"/>
-            <TextBox Name="txtValue" Margin="0,0,0,14"/>
+            <TextBox Name="txtValue" Margin="0,0,0,12"/>
             <TextBlock Text="Typ danych (PropertyType)" Style="{StaticResource Caption}"/>
             <ComboBox Name="cmbType">
                 <ComboBoxItem Content="String"/>
@@ -5795,18 +6004,17 @@ function Show-RegistryEditDialog {
                 <ComboBoxItem Content="MultiString"/>
             </ComboBox>
         </StackPanel>
-        <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnSave" Content="Zapisz" MinWidth="90" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                <Button Name="btnCancel" Content="Anuluj" MinWidth="90" IsCancel="True"/>
-            </StackPanel>
-        </Border>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Name="btnCancel" Content="Anuluj" MinWidth="96" IsCancel="True"/>
+            <Button Name="btnSave" Content="Zapisz" MinWidth="96" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+        </StackPanel>
     </Grid>
 </Window>
 "@
     $dlg = New-ThemedWindow -Xaml $xaml
     
     $dlg.Title = if ($IsNew) { "Dodaj wpis rejestru" } else { "Edytuj wpis rejestru" }
+    $dlg.FindName("txtTitle").Text = $dlg.Title
     $cmbRoot = $dlg.FindName("cmbRoot")
     $txtSubKey = $dlg.FindName("txtSubKey")
     $txtName = $dlg.FindName("txtName")
@@ -5882,29 +6090,42 @@ function Show-ScriptEditDialog {
     param($IsNew, $ScriptPath)
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Title="Edytuj skrypt" Width="460" SizeToContent="Height" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize">
-    <Grid>
+        Title="Edytuj skrypt" Width="500" SizeToContent="Height" WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False"
+        Background="{DynamicResource ThemeHeader}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
+    <Grid Margin="22,20,22,18">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <StackPanel Margin="22,20,22,18">
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Border Style="{StaticResource IconTile}">
+                <TextBlock Name="txtIcon" Style="{StaticResource Glyph}" Text="&#xE756;" FontSize="17" Foreground="{DynamicResource ThemeInfoFore}" HorizontalAlignment="Center"/>
+            </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock Name="txtTitle" Text="Edytuj skrypt" Style="{StaticResource DialogTitle}"/>
+                <TextBlock Text="Skrypt uruchamiany w zadaniu &#x201E;Uruchom skrypty poinstalacyjne&#x201D;" Style="{StaticResource DialogSubtitle}"/>
+            </StackPanel>
+        </Grid>
+        <StackPanel Grid.Row="1">
             <TextBlock Text="Ścieżka do skryptu (nazwa pliku, UNC lub URL)" Style="{StaticResource Caption}"/>
             <TextBox Name="txtPath"/>
         </StackPanel>
-        <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnSave" Content="Zapisz" MinWidth="90" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                <Button Name="btnCancel" Content="Anuluj" MinWidth="90" IsCancel="True"/>
-            </StackPanel>
-        </Border>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Name="btnCancel" Content="Anuluj" MinWidth="96" IsCancel="True"/>
+            <Button Name="btnSave" Content="Zapisz" MinWidth="96" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+        </StackPanel>
     </Grid>
 </Window>
 "@
     $dlg = New-ThemedWindow -Xaml $xaml
     
     $dlg.Title = if ($IsNew) { "Dodaj skrypt Post-Install" } else { "Edytuj skrypt Post-Install" }
+    $dlg.FindName("txtTitle").Text = $dlg.Title
     $txtPath = $dlg.FindName("txtPath")
     $btnSave = $dlg.FindName("btnSave")
     $btnCancel = $dlg.FindName("btnCancel")
@@ -5932,43 +6153,56 @@ function Show-ProfileEditDialog {
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Edytuj profil wdrożeniowy" Width="660" Height="600" MinWidth="480" MinHeight="380" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" FontSize="13">
+        Title="Edytuj profil wdrożeniowy" Width="660" Height="600" MinWidth="480" MinHeight="380" WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{DynamicResource ThemeHeader}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" FontSize="13">
     <Window.Resources>
         <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
             <Setter Property="Margin" Value="0,4,12,4"/>
         </Style>
     </Window.Resources>
-    <Grid>
+    <Grid Margin="22,20,22,18">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <StackPanel Grid.Row="0" Margin="20,18,20,0">
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Border Style="{StaticResource IconTile}">
+                <TextBlock Style="{StaticResource Glyph}" Text="&#xE716;" FontSize="17" Foreground="{DynamicResource ThemeInfoFore}" HorizontalAlignment="Center"/>
+            </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock Name="txtTitle" Text="Edytuj profil wdrożeniowy" Style="{StaticResource DialogTitle}"/>
+                <TextBlock Text="Profil wybrany w oknie głównym zaznacza przypisane do niego aplikacje" Style="{StaticResource DialogSubtitle}"/>
+            </StackPanel>
+        </Grid>
+        <StackPanel Grid.Row="1">
             <TextBlock Text="Nazwa profilu (np. Księgowość)" Style="{StaticResource Caption}"/>
             <TextBox Name="txtName" Width="300" HorizontalAlignment="Left" Margin="0,0,0,14"/>
         </StackPanel>
-        <TextBlock Grid.Row="1" Text="Aplikacje przypisane do profilu" Style="{StaticResource Caption}" Margin="20,0,20,5"/>
+        <TextBlock Grid.Row="2" Text="Aplikacje przypisane do profilu" Style="{StaticResource Caption}"/>
         <!-- Programy w kolumnach (WrapPanel) zamiast jednej długiej listy do przewijania. -->
-        <Border Grid.Row="2" Style="{StaticResource Card}" Margin="20,0,20,14" Padding="14,10,4,10">
+        <Border Grid.Row="3" Style="{StaticResource Card}" Padding="14,10,4,10">
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <WrapPanel Name="spApps" ItemWidth="200"/>
             </ScrollViewer>
         </Border>
-        <Border Grid.Row="3" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,10">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnSave" Content="Zapisz" MinWidth="90" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                <Button Name="btnCancel" Content="Anuluj" MinWidth="90" IsCancel="True"/>
-            </StackPanel>
-        </Border>
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Name="btnCancel" Content="Anuluj" MinWidth="96" IsCancel="True"/>
+            <Button Name="btnSave" Content="Zapisz" MinWidth="96" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+        </StackPanel>
     </Grid>
 </Window>
 "@
     $dlg = New-ThemedWindow -Xaml $xaml
     
     $dlg.Title = if ($IsNew) { "Dodaj profil wdrożeniowy" } else { "Edytuj profil wdrożeniowy" }
+    $dlg.FindName("txtTitle").Text = $dlg.Title
     $txtName = $dlg.FindName("txtName")
     $spApps = $dlg.FindName("spApps")
     $btnSave = $dlg.FindName("btnSave")
@@ -6024,23 +6258,35 @@ function Show-ProfileEditDialog {
 function Show-PinPrompt {
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Title="Wymagana autoryzacja" Width="330" SizeToContent="Height" WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" ResizeMode="NoResize" Topmost="True" WindowStyle="ToolWindow">
-    <Grid>
+        Title="Wymagana autoryzacja" Width="360" SizeToContent="Height" WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False"
+        Background="{DynamicResource ThemeHeader}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI">
+    <Grid Margin="22,20,22,18">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <StackPanel Margin="22,20,22,18">
-            <TextBlock Text="Wprowadź PIN, aby edytować ustawienia" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,12"/>
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Border Style="{StaticResource IconTile}">
+                <TextBlock Style="{StaticResource Glyph}" Text="&#xE72E;" FontSize="17" Foreground="{DynamicResource ThemeInfoFore}" HorizontalAlignment="Center"/>
+            </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock Text="Wymagana autoryzacja" Style="{StaticResource DialogTitle}"/>
+                <TextBlock Text="Wprowadź PIN, aby edytować ustawienia" Style="{StaticResource DialogSubtitle}"/>
+            </StackPanel>
+        </Grid>
+        <StackPanel Grid.Row="1">
+            <TextBlock Text="PIN" Style="{StaticResource Caption}"/>
             <PasswordBox Name="txtPin"/>
         </StackPanel>
-        <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnOk" Content="Odblokuj" MinWidth="96" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
-                <Button Name="btnCancel" Content="Anuluj" MinWidth="90" IsCancel="True"/>
-            </StackPanel>
-        </Border>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Name="btnCancel" Content="Anuluj" MinWidth="96" IsCancel="True"/>
+            <Button Name="btnOk" Content="Odblokuj" MinWidth="96" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" IsDefault="True"/>
+        </StackPanel>
     </Grid>
 </Window>
 "@
@@ -6910,7 +7156,7 @@ function Show-ConfigEditor {
         if ($sfd.ShowDialog() -eq $true) {
             try {
                 $config | ConvertTo-Json -Depth 10 | Set-Content -Path $sfd.FileName -Encoding UTF8
-                Show-ThemedMessageBox -Message "Eksport zakończony pomyślnie." -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
+                Show-ThemedMessageBox -Message "Eksport zakończony pomyślnie." -Title "Sukces" -Button "OK" -Image "Success" | Out-Null
             } catch {
                 Show-ThemedMessageBox -Message "Błąd eksportu: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
             }
@@ -6930,7 +7176,7 @@ function Show-ConfigEditor {
                     & $loadAll
                     $state.DefaultsChanged = $true
                     & $markDirty
-                    Show-ThemedMessageBox -Message "Konfiguracja została zaimportowana. Kliknij 'Zapisz', aby ją trwale zachować w aplikacji." -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
+                    Show-ThemedMessageBox -Message "Konfiguracja została zaimportowana. Kliknij 'Zapisz', aby ją trwale zachować w aplikacji." -Title "Sukces" -Button "OK" -Image "Success" | Out-Null
                 }
             } catch {
                 Show-ThemedMessageBox -Message "Błąd importu: $($_.Exception.Message)" -Title "Błąd" -Button "OK" -Image "Error" | Out-Null
@@ -6953,7 +7199,7 @@ function Show-ConfigEditor {
             $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
             $statusMsg = if ($null -ne $response.StatusCode) { "$($response.StatusCode) $($response.StatusDescription)" } else { "OK" }
             Write-Log "[Ustawienia] Test połączenia z URL '$url' zakończony sukcesem: $statusMsg"
-            Show-ThemedMessageBox -Message "Host odpowiada poprawnie!`n`nKod statusu: $statusMsg" -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
+            Show-ThemedMessageBox -Message "Host odpowiada poprawnie!`n`nKod statusu: $statusMsg" -Title "Sukces" -Button "OK" -Image "Success" | Out-Null
         }
         catch {
             Write-Log "[Ustawienia] Test połączenia z URL '$url' zakończony błędem: $($_.Exception.Message)" -IsError
@@ -6994,7 +7240,7 @@ function Show-ConfigEditor {
                     if ($null -ne $CheckboxControls[$key]) { $CheckboxControls[$key].IsChecked = $isDefault }
                 }
             }
-            Show-ThemedMessageBox -Message "Zapisano konfigurację." -Title "Sukces" -Button "OK" -Image "Information" | Out-Null
+            Show-ThemedMessageBox -Message "Zapisano konfigurację." -Title "Sukces" -Button "OK" -Image "Success" | Out-Null
             Get-AppSelection
             # Profile dodane/zmienione w zakładce "Profile" od razu na liście w oknie głównym.
             Load-Profiles
@@ -7016,14 +7262,11 @@ if ($null -eq $global:PesterTesting) {
 [xml]$mainXaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Smart Tool for Deployment" Width="1000" Height="660" MinWidth="900" MinHeight="570" WindowStartupLocation="CenterScreen"
+        Title="Smart Tool for Deployment" Width="1100" Height="700" MinWidth="900" MinHeight="570" WindowStartupLocation="CenterScreen"
         Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" FontSize="13">
     <Window.Resources>
         <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
             <Setter Property="Margin" Value="0,0,0,8"/>
-        </Style>
-        <Style x:Key="BarButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Margin" Value="6,0,0,0"/>
         </Style>
     </Window.Resources>
 
@@ -7034,97 +7277,151 @@ if ($null -eq $global:PesterTesting) {
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Pasek nagłówka: tytuł po lewej, stan sieci i narzędzia po prawej (jak w ServerReview) -->
-        <Border Grid.Row="0" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,0,0,1" Padding="20,12">
-            <DockPanel>
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Background="{DynamicResource ThemePanel}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="1" CornerRadius="14" Padding="12,5" MaxWidth="280" Margin="0,0,12,0" VerticalAlignment="Center">
+        <!-- Pasek nagłówka (jak w ServerReview / AD Manager Diamond): logo, nazwa, wersja i podtytuł po lewej; stan sieci i akcje po prawej -->
+        <Border Grid.Row="0" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeChromeBorder}" BorderThickness="0,0,0,1" Padding="16,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Width="36" Height="36" CornerRadius="10">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#4C7DF0" Offset="0"/>
+                                <GradientStop Color="#E0913E" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE7B8;" FontSize="17" Foreground="{DynamicResource ThemeOnAccent}" HorizontalAlignment="Center"/>
+                    </Border>
+                    <StackPanel Margin="11,0,0,0" VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal">
-                            <Ellipse Name="shpNetworkStatus" Width="9" Height="9" Fill="{DynamicResource ThemeWarning}" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                            <TextBlock Name="txtNetworkStatus" Text="Sprawdzanie sieci..." FontSize="12" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                            <TextBlock Text="Smart Tool for Deployment" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource ThemeTitle}" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Text="v$script:ScriptVersion" Foreground="{DynamicResource ThemeFaint}" FontSize="11" Margin="7,3,0,0"/>
+                        </StackPanel>
+                        <TextBlock Name="txtSubtitle" Text="Konfiguracja stacji roboczych Windows" Foreground="{DynamicResource ThemeSubtle}" FontSize="11.5" TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                    <Border Style="{StaticResource Chip}" Padding="10,4" MaxWidth="280" Margin="0,0,10,0">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Name="shpNetworkStatus" Width="8" Height="8" Fill="{DynamicResource ThemeWarning}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                            <TextBlock Name="txtNetworkStatus" Text="Sprawdzanie sieci..." FontSize="12" Foreground="{DynamicResource ThemeGhostText}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Border>
-                    <Button Name="btnLogs" Content="Logi" ToolTip="Przeglądarka logów: filtry, wyszukiwanie, eksport raportu"/>
-                    <Button Name="btnTools" Content="Narzędzia  ▾" Style="{StaticResource BarButton}" ToolTip="Narzędzia systemowe i plik konfiguracji">
+                    <Button Name="btnLogs" Style="{StaticResource GhostButton}" Padding="10,7" ToolTip="Przeglądarka logów: filtry, wyszukiwanie, eksport raportu">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE81C;" Margin="0,0,8,0"/>
+                            <TextBlock Text="Logi" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Name="btnTools" Style="{StaticResource GhostButton}" Padding="10,7" Margin="2,0,0,0" ToolTip="Narzędzia systemowe i plik konfiguracji">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE90F;" Margin="0,0,8,0"/>
+                            <TextBlock Text="Narzędzia" VerticalAlignment="Center"/>
+                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE70D;" FontSize="9" Margin="7,1,0,0" Foreground="{DynamicResource ThemeSubtle}"/>
+                        </StackPanel>
                         <Button.ContextMenu>
                             <ContextMenu>
-                                <MenuItem Name="btnSysInfo" Header="Informacje o systemie"/>
-                                <MenuItem Name="btnUninstaller" Header="Odinstaluj programy..."/>
+                                <MenuItem Name="btnSysInfo" Header="Informacje o systemie"><MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE977;" FontSize="13"/></MenuItem.Icon></MenuItem>
+                                <MenuItem Name="btnUninstaller" Header="Odinstaluj programy..."><MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE74D;" FontSize="13"/></MenuItem.Icon></MenuItem>
                                 <Separator/>
-                                <MenuItem Name="btnSysProps" Header="Właściwości systemu"/>
-                                <MenuItem Name="btnCompMgmt" Header="Zarządzanie komputerem"/>
-                                <MenuItem Name="btnRegEdit" Header="Edytor rejestru"/>
-                                <MenuItem Name="btnPrinters" Header="Urządzenia i drukarki"/>
+                                <MenuItem Name="btnSysProps" Header="Właściwości systemu"><MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE770;" FontSize="13"/></MenuItem.Icon></MenuItem>
+                                <MenuItem Name="btnCompMgmt" Header="Zarządzanie komputerem"><MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE912;" FontSize="13"/></MenuItem.Icon></MenuItem>
+                                <MenuItem Name="btnRegEdit" Header="Edytor rejestru"><MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE943;" FontSize="13"/></MenuItem.Icon></MenuItem>
+                                <MenuItem Name="btnPrinters" Header="Urządzenia i drukarki"><MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE749;" FontSize="13"/></MenuItem.Icon></MenuItem>
                                 <Separator/>
-                                <MenuItem Name="btnEditConfig" Header="Edytuj config.json w Notatniku..."/>
-                                <MenuItem Name="btnReloadConfig" Header="Przeładuj config.json"/>
+                                <MenuItem Name="btnEditConfig" Header="Edytuj config.json w Notatniku..."><MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE70F;" FontSize="13"/></MenuItem.Icon></MenuItem>
+                                <MenuItem Name="btnReloadConfig" Header="Przeładuj config.json"><MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE72C;" FontSize="13"/></MenuItem.Icon></MenuItem>
                             </ContextMenu>
                         </Button.ContextMenu>
                     </Button>
-                    <Button Name="btnSettings" Content="⚙  Ustawienia" Style="{StaticResource BarButton}" ToolTip="Ustawienia narzędzia (wymaga PIN)"/>
-                    <Button Name="btnThemeToggle" Content="☀" Padding="11,6" Style="{StaticResource BarButton}" ToolTip="Przełącz na jasny motyw"/>
+                    <Button Name="btnSettings" Style="{StaticResource GhostButton}" Padding="10,7" Margin="2,0,0,0" ToolTip="Ustawienia narzędzia (wymaga PIN)">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE713;" FontSize="15"/>
+                    </Button>
+                    <!-- Ikona (słońce / półksiężyc) ustawiana w Set-AppTheme -->
+                    <Button Name="btnThemeToggle" Style="{StaticResource GhostButton}" Padding="10,7" Margin="2,0,0,0" ToolTip="Przełącz na jasny motyw"/>
                 </StackPanel>
-                <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
-                    <TextBlock Text="Smart Tool for Deployment" FontSize="18" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                    <TextBlock Text="Konfiguracja stacji roboczych Windows  ·  v$script:ScriptVersion" Foreground="{DynamicResource ThemeMuted}" FontSize="11.5" TextTrimming="CharacterEllipsis"/>
-                </StackPanel>
-            </DockPanel>
+            </Grid>
         </Border>
 
-        <!-- Zadania wdrożenia: profil i aplikacje u góry, zadania pogrupowane w trzech kolumnach -->
-        <Border Grid.Row="1" Style="{StaticResource Card}" Margin="20,16,20,16" Padding="18,14,18,4">
-            <DockPanel>
-                <DockPanel DockPanel.Dock="Top">
-                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Bottom">
-                        <Button Name="btnSelectAll" Content="Zaznacz wszystko" ToolTip="Zaznacza wszystkie zadania (bez trybu testowego)"/>
-                        <Button Name="btnDeselectAll" Content="Odznacz wszystko" Style="{StaticResource BarButton}"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal">
-                        <StackPanel Margin="0,0,12,0">
-                            <TextBlock Text="Profil wdrożenia" Style="{StaticResource Caption}"/>
-                            <ComboBox Name="cmbProfiles" Width="240" ToolTip="Profil zaznacza zestaw aplikacji przypisany do roli (Ustawienia → Profile)"/>
+        <!-- Zadania: pasek (profil, aplikacje, zaznaczanie, licznik) i trzy karty z grupami zadań -->
+        <Grid Grid.Row="1" Margin="20,16,20,12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <DockPanel Margin="0,0,0,12">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Name="txtTaskCount" Foreground="{DynamicResource ThemeMuted}" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <Button Name="btnSelectAll" Style="{StaticResource GhostButton}" ToolTip="Zaznacza wszystkie zadania (bez trybu testowego)">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE8B3;" FontSize="12" Margin="0,0,7,0"/>
+                            <TextBlock Text="Wszystkie" VerticalAlignment="Center"/>
                         </StackPanel>
-                        <StackPanel>
-                            <TextBlock Text="Aplikacje" Style="{StaticResource Caption}"/>
-                            <Button Name="btnChooseApps" Content="Wybierz aplikacje" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left"/>
+                    </Button>
+                    <Button Name="btnDeselectAll" Style="{StaticResource GhostButton}" Margin="2,0,0,0" ToolTip="Odznacza wszystkie zadania">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE894;" FontSize="12" Margin="0,0,7,0"/>
+                            <TextBlock Text="Żadne" VerticalAlignment="Center"/>
                         </StackPanel>
-                    </StackPanel>
-                </DockPanel>
-                <Border DockPanel.Dock="Top" Height="1" Background="{DynamicResource ThemeBorder}" Margin="0,14,0,14"/>
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="24"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="24"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Name="spTaskCol0" Grid.Column="0"/>
-                        <StackPanel Name="spTaskCol1" Grid.Column="2"/>
-                        <StackPanel Name="spTaskCol2" Grid.Column="4"/>
-                    </Grid>
-                </ScrollViewer>
-            </DockPanel>
-        </Border>
-
-        <!-- Pasek stanu: postęp po lewej, akcje po prawej (Pauza/Przerwij widoczne tylko w trakcie wdrożenia) -->
-        <Border Grid.Row="2" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="20,10">
-            <DockPanel>
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="20,0,0,0">
-                    <Button Name="btnPause" Content="Pauza" Style="{StaticResource WarningButton}" MinWidth="90" Padding="16,9" Margin="0,0,8,0" IsEnabled="False" Visibility="Collapsed"/>
-                    <Button Name="btnCancelDeploy" Content="Przerwij" Style="{StaticResource DangerButton}" MinWidth="90" Padding="16,9" Margin="0,0,8,0" IsEnabled="False" Visibility="Collapsed"/>
-                    <Button Name="btnStart" Content="▶  Rozpocznij konfigurację" Style="{StaticResource PrimaryButton}" FontSize="14" Padding="22,9" MinWidth="230"/>
+                    </Button>
                 </StackPanel>
-                <StackPanel VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="Profil" Foreground="{DynamicResource ThemeMuted}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ComboBox Name="cmbProfiles" Width="220" ToolTip="Profil zaznacza zestaw aplikacji przypisany do roli (Ustawienia → Profile)"/>
+                    <Button Name="btnChooseApps" Margin="8,0,0,0" ToolTip="Wybór aplikacji do zadania &#x201E;Zainstaluj wybrane aplikacje&#x201D;">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE71D;" FontSize="12" Margin="0,0,8,0"/>
+                            <TextBlock Text="Wybierz aplikacje" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </DockPanel>
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Style="{StaticResource Card}" Padding="16,14,16,6"><StackPanel Name="spTaskCol0"/></Border>
+                    <Border Grid.Column="2" Style="{StaticResource Card}" Padding="16,14,16,6"><StackPanel Name="spTaskCol1"/></Border>
+                    <Border Grid.Column="4" Style="{StaticResource Card}" Padding="16,14,16,6"><StackPanel Name="spTaskCol2"/></Border>
+                </Grid>
+            </ScrollViewer>
+            <!-- Powiadomienia (Show-Toast) w prawym dolnym rogu, nad kartami -->
+            <StackPanel Name="toastHost" Grid.RowSpan="2" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,6,10"/>
+        </Grid>
+
+        <!-- Pasek wdrożenia: kropka stanu, postęp, stoper; Pauza/Przerwij tylko w trakcie wdrożenia; Start = jedyny przycisk główny -->
+        <Border Grid.Row="2" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeChromeBorder}" BorderThickness="0,1,0,0" Padding="16,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Ellipse Name="statusDot" Width="8" Height="8" Fill="{DynamicResource ThemeSuccess}" VerticalAlignment="Top" Margin="0,6,10,0"/>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
                     <DockPanel Margin="0,0,0,6">
-                        <TextBlock Name="txtStopwatch" DockPanel.Dock="Right" Text="⏱ 00:00:00" Foreground="{DynamicResource ThemeMuted}" FontWeight="SemiBold" Margin="12,0,0,0" Visibility="Collapsed"/>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="12,0,0,0">
+                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE916;" FontSize="12" Margin="0,0,6,0" Foreground="{DynamicResource ThemeMuted}" Visibility="{Binding Visibility, ElementName=txtStopwatch}"/>
+                            <TextBlock Name="txtStopwatch" Text="00:00:00" Foreground="{DynamicResource ThemeMuted}" FontWeight="SemiBold" Visibility="Collapsed"/>
+                        </StackPanel>
                         <TextBlock Name="txtProgressInfo" Text="Gotowy do rozpoczęcia" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
                     </DockPanel>
                     <ProgressBar Name="progressBar" Height="6" Minimum="0" Maximum="100"/>
                     <ProgressBar Name="progressBarDownload" Height="3" Minimum="0" Maximum="100" Margin="0,3,0,0" Foreground="{DynamicResource ThemeSuccess}" Visibility="Hidden" ToolTip="Postęp pobierania pliku"/>
                 </StackPanel>
-            </DockPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="20,0,0,0">
+                    <Button Name="btnPause" Content="Pauza" Style="{StaticResource WarningButton}" MinWidth="100" MinHeight="36" Padding="14,6" Margin="0,0,8,0" IsEnabled="False" Visibility="Collapsed"/>
+                    <Button Name="btnCancelDeploy" Content="Przerwij" Style="{StaticResource DangerButton}" MinWidth="100" MinHeight="36" Padding="14,6" Margin="0,0,8,0" IsEnabled="False" Visibility="Collapsed"/>
+                    <Button Name="btnStart" Content="Rozpocznij konfigurację" Style="{StaticResource PrimaryButton}" FontSize="14" MinHeight="36" Padding="20,6" MinWidth="230"/>
+                </StackPanel>
+            </Grid>
         </Border>
     </Grid>
 </Window>
@@ -7157,6 +7454,15 @@ $btnStart            = $Window.FindName("btnStart")
 $btnPause            = $Window.FindName("btnPause")
 $btnCancelDeploy     = $Window.FindName("btnCancelDeploy")
 $cmbProfiles         = $Window.FindName("cmbProfiles")
+$statusDot           = $Window.FindName("statusDot")
+$txtTaskCount        = $Window.FindName("txtTaskCount")
+$txtSubtitle         = $Window.FindName("txtSubtitle")
+# Ikony przycisków paska wdrożenia (Pauza / Przerwij) - w kodzie, bo treść Pauzy zmienia się w trakcie.
+Set-ButtonContent $btnPause 'Pauza' 'E769'
+Set-ButtonContent $btnCancelDeploy 'Przerwij' 'E71A'
+# Login operatora dopisujemy po wczytaniu okna, nigdy wklejając go do XAML ([xml]) - znak & albo <
+# w loginie zepsułby XML i okno główne w ogóle by się nie otworzyło.
+if ($script:OperatorLogin) { $txtSubtitle.Text = "Konfiguracja stacji roboczych Windows  ·  operator: $($script:OperatorLogin)" }
 $script:isPaused     = $false
 $script:isCancelled  = $false
 $script:ignoreProfileChange = $false
@@ -7167,7 +7473,7 @@ $script:stopwatchAccumulated = [TimeSpan]::Zero
 $script:stopwatchTimer.Add_Tick({
     if ($null -ne $script:stopwatchStartTime) {
         $elapsed = (Get-Date) - $script:stopwatchStartTime + $script:stopwatchAccumulated
-        $txtStopwatch.Text = "⏱ $($elapsed.ToString('hh\:mm\:ss'))"
+        $txtStopwatch.Text = $elapsed.ToString('hh\:mm\:ss')
     }
 })
 
@@ -7181,6 +7487,19 @@ try {
         }
     }
 } catch { }
+
+# Licznik "Zaznaczone: n z m" nad kartami zadań (bez trybu testowego, który nie jest zadaniem).
+# Handler działa w zakresie skryptu, jak $syncChooseApps - widzi $CheckboxControls i $txtTaskCount.
+$updateTaskCount = {
+    $checkedCount = 0
+    $taskCount = 0
+    foreach ($k in $CheckboxControls.Keys) {
+        if ($k -eq 'DryRun') { continue }
+        $taskCount++
+        if ($CheckboxControls[$k].IsChecked -eq $true) { $checkedCount++ }
+    }
+    if ($null -ne $txtTaskCount) { $txtTaskCount.Text = "Zaznaczone: $checkedCount z $taskCount" }
+}
 
 # Każde zadanie trafia do swojej grupy ($script:TaskGroups). Etykieta jako zawijany TextBlock -
 # przy wąskim oknie przechodzi do drugiej linii zamiast się ucinać.
@@ -7196,9 +7515,18 @@ foreach ($key in $checkboxOptions.Keys) {
     $cb.IsChecked = $opt.Enabled
     $cb.ToolTip = $opt.Tooltip
     if ($key -eq "DryRun") { $cb.SetResourceReference([System.Windows.Controls.Control]::ForegroundProperty, "ThemeDryRun") }
+    # Checked/Unchecked zachodzą też przy zmianie z kodu (profil, "Wszystkie", przeładowanie configu).
+    $cb.Add_Checked($updateTaskCount)
+    $cb.Add_Unchecked($updateTaskCount)
 
     [void]$taskGroupPanels[$opt.Group].Children.Add($cb)
     $CheckboxControls[$key] = $cb
+}
+& $updateTaskCount
+# Ostatnia grupa w karcie bez dolnego odstępu - odstęp od dołu karty taki jak od góry (14 px).
+foreach ($colName in 'spTaskCol0', 'spTaskCol1', 'spTaskCol2') {
+    $taskCol = $Window.FindName($colName)
+    if ($null -ne $taskCol -and $taskCol.Children.Count -gt 0) { $taskCol.Children[$taskCol.Children.Count - 1].Margin = New-Object System.Windows.Thickness(0) }
 }
 
 try {
@@ -7278,7 +7606,7 @@ $cmbProfiles.Add_SelectionChanged({
             }
             $count = $script:SelectedApps.Count
             if ($null -ne $btnChooseApps) {
-                $btnChooseApps.Content = "Wybierz aplikacje ($count)"
+                Set-ButtonContent -Button $btnChooseApps -Text "Wybierz aplikacje ($count)" -Icon 'E71D'
             }
             if ($CheckboxControls.ContainsKey("InstallApplications")) {
                 $CheckboxControls["InstallApplications"].IsChecked = ($count -gt 0)
@@ -7351,15 +7679,17 @@ $btnStart.Add_Click({ Start-Deployment })
 $btnPause.Add_Click({
     if ($script:isPaused) {
         $script:isPaused = $false
-        $btnPause.Content = "Pauza"
+        Set-ButtonContent $btnPause 'Pauza' 'E769'
         $btnPause.Style = $Window.FindResource("WarningButton")
+        Set-DeployStatusDot Busy
         $script:stopwatchStartTime = Get-Date
         $script:stopwatchTimer.Start()
         Write-Log "Wznowiono wdrożenie." -Context "Użytkownik"
     } else {
         $script:isPaused = $true
-        $btnPause.Content = "Wznów"
+        Set-ButtonContent $btnPause 'Wznów' 'E768'
         $btnPause.Style = $Window.FindResource("SuccessButton")
+        Set-DeployStatusDot Paused
         $script:stopwatchTimer.Stop()
         $script:stopwatchAccumulated += (Get-Date) - $script:stopwatchStartTime
         Write-Log "Wdrożenie wstrzymane (Pauza). Oczekiwanie na interakcję..." -Context "Użytkownik"
@@ -7367,9 +7697,11 @@ $btnPause.Add_Click({
 })
 
 $btnCancelDeploy.Add_Click({
-    if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz przerwać wdrożenie?" -Title "Przerwij" -Button "YesNo" -Image "Warning") -eq [System.Windows.MessageBoxResult]::Yes) {
+    if ((Show-ThemedMessageBox -Message "Czy na pewno chcesz przerwać wdrożenie?" -Title "Przerwij" -Button "YesNo" -Image "Warning" -Danger) -eq [System.Windows.MessageBoxResult]::Yes) {
         $script:isCancelled = $true
         $script:isPaused = $false
+        # Pauza zwolniona - wdrożenie dochodzi do najbliższego punktu przerwania.
+        Set-DeployStatusDot Busy
         Write-Log "Wdrożenie przerwane przez użytkownika!" -IsError -Context "Użytkownik"
         $btnCancelDeploy.IsEnabled = $false
     }
@@ -7385,7 +7717,7 @@ $CheckboxControls["InstallApplications"].Add_Unchecked($syncChooseApps)
 # Przy trybie testowym przycisk startu mówi wprost, że to symulacja.
 $syncStartLabel = {
     if ($btnStart.IsEnabled) {
-        $btnStart.Content = if ($CheckboxControls["DryRun"].IsChecked -eq $true) { "▶  Rozpocznij symulację" } else { "▶  Rozpocznij konfigurację" }
+        Set-ButtonContent -Button $btnStart -Text $(if ($CheckboxControls["DryRun"].IsChecked -eq $true) { "Rozpocznij symulację" } else { "Rozpocznij konfigurację" }) -Icon 'E768'
     }
 }
 $CheckboxControls["DryRun"].Add_Checked($syncStartLabel)
