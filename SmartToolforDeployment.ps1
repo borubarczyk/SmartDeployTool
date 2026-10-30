@@ -1,4 +1,4 @@
-﻿
+﻿# Smart Tool for Deployment - Copyright (c) 2025-2026 Borys Kaleta. Wszelkie prawa zastrzeżone - warunki w pliku LICENSE.
 # ------------------------------------------
 # Automatyczna elewacja uprawnień (UAC)
 # ------------------------------------------

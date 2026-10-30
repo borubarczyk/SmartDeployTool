@@ -117,3 +117,7 @@ Plik generuje się i jest zarządzany automatycznie przez aplikację, lecz możn
     "DarkTheme": true
 }
 ```
+
+## Licencja
+
+Copyright © 2025–2026 Borys Kaleta. Wszelkie prawa zastrzeżone. Narzędzie wolno używać, kopiować, modyfikować i rozpowszechniać wyłącznie na podstawie pisemnej zgody albo umowy licencyjnej z autorem i w zakresie w niej określonym — szczegóły w pliku [`LICENSE`](LICENSE).
