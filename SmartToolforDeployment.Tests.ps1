@@ -601,7 +601,7 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             { & $script:LoadAllThemedWindows } | Should -Not -Throw
         }
 
-        It "Pola tekstowe mają pojedynczy odstęp wewnętrzny (ok. 31 px wysokości, jak przyciski)" {
+        It "Pola tekstowe mają pojedynczy odstęp wewnętrzny (ok. 30 px wysokości, jak przyciski)" {
             # Padding pola przekazuje do środka sam TextBox/PasswordBox - szablon nie może go dublować
             # (wcześniej pole miało 43 px, a przy sztywnej wysokości tekst był ucinany w połowie).
             [xml]$xaml = '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><StackPanel><TextBox Name="t" Text="Abc"/><PasswordBox Name="p"/><Button Name="b" Content="OK"/></StackPanel></Window>'
@@ -625,6 +625,151 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             Update-WindowTheme $w
             $w.Background.Color.ToString() | Should -Be ('#FF' + (Get-ThemeColor 'ThemeBackground').TrimStart('#'))
             $w.Background.Color.ToString() | Should -Be ('#FF' + $script:ThemePalettes.Light.ThemeBackground.TrimStart('#'))
+        }
+    }
+
+    Context "Nowy wygląd (ServerReview / AD Manager Diamond)" {
+        BeforeAll {
+            $script:ThemeTestSource = Get-Content "$PSScriptRoot\SmartToolforDeployment.ps1" -Raw -Encoding UTF8
+            $script:ThemeTestBlocks = @([regex]::Matches($script:ThemeTestSource, '(?s)\[xml\]\$\w+ = @"\r?\n(.*?)\r?\n"@') | ForEach-Object { $_.Groups[1].Value })
+
+            # Kontrast WCAG 2.x dwóch kolorów #RRGGBB (luminancja względna sRGB).
+            function Get-TestLuminance {
+                param([string]$Hex)
+                $h = $Hex.TrimStart('#')
+                $weights = 0.2126, 0.7152, 0.0722
+                $sum = 0.0
+                for ($i = 0; $i -lt 3; $i++) {
+                    $c = [Convert]::ToInt32($h.Substring($i * 2, 2), 16) / 255.0
+                    $lin = if ($c -le 0.03928) { $c / 12.92 } else { [Math]::Pow(($c + 0.055) / 1.055, 2.4) }
+                    $sum += $weights[$i] * $lin
+                }
+                return $sum
+            }
+            function Get-TestContrast {
+                param([string]$Fore, [string]$Back)
+                $a = Get-TestLuminance $Fore
+                $b = Get-TestLuminance $Back
+                return ([Math]::Max($a, $b) + 0.05) / ([Math]::Min($a, $b) + 0.05)
+            }
+        }
+
+        AfterAll {
+            $script:isDarkTheme = $true
+        }
+
+        It "Każdy klucz koloru użyty w skrypcie jest w obu paletach (literówka = przezroczysta kontrolka)" {
+            $keys = New-Object 'System.Collections.Generic.HashSet[string]'
+            foreach ($pattern in '\{DynamicResource\s+(\w+)\}', 'SetResourceReference\([^,]+,\s*["''](\w+)["'']\)', '-ColorKey\s+["''](\w+)["'']') {
+                foreach ($m in [regex]::Matches($script:ThemeTestSource, $pattern)) { [void]$keys.Add($m.Groups[1].Value) }
+            }
+            $keys.Count | Should -BeGreaterThan 30
+            $missing = foreach ($k in $keys) {
+                if ($k -match '^(Theme|Accent)' -and -not ($script:ThemePalettes.Dark.Contains($k) -and $script:ThemePalettes.Light.Contains($k))) { $k }
+            }
+            ($missing -join ', ') | Should -Be ''
+        }
+
+        It "Kolory palety nigdy nie są podpięte przez StaticResource (kolor zamarzłby przy wczytaniu okna)" {
+            [regex]::Matches($script:ThemeTestSource, '\{StaticResource\s+(Theme\w+|AccentColor)\}').Count | Should -Be 0
+        }
+
+        It "XAML okien i wspólnych stylów nie ma kolorów wpisanych na sztywno (poza gradientem logo)" {
+            $script:ThemeStylesXaml | Should -Not -BeNullOrEmpty
+            $sources = New-Object System.Collections.Generic.List[string]
+            foreach ($block in $script:ThemeTestBlocks) { $sources.Add($block) }
+            $sources.Add($script:ThemeStylesXaml)
+            $bad = foreach ($block in $sources) {
+                foreach ($line in ($block -split "`r?`n")) {
+                    if ($line -match '#[0-9A-Fa-f]{6}\b' -and $line -notmatch 'GradientStop') { $line.Trim() }
+                }
+            }
+            ($bad -join "`n") | Should -Be ''
+        }
+
+        It "Pary tonów (tło + tekst) są kompletne w obu paletach" {
+            $required = New-Object System.Collections.Generic.List[string]
+            foreach ($tone in 'Info', 'Ok', 'Warn', 'Crit') { $required.Add("Theme$($tone)Back"); $required.Add("Theme$($tone)Fore") }
+            foreach ($k in 'ThemeDryRunBack', 'ThemeOkBorder', 'ThemeWarnBorder') { $required.Add($k) }
+            foreach ($k in $required) {
+                $script:ThemePalettes.Dark.Contains($k) | Should -BeTrue -Because "paleta Dark: $k"
+                $script:ThemePalettes.Light.Contains($k) | Should -BeTrue -Because "paleta Light: $k"
+            }
+        }
+
+        It "Tekst ma wystarczający kontrast w obu motywach (WCAG)" {
+            # tekst|tło|minimalny kontrast
+            $pairs = New-Object System.Collections.Generic.List[string]
+            foreach ($bg in 'ThemeBackground', 'ThemePanel', 'ThemeHeader') { $pairs.Add("ThemeText|$bg|7") }
+            foreach ($fg in 'ThemeMuted', 'ThemeSubtle', 'ThemeGhostText') {
+                foreach ($bg in 'ThemePanel', 'ThemeHeader') { $pairs.Add("$fg|$bg|4.5") }
+            }
+            foreach ($tone in 'Info', 'Ok', 'Warn', 'Crit') { $pairs.Add("Theme$($tone)Fore|Theme$($tone)Back|4.5") }
+            $pairs.Add('ThemeDangerText|ThemeDangerSoft|4.5')
+            $pairs.Add('ThemeOnAccent|AccentColor|4.5')
+            $pairs.Add('ThemeGridText|ThemeRowAlt|7')
+            $pairs.Add('ThemeFaint|ThemePanel|2.5')   # tylko znak wodny w pustym polu i numer wersji
+
+            $fails = New-Object System.Collections.Generic.List[string]
+            foreach ($theme in 'Dark', 'Light') {
+                $palette = $script:ThemePalettes[$theme]
+                foreach ($pair in $pairs) {
+                    $fg, $bg, $min = $pair -split '\|'
+                    $ratio = Get-TestContrast $palette[$fg] $palette[$bg]
+                    if ($ratio -lt [double]::Parse($min, [System.Globalization.CultureInfo]::InvariantCulture)) {
+                        $fails.Add(('{0}: {1} na {2} = {3:N2} (min. {4})' -f $theme, $fg, $bg, $ratio, $min))
+                    }
+                }
+            }
+            ($fails -join '; ') | Should -Be ''
+        }
+
+        It "Pola, lista rozwijana i przyciski mają tę samą wysokość (ok. 30 px)" {
+            [xml]$xaml = '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><StackPanel><TextBox Name="t" Text="Abc"/><PasswordBox Name="p"/><ComboBox Name="c" SelectedIndex="0"><ComboBoxItem Content="Pozycja"/></ComboBox><Button Name="b" Content="OK"/></StackPanel></Window>'
+            $w = New-ThemedWindow -Xaml $xaml -NoOwner
+            $w.Content.Measure((New-Object System.Windows.Size 400, 400))
+            $w.Content.Arrange((New-Object System.Windows.Rect 0, 0, 400, 400))
+            foreach ($name in 't', 'p', 'c', 'b') {
+                $h = $w.FindName($name).ActualHeight
+                $h | Should -BeGreaterOrEqual 29 -Because "wysokość kontrolki $name"
+                $h | Should -BeLessOrEqual 33 -Because "wysokość kontrolki $name"
+            }
+        }
+
+        It "Style kontrolek (przycisk, karta) przemalowują się po przełączeniu motywu w otwartym oknie" {
+            try {
+                $script:isDarkTheme = $true
+                [xml]$xaml = '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><StackPanel><Button Name="b" Content="x"/><Border Name="c" Style="{StaticResource Card}"/></StackPanel></Window>'
+                $w = New-ThemedWindow -Xaml $xaml -NoOwner
+                $w.Content.Measure((New-Object System.Windows.Size 400, 400))
+                $w.Content.Arrange((New-Object System.Windows.Rect 0, 0, 400, 400))
+                $w.FindName('b').Background.Color.ToString() | Should -Be ('#FF' + $script:ThemePalettes.Dark.ThemeButton.TrimStart('#'))
+                $w.FindName('c').Background.Color.ToString() | Should -Be ('#FF' + $script:ThemePalettes.Dark.ThemePanel.TrimStart('#'))
+
+                $script:isDarkTheme = $false
+                Update-WindowTheme $w
+                $w.FindName('b').Background.Color.ToString() | Should -Be ('#FF' + $script:ThemePalettes.Light.ThemeButton.TrimStart('#'))
+                $w.FindName('c').Background.Color.ToString() | Should -Be ('#FF' + $script:ThemePalettes.Light.ThemePanel.TrimStart('#'))
+            } finally {
+                $script:isDarkTheme = $true
+            }
+        }
+
+        It "Pasek tytułu w kolorach motywu nie rzuca wyjątku (okno bez uchwytu, brak okna)" {
+            { Set-WindowTitleBarTheme -TargetWindow $Window } | Should -Not -Throw
+            { Set-WindowTitleBarTheme -TargetWindow $null } | Should -Not -Throw
+        }
+
+        It "Ikony: Get-Glyph, Set-ButtonContent i Get-ButtonText (tekst przycisku bez ikony)" {
+            Get-Glyph 'E713' | Should -Be ([string][char]0xE713)
+            Get-Glyph '' | Should -Be ''
+            $b = New-Object System.Windows.Controls.Button
+            Set-ButtonContent -Button $b -Text 'Pauza' -Icon 'E769'
+            $b.Content | Should -BeOfType [System.Windows.Controls.StackPanel]
+            Get-ButtonText $b | Should -Be 'Pauza'
+            Set-ButtonContent -Button $b -Text 'Start'
+            $b.Content | Should -Be 'Start'
+            Get-ButtonText $b | Should -Be 'Start'
         }
     }
 }

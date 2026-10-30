@@ -58,76 +58,147 @@ Add-Type -AssemblyName WindowsBase
 # ------------------------------------------
 # Motyw graficzny (ciemny / jasny)
 # ------------------------------------------
-# Jedna paleta i jeden zestaw stylów dla WSZYSTKICH okien narzędzia - ta sama rodzina kolorów
-# i kontrolek co w ServerReview / NPS Event Viewer (grafitowo-granatowe tło, niebieski akcent,
-# zaokrąglone pola, ciemne paski przewijania). Wcześniej każde okno miało własną, nieco inną
-# kopię stylów, a paski przewijania, zaznaczenie na listach, CheckBoxy, podpowiedzi (ToolTip),
-# menu kontekstowe i nagłówki tabel zostawały w jasnym stylu Windows także w trybie ciemnym
-# (np. jasnoniebieskie zaznaczenie z białym tekstem - nieczytelne).
+# Jedna paleta i jeden zestaw stylów dla WSZYSTKICH okien narzędzia - ten sam system wyglądu co
+# w ServerReview / AD Manager Diamond (grafitowo-granatowe tło, niebieski akcent, zaokrąglone
+# pola 30 px, ciemne paski przewijania). Motyw ciemny ma dokładnie ich kolory; jasny to własny
+# odpowiednik tych samych ról (narzędzia referencyjne są tylko ciemne).
+# Zasady: obie palety mają te same klucze w tej samej kolejności (sprawdza test); w XAML kolor
+# zawsze przez {DynamicResource ...}, w kodzie przez SetResourceReference - wtedy przełączenie
+# motywu w locie przemalowuje także otwarte okna. Pary tonów Theme<Ton>Back/Fore (Info, Ok, Warn,
+# Crit) służą do tekstu na zabarwionym tle - w motywie jasnym są ciemniejsze niż ThemeSuccess/
+# ThemeWarning/ThemeDanger (te są dla kropek stanu), żeby tekst miał kontrast co najmniej 4,5:1.
 $script:ThemePalettes = @{
     Dark  = [ordered]@{
-        ThemeBackground  = '#0F1318'   # tło okna
-        ThemeHeader      = '#12171D'   # pasek nagłówka/stopki, nagłówki tabel
-        ThemePanel       = '#161B22'   # karty / panele
-        ThemeBorder      = '#242B36'   # obramowanie kart
-        ThemeRowLine     = '#1F2530'   # linie między wierszami tabel
-        ThemeTextBoxBg   = '#1B212A'   # pola edycyjne, "chipy"
-        ThemeFieldBorder = '#2A323F'   # obramowanie pól i przycisków
-        ThemeButton      = '#1B212A'
-        ThemeButtonText  = '#E4E8EF'
-        ThemeText        = '#E4E8EF'
-        ThemeMuted       = '#8791A5'   # podpisy, opisy
-        ThemeFaint       = '#5E6779'
-        ThemeHover       = '#1D2430'
-        ThemeSelection   = '#233354'
-        ThemeScrollThumb = '#39414F'
-        ThemeTrack       = '#262D39'   # tło pasków postępu
-        ThemeOverlay     = '#FFFFFF'   # rozjaśnienie przycisku po najechaniu
-        ThemeOnAccent    = '#FFFFFF'   # tekst na kolorowych przyciskach
-        AccentColor      = '#3E6FE0'
-        ThemeFocus       = '#4C7DF0'
-        ThemeAccentText  = '#7DA6FF'
-        StartColor       = '#168A5E'
-        ThemeSuccessFill = '#168A5E'
-        ThemeWarningFill = '#B7770B'
-        ThemeDangerFill  = '#D63B4B'
-        ThemeSuccess     = '#4FD1A1'   # kolory statusów (tekst, kropki)
-        ThemeWarning     = '#FFC46B'
-        ThemeDanger      = '#FF7A86'
-        ThemeInfo        = '#8CC0FF'
-        ThemeDryRun      = '#C3A6FF'
+        ThemeBackground       = '#0F1318'   # tło okna
+        ThemeHeader           = '#12171D'   # pasek nagłówka/wdrożenia, tło okien dialogowych, pasek tytułu (DWM)
+        ThemeChromeBorder     = '#1E242E'   # linia oddzielająca pasek nagłówka/wdrożenia
+        ThemePanel            = '#161B22'   # karty / panele
+        ThemeBorder           = '#242B36'   # obramowanie kart
+        ThemeRowLine          = '#1F2530'   # linie między wierszami tabel
+        ThemeRowAlt           = '#181E26'   # co drugi wiersz tabeli
+        ThemeGridHeader       = '#1B212A'   # nagłówki kolumn tabel
+        ThemeGridHeaderBorder = '#252C38'
+        ThemeTextBoxBg        = '#1B212A'   # pola edycyjne
+        ThemeFieldBorder      = '#2A323F'   # obramowanie pól i przycisków, separator w menu
+        ThemeFieldHover       = '#39445A'   # obramowanie pola po najechaniu
+        ThemeButton           = '#1B212A'   # przycisk domyślny (drugorzędny)
+        ThemeButtonText       = '#E4E8EF'
+        ThemeGhostText        = '#AEB6C4'   # przyciski "ghost", tekst stanu
+        ThemeGhostHover       = '#1E252F'
+        ThemeChip             = '#1E252F'   # neutralny chip / pigułka
+        ThemePopup            = '#1B212A'   # menu kontekstowe, lista rozwijana
+        ThemePopupBorder      = '#2F3846'   # obramowanie menu, podpowiedzi i powiadomień
+        ThemeTooltip          = '#232A35'   # podpowiedź (ToolTip)
+        ThemeToast            = '#1E2530'   # powiadomienie (toast)
+        ThemeTitle            = '#FFFFFF'   # tytuły okien i okien dialogowych
+        ThemeText             = '#E4E8EF'   # tekst podstawowy
+        ThemeBodyText         = '#C9D0DC'   # treść okien dialogowych
+        ThemeGridText         = '#D5DAE3'   # tekst w tabelach i listach
+        ThemeMuted            = '#8791A5'   # podpisy pól, opisy
+        ThemeSubtle           = '#7B8496'   # podtytuły, podpowiedzi
+        ThemeFaint            = '#5E6779'   # znak wodny w pustym polu, wersja
+        ThemeHover            = '#1D2430'   # wiersz tabeli pod kursorem
+        ThemeListHover        = '#1A2029'   # pozycja listy / nawigacji pod kursorem
+        ThemeSelection        = '#233354'   # zaznaczony wiersz tabeli
+        ThemeSelected         = '#1A2640'   # zaznaczona pozycja listy / nawigacji
+        ThemeSelectedBorder   = '#2F4478'   # obramowanie zaznaczenia, kafelek pod kursorem
+        ThemeSegmentChecked   = '#28303D'   # aktywny segment (zakładki)
+        ThemeMenuHighlight    = '#24304A'   # podświetlona pozycja menu / listy rozwijanej
+        ThemeScrollThumb      = '#39414F'   # suwak paska przewijania, ramka pola wyboru
+        ThemeTrack            = '#262D39'   # tło pasków postępu
+        ThemeOnAccent         = '#FFFFFF'   # tekst na kolorowych przyciskach
+        AccentColor           = '#3E6FE0'   # akcent: przycisk główny, zaznaczenie
+        ThemeAccentHover      = '#5582EC'   # przycisk główny pod kursorem
+        ThemeFocus            = '#4C7DF0'   # fokus / najechanie, wypełnienie paska postępu
+        ThemeAccentText       = '#8CB0FF'   # ikony w kolorze akcentu
+        ThemeDangerFill       = '#D9475A'   # przycisk DangerPrimary (nieodwracalna akcja)
+        ThemeDangerFillHover  = '#E85C6E'
+        ThemeDangerText       = '#FF8A95'   # miękki przycisk Danger: tekst
+        ThemeDangerSoft       = '#21181C'   # miękki przycisk Danger: tło
+        ThemeDangerSoftHover  = '#3A1F26'
+        ThemeDangerBorder     = '#4A2A32'
+        ThemeSuccess          = '#5EE3AE'   # kropki stanu (ok / ostrzeżenie / błąd)
+        ThemeWarning          = '#FFC46B'
+        ThemeDanger           = '#FF7A86'
+        ThemeInfo             = '#8CC0FF'   # tekst informacyjny
+        ThemeDryRun           = '#C3A6FF'   # tryb testowy (Dry-Run)
+        ThemeDryRunBack       = '#251E38'
+        ThemeInfoBack         = '#1A2640'   # pary tonów: tło kafelka / pigułki + tekst na nim
+        ThemeInfoFore         = '#8CB0FF'
+        ThemeOkBack           = '#15291F'
+        ThemeOkFore           = '#5EE3AE'
+        ThemeOkBorder         = '#24503C'   # miękki przycisk Success (Wznów)
+        ThemeWarnBack         = '#2E2616'
+        ThemeWarnFore         = '#FFC46B'
+        ThemeWarnBorder       = '#4A3B1E'   # miękki przycisk Warning (Pauza)
+        ThemeCritBack         = '#2E1A1E'
+        ThemeCritFore         = '#FF7A86'
     }
     Light = [ordered]@{
-        ThemeBackground  = '#F4F6F9'
-        ThemeHeader      = '#FFFFFF'
-        ThemePanel       = '#FFFFFF'
-        ThemeBorder      = '#E2E6EE'
-        ThemeRowLine     = '#EEF1F5'
-        ThemeTextBoxBg   = '#FFFFFF'
-        ThemeFieldBorder = '#CDD3DE'
-        ThemeButton      = '#F7F8FA'
-        ThemeButtonText  = '#1A1F29'
-        ThemeText        = '#1A1F29'
-        ThemeMuted       = '#667085'
-        ThemeFaint       = '#98A2B3'
-        ThemeHover       = '#EEF2F8'
-        ThemeSelection   = '#DCE6FB'
-        ThemeScrollThumb = '#C3CAD6'
-        ThemeTrack       = '#E2E6EE'
-        ThemeOverlay     = '#000000'
-        ThemeOnAccent    = '#FFFFFF'
-        AccentColor      = '#3E6FE0'
-        ThemeFocus       = '#3E6FE0'
-        ThemeAccentText  = '#2F5FD0'
-        StartColor       = '#138A5E'
-        ThemeSuccessFill = '#138A5E'
-        ThemeWarningFill = '#B86E00'
-        ThemeDangerFill  = '#D92D3F'
-        ThemeSuccess     = '#138A5E'
-        ThemeWarning     = '#B86E00'
-        ThemeDanger      = '#D92D3F'
-        ThemeInfo        = '#2463C9'
-        ThemeDryRun      = '#7A3EC8'
+        ThemeBackground       = '#F4F6F9'
+        ThemeHeader           = '#FFFFFF'
+        ThemeChromeBorder     = '#E2E6EE'
+        ThemePanel            = '#FFFFFF'
+        ThemeBorder           = '#E2E6EE'
+        ThemeRowLine          = '#EEF1F5'
+        ThemeRowAlt           = '#FAFBFC'
+        ThemeGridHeader       = '#F7F8FA'
+        ThemeGridHeaderBorder = '#E2E6EE'
+        ThemeTextBoxBg        = '#FFFFFF'
+        ThemeFieldBorder      = '#CDD3DE'
+        ThemeFieldHover       = '#AEB6C4'
+        ThemeButton           = '#F7F8FA'
+        ThemeButtonText       = '#1A1F29'
+        ThemeGhostText        = '#475467'
+        ThemeGhostHover       = '#EEF1F5'
+        ThemeChip             = '#EEF1F5'
+        ThemePopup            = '#FFFFFF'
+        ThemePopupBorder      = '#D5DAE3'
+        ThemeTooltip          = '#FFFFFF'
+        ThemeToast            = '#FFFFFF'
+        ThemeTitle            = '#1A1F29'
+        ThemeText             = '#1A1F29'
+        ThemeBodyText         = '#344054'
+        ThemeGridText         = '#1F2633'
+        ThemeMuted            = '#667085'
+        ThemeSubtle           = '#667085'
+        ThemeFaint            = '#98A2B3'
+        ThemeHover            = '#EEF2F8'
+        ThemeListHover        = '#F1F4F9'
+        ThemeSelection        = '#DCE6FB'
+        ThemeSelected         = '#E8EFFC'
+        ThemeSelectedBorder   = '#B7CBF5'
+        ThemeSegmentChecked   = '#E4E9F2'
+        ThemeMenuHighlight    = '#E8EFFC'
+        ThemeScrollThumb      = '#C3CAD6'
+        ThemeTrack            = '#E2E6EE'
+        ThemeOnAccent         = '#FFFFFF'
+        AccentColor           = '#3E6FE0'
+        ThemeAccentHover      = '#3461CC'
+        ThemeFocus            = '#3E6FE0'
+        ThemeAccentText       = '#2F5FD0'
+        ThemeDangerFill       = '#D92D3F'
+        ThemeDangerFillHover  = '#C4283A'
+        ThemeDangerText       = '#C4283A'
+        ThemeDangerSoft       = '#FDF0F1'
+        ThemeDangerSoftHover  = '#FBE1E4'
+        ThemeDangerBorder     = '#F3C5CB'
+        ThemeSuccess          = '#138A5E'
+        ThemeWarning          = '#B86E00'
+        ThemeDanger           = '#D92D3F'
+        ThemeInfo             = '#2463C9'
+        ThemeDryRun           = '#7A3EC8'
+        ThemeDryRunBack       = '#F2E9F7'
+        ThemeInfoBack         = '#E8EFFC'
+        ThemeInfoFore         = '#2463C9'
+        ThemeOkBack           = '#E3F4EC'
+        ThemeOkFore           = '#0E6E4B'
+        ThemeOkBorder         = '#B5E0C9'
+        ThemeWarnBack         = '#FDF1DC'
+        ThemeWarnFore         = '#915A00'
+        ThemeWarnBorder       = '#F0D9A8'
+        ThemeCritBack         = '#FCE8EA'
+        ThemeCritFore         = '#B4232F'
     }
 }
 # Systemowe pędzle Windows, z których korzystają domyślne szablony kontrolek (np. róg między
@@ -168,25 +239,154 @@ function global:New-ThemeBrush {
     return $brush.PSObject.BaseObject
 }
 
+# ---------- Ikony (czcionka Segoe Fluent Icons / Segoe MDL2 Assets) ----------
+# Jak w ServerReview / AD Manager Diamond: ikona to znak z czcionki systemowej, nie emoji. W kodzie
+# znak podajemy kodem szesnastkowym (Get-Glyph 'E713'), w XAML encją (&#xE713;) - nigdy wklejonym
+# znakiem z obszaru prywatnego Unicode (niewidoczny w edytorze, łatwo go zgubić przy zapisie pliku).
+# Funkcje są globalne, bo wołają je handlery zdarzeń i timery (DispatcherTimer).
+function global:Get-Glyph {
+    param([string]$Code)
+    if ([string]::IsNullOrWhiteSpace($Code)) { return '' }
+    return [string][char][Convert]::ToInt32($Code, 16)
+}
+
+# TextBlock z ikoną. -ColorKey = klucz koloru z palety (np. 'ThemeOkFore'), podpięty przez
+# SetResourceReference, więc ikona zmienia kolor razem z motywem.
+function global:New-GlyphBlock {
+    param([string]$Code, [double]$Size = 13, [string]$ColorKey = '')
+    $t = New-Object System.Windows.Controls.TextBlock
+    $t.Text = Get-Glyph $Code
+    $t.FontFamily = New-Object System.Windows.Media.FontFamily 'Segoe Fluent Icons, Segoe MDL2 Assets'
+    $t.FontSize = $Size
+    $t.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    if ($ColorKey) { $t.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, $ColorKey) }
+    return $t
+}
+
+# Zawartość przycisku: ikona + tekst (albo sam tekst, gdy bez ikony).
+function global:New-IconContent {
+    param([string]$Text, [string]$Icon, [double]$IconSize = 13)
+    if ([string]::IsNullOrWhiteSpace($Icon)) { return $Text }
+    $sp = New-Object System.Windows.Controls.StackPanel
+    $sp.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+    $g = New-GlyphBlock -Code $Icon -Size $IconSize
+    if ($Text) { $g.Margin = New-Object System.Windows.Thickness(0, 0, 8, 0) }
+    [void]$sp.Children.Add($g)
+    if ($Text) {
+        $tb = New-Object System.Windows.Controls.TextBlock
+        $tb.Text = $Text
+        $tb.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+        [void]$sp.Children.Add($tb)
+    }
+    return $sp
+}
+
+function global:Set-ButtonContent {
+    param($Button, [string]$Text, [string]$Icon = '', [double]$IconSize = 12)
+    if ($null -ne $Button) { $Button.Content = New-IconContent -Text $Text -Icon $Icon -IconSize $IconSize }
+}
+
+# Tekst przycisku bez ikon (Content bywa napisem albo panelem ikona + tekst z New-IconContent).
+function global:Get-ButtonText {
+    param($Button)
+    if ($null -eq $Button) { return '' }
+    $c = $Button.Content
+    if ($c -is [string]) { return $c }
+    if ($c -is [System.Windows.Controls.TextBlock]) {
+        if ($c.FontFamily.Source -match 'MDL2') { return '' }
+        return $c.Text
+    }
+    if ($c -is [System.Windows.Controls.Panel]) {
+        $parts = foreach ($ch in $c.Children) {
+            if ($ch -is [System.Windows.Controls.TextBlock] -and $ch.FontFamily.Source -notmatch 'MDL2') { $ch.Text }
+        }
+        return (@($parts) -join ' ')
+    }
+    return [string]$c
+}
+
+# Kropka stanu wdrożenia na pasku okna głównego (statusDot): Idle = zielona, Busy = niebieska,
+# Paused = bursztynowa, Error = czerwona. Bez kontrolki (np. przed zbudowaniem okna) nic nie robi.
+function global:Set-DeployStatusDot {
+    param([ValidateSet('Idle', 'Busy', 'Paused', 'Error')][string]$State)
+    if ($null -eq $statusDot) { return }
+    $key = switch ($State) { 'Busy' { 'ThemeFocus' } 'Paused' { 'ThemeWarning' } 'Error' { 'ThemeDanger' } default { 'ThemeSuccess' } }
+    if ($statusDot.Dispatcher.CheckAccess()) { $statusDot.SetResourceReference([System.Windows.Shapes.Shape]::FillProperty, $key) }
+    else { $statusDot.Dispatcher.Invoke([Action]{ $statusDot.SetResourceReference([System.Windows.Shapes.Shape]::FillProperty, $key) }) }
+}
+
 $script:ThemeStylesXaml = @'
-    <!-- ===== Teksty i karty ===== -->
+    <!-- Style kontrolek wspólne dla wszystkich okien, jak w ServerReview / AD Manager Diamond: każdy kolor
+         przez {DynamicResource} (przełączanie motywu w locie), każdy styl bazowy przez {StaticResource}.
+         Kolejność ma znaczenie - StaticResource musi być zdefiniowany wcześniej w tym słowniku. -->
+
+    <!-- ===== Ikony i teksty ===== -->
+    <Style x:Key="Glyph" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/>
+        <Setter Property="FontSize" Value="14"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+    <!-- Podpis pola: zwykłą czcionką i zwykłą wielkością liter ("Identyfikator / login"). -->
     <Style x:Key="Caption" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{DynamicResource ThemeMuted}"/>
-        <Setter Property="FontSize" Value="11.5"/>
-        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="FontSize" Value="12"/>
         <Setter Property="Margin" Value="0,0,0,5"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+    <!-- Nagłówek sekcji WIELKIMI LITERAMI (grupy zadań, "DYSKI"). Kolor Muted, nie Faint: w motywie
+         jasnym Faint ma za mały kontrast, a to główna struktura okna. -->
+    <Style x:Key="SectionCaps" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource ThemeMuted}"/>
+        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Margin" Value="0,0,0,8"/>
         <Setter Property="TextWrapping" Value="Wrap"/>
     </Style>
     <Style x:Key="MutedText" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{DynamicResource ThemeMuted}"/>
         <Setter Property="TextWrapping" Value="Wrap"/>
     </Style>
+    <Style x:Key="HintText" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource ThemeSubtle}"/>
+        <Setter Property="FontSize" Value="11.5"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
     <Style x:Key="CardTitle" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
-        <Setter Property="FontSize" Value="14"/>
+        <Setter Property="FontSize" Value="15"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
         <Setter Property="Margin" Value="0,0,0,10"/>
     </Style>
+    <Style x:Key="WindowTitle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource ThemeTitle}"/>
+        <Setter Property="FontSize" Value="18"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+    </Style>
+    <Style x:Key="WindowSubtitle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource ThemeMuted}"/>
+        <Setter Property="FontSize" Value="11.5"/>
+        <Setter Property="Margin" Value="0,2,0,0"/>
+        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+    </Style>
+    <Style x:Key="DialogTitle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource ThemeTitle}"/>
+        <Setter Property="FontSize" Value="16"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+    <Style x:Key="DialogSubtitle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource ThemeMuted}"/>
+        <Setter Property="Margin" Value="0,3,0,0"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+    <Style x:Key="DialogBody" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource ThemeBodyText}"/>
+        <Setter Property="LineHeight" Value="19"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+
+    <!-- ===== Powierzchnie: karta, kafelek, przełącznik segmentowy, chip, kafelek ikony ===== -->
     <Style x:Key="Card" TargetType="Border">
         <Setter Property="Background" Value="{DynamicResource ThemePanel}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
@@ -194,12 +394,33 @@ $script:ThemeStylesXaml = @'
         <Setter Property="CornerRadius" Value="10"/>
         <Setter Property="Padding" Value="16,14"/>
     </Style>
-    <Style x:Key="Chip" TargetType="Border">
-        <Setter Property="Background" Value="{DynamicResource ThemeTextBoxBg}"/>
-        <Setter Property="BorderBrush" Value="{DynamicResource ThemeFieldBorder}"/>
+    <Style x:Key="Tile" TargetType="Border" BasedOn="{StaticResource Card}">
+        <Setter Property="Cursor" Value="Hand"/>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True"><Setter Property="BorderBrush" Value="{DynamicResource ThemeSelectedBorder}"/></Trigger>
+        </Style.Triggers>
+    </Style>
+    <Style x:Key="SegmentHost" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource ThemePanel}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
         <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="CornerRadius" Value="7"/>
-        <Setter Property="Padding" Value="10,5"/>
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Padding" Value="2"/>
+    </Style>
+    <Style x:Key="Chip" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource ThemeChip}"/>
+        <Setter Property="CornerRadius" Value="9"/>
+        <Setter Property="Padding" Value="9,2"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+    <!-- Kafelek ikony w nagłówku okna dialogowego (tło = ton komunikatu, np. ThemeCritBack). -->
+    <Style x:Key="IconTile" TargetType="Border">
+        <Setter Property="Width" Value="38"/>
+        <Setter Property="Height" Value="38"/>
+        <Setter Property="CornerRadius" Value="10"/>
+        <Setter Property="Background" Value="{DynamicResource ThemeInfoBack}"/>
+        <Setter Property="VerticalAlignment" Value="Top"/>
+        <Setter Property="Margin" Value="0,0,14,0"/>
     </Style>
 
     <!-- ===== Paski przewijania ===== -->
@@ -266,16 +487,18 @@ $script:ThemeStylesXaml = @'
     </Style>
 
     <!-- ===== Przyciski ===== -->
-    <!-- Domyślny przycisk = drugorzędny (ciemne tło z obramowaniem, jak w ServerReview).
-         Warianty kolorowe: PrimaryButton (akcent), SuccessButton, WarningButton, DangerButton.
-         Najechanie/kliknięcie to półprzezroczysta nakładka, więc działa także na przyciskach,
-         którym kolor tła zmienia kod (np. Pauza/Wznów). -->
+    <!-- Domyślny przycisk = drugorzędny (jak w ServerReview / AD Manager Diamond: 30 px, odstęp 12,5).
+         Najechanie i fokus = niebieskie obramowanie, wciśnięcie = przygaszenie. Warianty mają to samo
+         obramowanie 1 px, więc wszystkie przyciski są równej wysokości:
+         PrimaryButton (jeden na okno), DangerPrimaryButton (nieodwracalna akcja), miękkie DangerButton,
+         SuccessButton i WarningButton (kod podmienia je przy Pauza/Wznów) oraz GhostButton (pasek narzędzi). -->
     <Style TargetType="Button">
         <Setter Property="Background" Value="{DynamicResource ThemeButton}"/>
         <Setter Property="Foreground" Value="{DynamicResource ThemeButtonText}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource ThemeFieldBorder}"/>
         <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="Padding" Value="14,7"/>
+        <Setter Property="Padding" Value="12,5"/>
+        <Setter Property="MinHeight" Value="30"/>
         <Setter Property="HorizontalContentAlignment" Value="Center"/>
         <Setter Property="VerticalContentAlignment" Value="Center"/>
         <Setter Property="Cursor" Value="Hand"/>
@@ -284,69 +507,69 @@ $script:ThemeStylesXaml = @'
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
-                    <Grid>
-                        <Border x:Name="bg" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7"/>
-                        <Border x:Name="overlay" Background="{DynamicResource ThemeOverlay}" CornerRadius="7" Opacity="0"/>
-                        <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" RecognizesAccessKey="True"/>
-                    </Grid>
+                    <Border x:Name="b" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" RecognizesAccessKey="True"/>
+                    </Border>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="overlay" Property="Opacity" Value="0.07"/></Trigger>
-                        <Trigger Property="IsPressed" Value="True"><Setter TargetName="overlay" Property="Opacity" Value="0.15"/></Trigger>
-                        <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="{DynamicResource ThemeFocus}"/></Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="{DynamicResource ThemeFocus}"/></Trigger>
+                        <Trigger Property="IsPressed" Value="True"><Setter TargetName="b" Property="Opacity" Value="0.8"/></Trigger>
+                        <Trigger Property="IsEnabled" Value="False"><Setter TargetName="b" Property="Opacity" Value="0.4"/></Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
-        <Style.Triggers>
-            <Trigger Property="IsMouseOver" Value="True"><Setter Property="BorderBrush" Value="{DynamicResource ThemeFocus}"/></Trigger>
-            <Trigger Property="IsKeyboardFocused" Value="True"><Setter Property="BorderBrush" Value="{DynamicResource ThemeFocus}"/></Trigger>
-        </Style.Triggers>
     </Style>
     <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
         <Setter Property="Background" Value="{DynamicResource AccentColor}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
         <Setter Property="Foreground" Value="{DynamicResource ThemeOnAccent}"/>
-        <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="{DynamicResource ThemeAccentHover}"/></Trigger>
+        </Style.Triggers>
     </Style>
+    <!-- Miękkie warianty tonów; klucze zostają, bo kod podmienia styl Pauza/Wznów (FindResource). -->
     <Style x:Key="SuccessButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-        <Setter Property="Background" Value="{DynamicResource ThemeSuccessFill}"/>
-        <Setter Property="Foreground" Value="{DynamicResource ThemeOnAccent}"/>
-        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Background" Value="{DynamicResource ThemeOkBack}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource ThemeOkBorder}"/>
+        <Setter Property="Foreground" Value="{DynamicResource ThemeOkFore}"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
     </Style>
     <Style x:Key="WarningButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-        <Setter Property="Background" Value="{DynamicResource ThemeWarningFill}"/>
-        <Setter Property="Foreground" Value="{DynamicResource ThemeOnAccent}"/>
-        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Background" Value="{DynamicResource ThemeWarnBack}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource ThemeWarnBorder}"/>
+        <Setter Property="Foreground" Value="{DynamicResource ThemeWarnFore}"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
     </Style>
     <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-        <Setter Property="Background" Value="{DynamicResource ThemeDangerFill}"/>
-        <Setter Property="Foreground" Value="{DynamicResource ThemeOnAccent}"/>
-        <Setter Property="BorderThickness" Value="0"/>
-        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Background" Value="{DynamicResource ThemeDangerSoft}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource ThemeDangerBorder}"/>
+        <Setter Property="Foreground" Value="{DynamicResource ThemeDangerText}"/>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="{DynamicResource ThemeDangerSoftHover}"/></Trigger>
+        </Style.Triggers>
     </Style>
-    <!-- Nagłówek zwijanej sekcji (okno Ustawień) - wygląda jak tytuł karty, nie jak przycisk. -->
-    <Style x:Key="SectionHeaderButton" TargetType="Button">
+    <Style x:Key="DangerPrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="Background" Value="{DynamicResource ThemeDangerFill}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource ThemeDangerFill}"/>
+        <Setter Property="Foreground" Value="{DynamicResource ThemeOnAccent}"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="{DynamicResource ThemeDangerFillHover}"/></Trigger>
+        </Style.Triggers>
+    </Style>
+    <Style x:Key="GhostButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
         <Setter Property="Background" Value="Transparent"/>
-        <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
-        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-        <Setter Property="VerticalContentAlignment" Value="Center"/>
-        <Setter Property="Padding" Value="16,12"/>
-        <Setter Property="Cursor" Value="Hand"/>
-        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
-        <Setter Property="Template">
-            <Setter.Value>
-                <ControlTemplate TargetType="Button">
-                    <Border x:Name="b" Background="{TemplateBinding Background}" CornerRadius="10" Padding="{TemplateBinding Padding}">
-                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
-                    </Border>
-                    <ControlTemplate.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="Background" Value="{DynamicResource ThemeHover}"/></Trigger>
-                    </ControlTemplate.Triggers>
-                </ControlTemplate>
-            </Setter.Value>
-        </Setter>
+        <Setter Property="BorderBrush" Value="Transparent"/>
+        <Setter Property="Foreground" Value="{DynamicResource ThemeGhostText}"/>
+        <Setter Property="Padding" Value="8,4"/>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource ThemeGhostHover}"/>
+                <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+            </Trigger>
+        </Style.Triggers>
     </Style>
 
     <!-- ===== Pola tekstowe ===== -->
@@ -355,7 +578,8 @@ $script:ThemeStylesXaml = @'
         <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource ThemeFieldBorder}"/>
         <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="Padding" Value="8,6"/>
+        <Setter Property="Padding" Value="6,4"/>
+        <Setter Property="MinHeight" Value="30"/>
         <Setter Property="CaretBrush" Value="{DynamicResource ThemeText}"/>
         <Setter Property="SelectionBrush" Value="{DynamicResource AccentColor}"/>
         <Setter Property="VerticalContentAlignment" Value="Center"/>
@@ -378,7 +602,7 @@ $script:ThemeStylesXaml = @'
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="Text" Value=""><Setter TargetName="wm" Property="Visibility" Value="Visible"/></Trigger>
-                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="{DynamicResource ThemeFaint}"/></Trigger>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="{DynamicResource ThemeFieldHover}"/></Trigger>
                         <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="{DynamicResource ThemeFocus}"/></Trigger>
                         <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
                     </ControlTemplate.Triggers>
@@ -386,12 +610,32 @@ $script:ThemeStylesXaml = @'
             </Setter.Value>
         </Setter>
     </Style>
+    <!-- Pole wielowierszowe (np. lista wpisów) i tekst tylko do odczytu (szczegóły wpisu logu). -->
+    <Style x:Key="MultiText" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+        <Setter Property="AcceptsReturn" Value="True"/>
+        <Setter Property="AcceptsTab" Value="True"/>
+        <Setter Property="TextWrapping" Value="NoWrap"/>
+        <Setter Property="VerticalContentAlignment" Value="Top"/>
+        <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+        <Setter Property="HorizontalScrollBarVisibility" Value="Auto"/>
+        <Setter Property="FontFamily" Value="Consolas"/>
+        <Setter Property="FontSize" Value="12.5"/>
+    </Style>
+    <Style x:Key="ReadOnlyText" TargetType="TextBox" BasedOn="{StaticResource MultiText}">
+        <Setter Property="IsReadOnly" Value="True"/>
+        <Setter Property="AcceptsTab" Value="False"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+        <Setter Property="HorizontalScrollBarVisibility" Value="Disabled"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+    </Style>
     <Style TargetType="PasswordBox">
         <Setter Property="Background" Value="{DynamicResource ThemeTextBoxBg}"/>
         <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource ThemeFieldBorder}"/>
         <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="Padding" Value="8,6"/>
+        <Setter Property="Padding" Value="6,4"/>
+        <Setter Property="MinHeight" Value="30"/>
         <Setter Property="CaretBrush" Value="{DynamicResource ThemeText}"/>
         <Setter Property="SelectionBrush" Value="{DynamicResource AccentColor}"/>
         <Setter Property="VerticalContentAlignment" Value="Center"/>
@@ -404,7 +648,7 @@ $script:ThemeStylesXaml = @'
                         <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" Focusable="False" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden"/>
                     </Border>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="{DynamicResource ThemeFaint}"/></Trigger>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="{DynamicResource ThemeFieldHover}"/></Trigger>
                         <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="{DynamicResource ThemeFocus}"/></Trigger>
                         <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
                     </ControlTemplate.Triggers>
@@ -419,6 +663,7 @@ $script:ThemeStylesXaml = @'
         <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource ThemeFieldBorder}"/>
         <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="MinHeight" Value="30"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
         <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
@@ -441,12 +686,13 @@ $script:ThemeStylesXaml = @'
                                 </ControlTemplate>
                             </ToggleButton.Template>
                         </ToggleButton>
-                        <ContentPresenter IsHitTestVisible="False" Margin="10,7,28,7" VerticalAlignment="Center" HorizontalAlignment="Left"
+                        <!-- Wysokość daje MinHeight (30 px), więc bez pionowego marginesu - jak w AD Manager Diamond. -->
+                        <ContentPresenter IsHitTestVisible="False" Margin="9,0,28,0" VerticalAlignment="Center" HorizontalAlignment="Left"
                                           Content="{TemplateBinding SelectionBoxItem}"
                                           ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
                                           ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"/>
-                        <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True" Focusable="False" PopupAnimation="Slide">
-                            <Border Background="{DynamicResource ThemePanel}" BorderBrush="{DynamicResource ThemeFieldBorder}" BorderThickness="1" CornerRadius="7" Margin="0,3,0,0" Padding="3"
+                        <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                            <Border Background="{DynamicResource ThemePopup}" BorderBrush="{DynamicResource ThemePopupBorder}" BorderThickness="1" CornerRadius="7" Margin="0,3,0,0" Padding="3"
                                     MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}" MaxHeight="{TemplateBinding MaxDropDownHeight}">
                                 <ScrollViewer SnapsToDevicePixels="True">
                                     <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
@@ -463,7 +709,7 @@ $script:ThemeStylesXaml = @'
     </Style>
     <Style TargetType="ComboBoxItem">
         <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
-        <Setter Property="Padding" Value="9,6"/>
+        <Setter Property="Padding" Value="10,6"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
         <Setter Property="Template">
@@ -473,8 +719,8 @@ $script:ThemeStylesXaml = @'
                         <ContentPresenter VerticalAlignment="Center"/>
                     </Border>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsSelected" Value="True"><Setter TargetName="bd" Property="Background" Value="{DynamicResource ThemeSelection}"/></Trigger>
-                        <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="bd" Property="Background" Value="{DynamicResource ThemeHover}"/></Trigger>
+                        <Trigger Property="IsSelected" Value="True"><Setter TargetName="bd" Property="Background" Value="{DynamicResource ThemeSelected}"/></Trigger>
+                        <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="bd" Property="Background" Value="{DynamicResource ThemeMenuHighlight}"/></Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
@@ -498,7 +744,8 @@ $script:ThemeStylesXaml = @'
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <Border x:Name="box" Width="16" Height="16" CornerRadius="4" BorderThickness="1"
+                        <!-- 16 px + Margin 0,1: całe piksele przy skalowaniu 125/150% (bez tego dół ramki bywał ucinany). -->
+                        <Border x:Name="box" Width="16" Height="16" Margin="0,1" CornerRadius="4" BorderThickness="1"
                                 Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}">
                             <Grid>
                                 <Path x:Name="mark" Data="M 3,7.5 L 6,10.5 L 11.5,4" Stroke="{DynamicResource ThemeOnAccent}" StrokeThickness="2"
@@ -529,18 +776,18 @@ $script:ThemeStylesXaml = @'
         </Setter>
     </Style>
 
-    <!-- ===== Listy (ListBox) ===== -->
+    <!-- ===== Listy (ListBox): pozycje jak karty, jak ItemCard w AD Manager Diamond ===== -->
     <Style TargetType="ListBox">
-        <Setter Property="Background" Value="{DynamicResource ThemeTextBoxBg}"/>
+        <Setter Property="Background" Value="{DynamicResource ThemePanel}"/>
         <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
-        <Setter Property="BorderBrush" Value="{DynamicResource ThemeFieldBorder}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
         <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="Padding" Value="4"/>
+        <Setter Property="Padding" Value="6"/>
         <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ListBox">
-                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8" SnapsToDevicePixels="True">
+                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="10" SnapsToDevicePixels="True">
                         <ScrollViewer Padding="{TemplateBinding Padding}" Focusable="False">
                             <ItemsPresenter/>
                         </ScrollViewer>
@@ -551,7 +798,7 @@ $script:ThemeStylesXaml = @'
     </Style>
     <Style TargetType="ListBoxItem">
         <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
-        <Setter Property="Padding" Value="9,6"/>
+        <Setter Property="Padding" Value="8,6"/>
         <Setter Property="Margin" Value="0,1"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
@@ -559,29 +806,34 @@ $script:ThemeStylesXaml = @'
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ListBoxItem">
-                    <Border x:Name="bd" Background="Transparent" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                    <Border x:Name="bd" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="7" Padding="{TemplateBinding Padding}">
                         <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center"/>
                     </Border>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="Background" Value="{DynamicResource ThemeHover}"/></Trigger>
-                        <Trigger Property="IsSelected" Value="True"><Setter TargetName="bd" Property="Background" Value="{DynamicResource ThemeSelection}"/></Trigger>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="Background" Value="{DynamicResource ThemeListHover}"/></Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{DynamicResource ThemeSelected}"/>
+                            <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource ThemeSelectedBorder}"/>
+                        </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
     </Style>
 
-    <!-- ===== Tabele (ListView + GridView) ===== -->
+    <!-- ===== Tabele (ListView + GridView) w wyglądzie DarkGrid z ServerReview / AD Manager Diamond ===== -->
     <Style TargetType="ListView">
         <Setter Property="Background" Value="{DynamicResource ThemePanel}"/>
-        <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+        <Setter Property="Foreground" Value="{DynamicResource ThemeGridText}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
         <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="FontSize" Value="12.5"/>
+        <Setter Property="AlternationCount" Value="2"/>
     </Style>
     <Style TargetType="GridViewColumnHeader">
-        <Setter Property="Background" Value="{DynamicResource ThemeHeader}"/>
+        <Setter Property="Background" Value="{DynamicResource ThemeGridHeader}"/>
         <Setter Property="Foreground" Value="{DynamicResource ThemeMuted}"/>
-        <Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource ThemeGridHeaderBorder}"/>
         <Setter Property="FontFamily" Value="Segoe UI"/>
         <Setter Property="FontSize" Value="12"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
@@ -612,12 +864,15 @@ $script:ThemeStylesXaml = @'
             </Setter.Value>
         </Setter>
     </Style>
+    <!-- Wiersz: 28 px, co drugi wiersz ThemeRowAlt (wyzwalacz stylu), najechanie i zaznaczenie w szablonie.
+         Bez VirtualizationMode=Recycling - kolumna z polami wyboru w deinstalatorze polega na swoich kontenerach. -->
     <Style TargetType="ListViewItem">
-        <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+        <Setter Property="Foreground" Value="{DynamicResource ThemeGridText}"/>
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="BorderBrush" Value="{DynamicResource ThemeRowLine}"/>
         <Setter Property="BorderThickness" Value="0,0,0,1"/>
-        <Setter Property="Padding" Value="2,5"/>
+        <Setter Property="Padding" Value="4,4"/>
+        <Setter Property="MinHeight" Value="28"/>
         <Setter Property="VerticalContentAlignment" Value="Center"/>
         <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
         <Setter Property="Template">
@@ -628,14 +883,43 @@ $script:ThemeStylesXaml = @'
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bd" Property="Background" Value="{DynamicResource ThemeHover}"/></Trigger>
-                        <Trigger Property="IsSelected" Value="True"><Setter TargetName="Bd" Property="Background" Value="{DynamicResource ThemeSelection}"/></Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ThemeSelection}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource ThemeTitle}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <Trigger Property="ItemsControl.AlternationIndex" Value="1"><Setter Property="Background" Value="{DynamicResource ThemeRowAlt}"/></Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- ===== Zakładki: domyślnie przełącznik segmentowy (jak przełącznik widoków w ServerReview) ===== -->
+    <!-- Kolor nagłówka przez TextElement.Foreground prezentera, NIGDY przez TabItem.Foreground: WPF
+         przekazuje Foreground zakładki do jej zawartości, więc zabarwiłby całą stronę. -->
+    <Style TargetType="TabItem">
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Padding" Value="14,5"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TabItem">
+                    <Border x:Name="bd" Background="Transparent" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter x:Name="hdr" ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True" TextElement.Foreground="{DynamicResource ThemeMuted}"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="hdr" Property="TextElement.Foreground" Value="{DynamicResource ThemeText}"/></Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{DynamicResource ThemeSegmentChecked}"/>
+                            <Setter TargetName="hdr" Property="TextElement.Foreground" Value="{DynamicResource ThemeText}"/>
+                        </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
     </Style>
-
-    <!-- ===== Zakładki (jak w NPS Event Viewer: podkreślona aktywna zakładka) ===== -->
     <Style TargetType="TabControl">
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="BorderThickness" Value="0"/>
@@ -644,58 +928,88 @@ $script:ThemeStylesXaml = @'
             <Setter.Value>
                 <ControlTemplate TargetType="TabControl">
                     <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*"/>
-                        </Grid.RowDefinitions>
-                        <Border BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,0,0,1" Margin="0,0,0,14">
-                            <TabPanel IsItemsHost="True"/>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                        <Border Style="{StaticResource SegmentHost}" HorizontalAlignment="Left" Margin="0,0,0,14">
+                            <StackPanel Orientation="Horizontal" IsItemsHost="True" KeyboardNavigation.TabNavigation="Once" KeyboardNavigation.DirectionalNavigation="Cycle"/>
                         </Border>
-                        <ContentPresenter Grid.Row="1" ContentSource="SelectedContent"/>
+                        <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Row="1" ContentSource="SelectedContent"/>
                     </Grid>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
     </Style>
-    <Style TargetType="TabItem">
+    <!-- Nawigacja po lewej (Ustawienia): ikona z TabItem.Tag (encja XAML), wygląd NavItem z AD Manager
+         Diamond z paskiem akcentu 3 px przy zaznaczonej pozycji. -->
+    <Style x:Key="NavTabItem" TargetType="TabItem">
         <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Margin" Value="0,1"/>
+        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
         <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
-        <Setter Property="Padding" Value="14,8"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TabItem">
-                    <Border x:Name="bd" Background="Transparent" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="{TemplateBinding Padding}" Margin="0,0,4,-1">
-                        <ContentPresenter x:Name="hdr" ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True"
-                                          TextElement.FontSize="13.5" TextElement.FontWeight="SemiBold" TextElement.Foreground="{DynamicResource ThemeMuted}"/>
-                    </Border>
+                    <Grid>
+                        <Border x:Name="b" Background="Transparent" CornerRadius="7" Padding="10,7">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="ic" Text="{TemplateBinding Tag}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="14" Width="18" Margin="2,0,11,0" VerticalAlignment="Center" Foreground="{DynamicResource ThemeMuted}"/>
+                                <ContentPresenter x:Name="hdr" ContentSource="Header" VerticalAlignment="Center" RecognizesAccessKey="True" TextElement.Foreground="{DynamicResource ThemeGhostText}"/>
+                            </StackPanel>
+                        </Border>
+                        <Border x:Name="bar" Width="3" CornerRadius="2" Background="{DynamicResource ThemeFocus}" HorizontalAlignment="Left" Margin="0,8" Visibility="Hidden"/>
+                    </Grid>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="hdr" Property="TextElement.Foreground" Value="{DynamicResource ThemeText}"/></Trigger>
-                        <Trigger Property="IsSelected" Value="True">
-                            <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource ThemeFocus}"/>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="b" Property="Background" Value="{DynamicResource ThemeListHover}"/>
                             <Setter TargetName="hdr" Property="TextElement.Foreground" Value="{DynamicResource ThemeText}"/>
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="b" Property="Background" Value="{DynamicResource ThemeSelected}"/>
+                            <Setter TargetName="bar" Property="Visibility" Value="Visible"/>
+                            <Setter TargetName="hdr" Property="TextElement.Foreground" Value="{DynamicResource ThemeTitle}"/>
+                            <Setter TargetName="ic" Property="Foreground" Value="{DynamicResource ThemeAccentText}"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
     </Style>
-    <!-- Podpis + pole (jak "FieldBox" w NPS): StackPanel z Caption i kontrolką, układany w WrapPanel. -->
+    <Style x:Key="NavTabControl" TargetType="TabControl">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="TabStripPlacement" Value="Left"/>
+        <Setter Property="ItemContainerStyle" Value="{StaticResource NavTabItem}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TabControl">
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="196"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <Border Style="{StaticResource Card}" Padding="6" Margin="0,0,16,0" VerticalAlignment="Top">
+                            <StackPanel IsItemsHost="True" KeyboardNavigation.TabNavigation="Once" KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                        </Border>
+                        <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Column="1" ContentSource="SelectedContent"/>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <!-- Podpis + pole: StackPanel z Caption i kontrolką, układany w WrapPanel. -->
     <Style x:Key="FieldBox" TargetType="StackPanel">
         <Setter Property="Margin" Value="0,0,14,12"/>
     </Style>
 
-    <!-- ===== Pasek postępu ===== -->
+    <!-- ===== Pasek postępu (6 px, wypełnienie ThemeFocus) ===== -->
     <Style TargetType="ProgressBar">
         <Setter Property="Background" Value="{DynamicResource ThemeTrack}"/>
-        <Setter Property="Foreground" Value="{DynamicResource AccentColor}"/>
+        <Setter Property="Foreground" Value="{DynamicResource ThemeFocus}"/>
         <Setter Property="BorderThickness" Value="0"/>
-        <Setter Property="Height" Value="8"/>
+        <Setter Property="Height" Value="6"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ProgressBar">
                     <Grid>
-                        <Border x:Name="PART_Track" CornerRadius="4" Background="{TemplateBinding Background}"/>
-                        <Border x:Name="PART_Indicator" CornerRadius="4" Background="{TemplateBinding Foreground}" HorizontalAlignment="Left"/>
+                        <Border x:Name="PART_Track" CornerRadius="3" Background="{TemplateBinding Background}"/>
+                        <Border x:Name="PART_Indicator" CornerRadius="3" Background="{TemplateBinding Foreground}" HorizontalAlignment="Left"/>
                     </Grid>
                 </ControlTemplate>
             </Setter.Value>
@@ -704,16 +1018,16 @@ $script:ThemeStylesXaml = @'
 
     <!-- ===== Podpowiedzi i menu kontekstowe ===== -->
     <Style TargetType="ToolTip">
-        <Setter Property="Background" Value="{DynamicResource ThemePanel}"/>
+        <Setter Property="Background" Value="{DynamicResource ThemeTooltip}"/>
         <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
-        <Setter Property="BorderBrush" Value="{DynamicResource ThemeFieldBorder}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource ThemePopupBorder}"/>
         <Setter Property="Padding" Value="9,6"/>
         <Setter Property="FontFamily" Value="Segoe UI"/>
         <Setter Property="FontSize" Value="12"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ToolTip">
-                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="{TemplateBinding Padding}" MaxWidth="440">
+                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="{TemplateBinding Padding}" MaxWidth="460">
                         <ContentPresenter>
                             <ContentPresenter.Resources>
                                 <Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/></Style>
@@ -725,33 +1039,38 @@ $script:ThemeStylesXaml = @'
         </Setter>
     </Style>
     <Style TargetType="ContextMenu">
-        <Setter Property="Background" Value="{DynamicResource ThemePanel}"/>
+        <Setter Property="Background" Value="{DynamicResource ThemePopup}"/>
         <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
-        <Setter Property="BorderBrush" Value="{DynamicResource ThemeFieldBorder}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource ThemePopupBorder}"/>
         <Setter Property="FontFamily" Value="Segoe UI"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ContextMenu">
-                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="4">
+                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="4">
                         <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
                     </Border>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
     </Style>
+    <!-- Pozycja menu z kolumną ikony 26 px (MenuItem.Icon = TextBlock ze stylem Glyph). Bez podmenu. -->
     <Style TargetType="MenuItem">
         <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
-        <Setter Property="Padding" Value="10,6"/>
+        <Setter Property="Padding" Value="8,6"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="MenuItem">
-                    <Border x:Name="bd" Background="Transparent" CornerRadius="5" Padding="{TemplateBinding Padding}">
-                        <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center"/>
+                    <Border x:Name="bd" Background="Transparent" CornerRadius="6" Padding="{TemplateBinding Padding}" MinWidth="200">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <ContentPresenter ContentSource="Icon" VerticalAlignment="Center" TextElement.Foreground="{DynamicResource ThemeMuted}"/>
+                            <ContentPresenter Grid.Column="1" ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center"/>
+                        </Grid>
                     </Border>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="bd" Property="Background" Value="{DynamicResource ThemeHover}"/></Trigger>
-                        <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+                        <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="bd" Property="Background" Value="{DynamicResource ThemeMenuHighlight}"/></Trigger>
+                        <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
@@ -763,7 +1082,7 @@ $script:ThemeStylesXaml = @'
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Separator">
-                    <Border Height="1" Background="{DynamicResource ThemeBorder}"/>
+                    <Border Height="1" Background="{DynamicResource ThemeFieldBorder}"/>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
@@ -831,6 +1150,41 @@ function global:Get-DialogOwner {
     return $Window
 }
 
+# Pasek tytułu okna w kolorach motywu (jak w ServerReview / AD Manager Diamond), także po przełączeniu
+# motywu w locie: tryb ciemny DWM (atrybut 20, w starszych Windows 10 - 19) i kolor paska = ThemeHeader
+# (atrybut 35, tylko Windows 11). Bez uchwytu okna (okno jeszcze niepokazane, testy Pester) albo na
+# starszym systemie po prostu nic nie robi - nigdy nie rzuca wyjątku.
+function global:Set-WindowTitleBarTheme {
+    param([System.Windows.Window]$TargetWindow)
+    if ($null -eq $TargetWindow) { return }
+    try {
+        $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper $TargetWindow).Handle
+        if ($hwnd -eq [IntPtr]::Zero) { return }
+        if ($null -eq $script:DwmReady) {
+            $script:DwmReady = $false
+            # Typ może już istnieć: Pester i podgląd UI wczytują skrypt kilka razy w tym samym procesie.
+            if (-not ('SmartDeploy.Dwm' -as [type])) {
+                Add-Type -Namespace SmartDeploy -Name Dwm -ErrorAction Stop -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+public static extern int DwmSetWindowAttribute(System.IntPtr hwnd, int attribute, ref int value, int size);
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr after, int x, int y, int cx, int cy, uint flags);
+'@
+            }
+            $script:DwmReady = $true
+        }
+        if (-not $script:DwmReady) { return }
+        $dark = if ($script:isDarkTheme) { 1 } else { 0 }
+        if ([SmartDeploy.Dwm]::DwmSetWindowAttribute($hwnd, 20, [ref]$dark, 4) -ne 0) { [void][SmartDeploy.Dwm]::DwmSetWindowAttribute($hwnd, 19, [ref]$dark, 4) }
+        $c = [System.Windows.Media.ColorConverter]::ConvertFromString((Get-ThemeColor 'ThemeHeader'))
+        # COLORREF 0x00BBGGRR liczony arytmetycznie (literał 0xFFFFFFFF to w PS 5.1 liczba -1).
+        $caption = [int]$c.R + ([int]$c.G * 256) + ([int]$c.B * 65536)
+        [void][SmartDeploy.Dwm]::DwmSetWindowAttribute($hwnd, 35, [ref]$caption, 4)
+        # SWP_NOSIZE|NOMOVE|NOZORDER|NOACTIVATE|FRAMECHANGED: Windows 10 przemalowuje pasek dopiero po zmianie ramki.
+        [void][SmartDeploy.Dwm]::SetWindowPos($hwnd, [IntPtr]::Zero, 0, 0, 0, 0, [uint32]0x37)
+    } catch { }
+}
+
 # Wczytuje okno z XAML, dokładając do jego zasobów wspólny słownik motywu (jako MergedDictionary,
 # więc lokalne style okna mogą z niego dziedziczyć: BasedOn="{StaticResource ...}").
 function global:New-ThemedWindow {
@@ -858,9 +1212,18 @@ function global:New-ThemedWindow {
     [void]$resNode.AppendChild($dict)
 
     $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $Xaml))
+    # Ostre krawędzie i tekst przy skalowaniu 125-150% (jak w ServerReview / AD Manager Diamond):
+    # układ zaokrąglany do pikseli, tekst w trybie Display, domyślnie czcionka Segoe UI.
     $win.UseLayoutRounding = $true
-    # Czcionka 13 px jak w ServerReview / NPS Event Viewer, chyba że XAML okna podaje własną.
+    $win.SnapsToDevicePixels = $true
+    [System.Windows.Media.TextOptions]::SetTextFormattingMode($win, [System.Windows.Media.TextFormattingMode]::Display)
+    if ($win.ReadLocalValue([System.Windows.Controls.Control]::FontFamilyProperty) -eq [System.Windows.DependencyProperty]::UnsetValue) { $win.FontFamily = New-Object System.Windows.Media.FontFamily 'Segoe UI' }
+    # Czcionka 13 px jak w ServerReview / AD Manager Diamond, chyba że XAML okna podaje własną.
     if ($win.ReadLocalValue([System.Windows.Controls.Control]::FontSizeProperty) -eq [System.Windows.DependencyProperty]::UnsetValue) { $win.FontSize = 13 }
+    # Pasek tytułu w kolorach motywu, gdy tylko okno dostanie uchwyt (HWND).
+    $win.Add_SourceInitialized({ param($s, $e) Set-WindowTitleBarTheme -TargetWindow $s })
+    # Ikona narzędzia na pasku tytułu i pasku zadań (Load-Cargo.ico obok skryptu, jeśli jest).
+    if ($null -ne $script:AppIcon) { try { $win.Icon = $script:AppIcon } catch {} }
     # Okno nigdy większe niż obszar roboczy ekranu. Narzędzie działa na świeżo zainstalowanych
     # komputerach - często jeszcze bez sterownika grafiki (1024x768) albo na laptopach ze
     # skalowaniem 125-150% - i wtedy dół okna (np. przyciski Start/Pauza) wychodził poza ekran.
@@ -877,6 +1240,13 @@ function global:New-ThemedWindow {
         if ($null -ne $owner -and $owner -ne $win) {
             try { $win.Owner = $owner } catch {}
         }
+    }
+    if (-not $NoOwner -and $null -eq $win.Owner) {
+        # Brak widocznego właściciela (np. okno główne schowane w zasobniku w trakcie wdrożenia):
+        # okno dialogowe nie może zginąć pod innymi oknami - na wierzchu, z przyciskiem na pasku
+        # zadań i na środku ekranu (CenterOwner bez właściciela ląduje w lewym górnym rogu).
+        $win.Topmost = $true; $win.ShowInTaskbar = $true
+        if ($win.WindowStartupLocation -eq [System.Windows.WindowStartupLocation]::CenterOwner) { $win.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterScreen }
     }
     return $win
 }
@@ -988,6 +1358,17 @@ if ([string]::IsNullOrWhiteSpace($ScriptDir)) {
 }
 if ([string]::IsNullOrWhiteSpace($ScriptDir)) { $ScriptDir = $PWD.Path }
 
+# Ikona okien (New-ThemedWindow) wczytana raz; OnLoad = błąd uszkodzonego pliku wychodzi tutaj, w try,
+# a nie dopiero przy pokazywaniu okna. Bez pliku (np. sam .exe) okna mają ikonę domyślną.
+$script:AppIconPath = Join-Path $ScriptDir 'Load-Cargo.ico'
+$script:AppIcon = $null
+try {
+    if (Test-Path -LiteralPath $script:AppIconPath) {
+        $script:AppIcon = [System.Windows.Media.Imaging.BitmapFrame]::Create([Uri]$script:AppIconPath, [System.Windows.Media.Imaging.BitmapCreateOptions]::None, [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
+        if ($script:AppIcon.CanFreeze) { $script:AppIcon.Freeze() }
+    }
+} catch { $script:AppIcon = $null }
+
 $script:ScriptVersion = "3.1.0"
 $configPath = Join-Path $ScriptDir "config.json"
 $script:LogFilePath = "C:\deploy-log.txt"
@@ -1017,7 +1398,7 @@ try {
         <TextBlock Text="Wprowadź dane dostępowe, aby odblokować narzędzie" Style="{StaticResource MutedText}" FontSize="12" Margin="0,3,0,18"/>
         <Border Style="{StaticResource Card}">
             <StackPanel>
-                <TextBlock Text="IDENTYFIKATOR / LOGIN" Style="{StaticResource Caption}"/>
+                <TextBlock Text="Identyfikator / login" Style="{StaticResource Caption}"/>
                 <TextBox Name="txtLogin" Margin="0,0,0,14"/>
                 <TextBlock Text="PIN" Style="{StaticResource Caption}"/>
                 <PasswordBox Name="txtPin"/>
@@ -1178,8 +1559,8 @@ function Add-TaskGroupPanels {
         $column = $Columns[$group.Column]
         $caption = New-Object System.Windows.Controls.TextBlock
         $caption.Text = $group.Caption
-        $caption.Style = $column.FindResource("Caption")
-        $caption.Margin = New-Object System.Windows.Thickness(0, 0, 0, 8)
+        # Nagłówek grupy WIELKIMI LITERAMI (SectionCaps ma już odstęp 0,0,0,8).
+        $caption.Style = $column.FindResource("SectionCaps")
         [void]$column.Children.Add($caption)
         $groupPanel = New-Object System.Windows.Controls.StackPanel
         $groupPanel.Margin = New-Object System.Windows.Thickness(0, 0, 0, 12)
@@ -2253,7 +2634,7 @@ function Show-InputDialog {
             <TextBlock Name="txtMessage" TextWrapping="Wrap" Margin="0,0,0,12"/>
             <TextBox Name="txtInput"/>
             <PasswordBox Name="pwdInput" Visibility="Collapsed"/>
-            <TextBlock Name="lblConfirm" Text="POWTÓRZ HASŁO" Style="{StaticResource Caption}" Margin="0,12,0,5" Visibility="Collapsed"/>
+            <TextBlock Name="lblConfirm" Text="Powtórz hasło" Style="{StaticResource Caption}" Margin="0,12,0,5" Visibility="Collapsed"/>
             <PasswordBox Name="pwdConfirm" Visibility="Collapsed"/>
             <TextBlock Name="txtError" Foreground="{DynamicResource ThemeDanger}" TextWrapping="Wrap" Margin="0,10,0,0" Visibility="Collapsed"/>
         </StackPanel>
@@ -3859,7 +4240,7 @@ function Show-LogWindow {
         <DockPanel Grid.Row="1" Margin="20,14,20,12">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Bottom">
                 <StackPanel Margin="12,0,0,0">
-                    <TextBlock Text="RODZAJ" Style="{StaticResource Caption}"/>
+                    <TextBlock Text="Rodzaj" Style="{StaticResource Caption}"/>
                     <ComboBox Name="cmbRodzajFilter" MinWidth="150" SelectedIndex="0">
                         <ComboBoxItem Content="Wszystkie"/>
                         <ComboBoxItem Content="❌ Błędy"/>
@@ -3870,7 +4251,7 @@ function Show-LogWindow {
                     </ComboBox>
                 </StackPanel>
                 <StackPanel Margin="12,0,0,0">
-                    <TextBlock Text="KONTEKST" Style="{StaticResource Caption}"/>
+                    <TextBlock Text="Kontekst" Style="{StaticResource Caption}"/>
                     <ComboBox Name="cmbKontekstFilter" MinWidth="130" SelectedIndex="0">
                         <ComboBoxItem Content="Wszystkie"/>
                         <ComboBoxItem Content="System"/>
@@ -3882,7 +4263,7 @@ function Show-LogWindow {
                 <Button Name="btnRefresh" Content="Odśwież" VerticalAlignment="Bottom"/>
             </StackPanel>
             <StackPanel>
-                <TextBlock Text="SZUKAJ" Style="{StaticResource Caption}"/>
+                <TextBlock Text="Szukaj" Style="{StaticResource Caption}"/>
                 <TextBox Name="txtSearch" Tag="Szukaj w treści wpisów..." ToolTip="Szukaj w treści wpisów"/>
             </StackPanel>
         </DockPanel>
@@ -4287,7 +4668,7 @@ function Show-UninstallConfirmDialog {
         </Grid>
         <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Name="btnYes" Content="Tak, odinstaluj" MinWidth="140" Margin="0,0,8,0" Style="{StaticResource DangerButton}" IsDefault="True"/>
+                <Button Name="btnYes" Content="Tak, odinstaluj" MinWidth="140" Margin="0,0,8,0" Style="{StaticResource DangerPrimaryButton}" IsDefault="True"/>
                 <Button Name="btnNo" Content="Anuluj" MinWidth="100" IsCancel="True"/>
             </StackPanel>
         </Border>
@@ -4414,7 +4795,7 @@ function Show-SystemInfoWindow {
         </Style>
         <!-- Bez zawijania: w WrapPanel ramka ma dokładnie szerokość napisu, a po zaokrągleniu układu
              ostatnie słowo spadało do drugiej, uciętej linii ("ucięty w połowie" podpis). -->
-        <Style x:Key="ChipLabel" TargetType="TextBlock" BasedOn="{StaticResource Caption}">
+        <Style x:Key="ChipLabel" TargetType="TextBlock" BasedOn="{StaticResource SectionCaps}">
             <Setter Property="Margin" Value="0"/>
             <Setter Property="TextWrapping" Value="NoWrap"/>
         </Style>
@@ -4775,12 +5156,12 @@ function Show-SoftwareUninstaller {
                 <TextBlock Name="lblSelectedCount" Grid.Column="0" Text="Wybrano: 0" VerticalAlignment="Center" Margin="0,0,16,0" FontWeight="SemiBold" FontSize="14"/>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
                     <TextBlock Name="lblUninstallStatus" Text="" FontSize="11" Style="{StaticResource MutedText}" TextWrapping="NoWrap" Margin="0,0,0,4" Visibility="Hidden" TextTrimming="CharacterEllipsis"/>
-                    <ProgressBar Name="pbUninstall" Height="8" Minimum="0" Maximum="100" Foreground="{DynamicResource ThemeDangerFill}" Visibility="Hidden"/>
+                    <ProgressBar Name="pbUninstall" Height="6" Minimum="0" Maximum="100" Foreground="{DynamicResource ThemeDangerFill}" Visibility="Hidden"/>
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal">
                     <Button Name="btnPauseUninstall" Content="Pauza" MinWidth="90" Margin="0,0,8,0" Style="{StaticResource WarningButton}" IsEnabled="False"/>
-                    <Button Name="btnKill" Content="Zabij proces" MinWidth="120" Margin="0,0,8,0" Style="{StaticResource WarningButton}" IsEnabled="False" ToolTip="Wymuś zamknięcie zawieszonego deinstalatora"/>
-                    <Button Name="btnUninstall" Content="Odinstaluj (Cicho)" MinWidth="170" Margin="0,0,8,0" Style="{StaticResource DangerButton}"/>
+                    <Button Name="btnKill" Content="Zabij proces" MinWidth="120" Margin="0,0,8,0" Style="{StaticResource DangerButton}" IsEnabled="False" ToolTip="Wymuś zamknięcie zawieszonego deinstalatora"/>
+                    <Button Name="btnUninstall" Content="Odinstaluj (Cicho)" MinWidth="170" Margin="0,0,8,0" Style="{StaticResource DangerPrimaryButton}"/>
                     <Button Name="btnClose" Content="Zamknij" MinWidth="90" IsCancel="True"/>
                 </StackPanel>
             </Grid>
@@ -5298,11 +5679,11 @@ function Show-ProgramEditDialog {
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <StackPanel Margin="22,20,22,18">
-            <TextBlock Text="IDENTYFIKATOR (NP. CHROME)" Style="{StaticResource Caption}"/>
+            <TextBlock Text="Identyfikator (np. Chrome)" Style="{StaticResource Caption}"/>
             <TextBox Name="txtName" Margin="0,0,0,14"/>
-            <TextBlock Text="NAZWA PLIKU / WINGET ID" Style="{StaticResource Caption}"/>
+            <TextBlock Text="Nazwa pliku / Winget ID" Style="{StaticResource Caption}"/>
             <TextBox Name="txtFile" Margin="0,0,0,14"/>
-            <TextBlock Text="ARGUMENTY CICHEJ INSTALACJI" Style="{StaticResource Caption}"/>
+            <TextBlock Text="Argumenty cichej instalacji" Style="{StaticResource Caption}"/>
             <TextBox Name="txtArgs" Margin="0,0,0,16"/>
             <CheckBox Name="chkForceUrl" Content="Zawsze pobieraj z niestandardowego adresu URL" Margin="0,0,0,8" ToolTip="Nadpisuje globalne źródło instalacji dla tego konkretnego programu."/>
             <TextBox Name="txtUrl" Margin="24,0,0,16" IsEnabled="False" ToolTip="Pełny bezpośredni adres URL do instalatora (np. https://.../plik.exe)"/>
@@ -5388,7 +5769,7 @@ function Show-RegistryEditDialog {
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <StackPanel Margin="22,20,22,18">
-            <TextBlock Text="KLUCZ GŁÓWNY I SUBKLUCZ (NP. SOFTWARE\MÓJKLUCZ)" Style="{StaticResource Caption}"/>
+            <TextBlock Text="Klucz główny i subklucz (np. SOFTWARE\MójKlucz)" Style="{StaticResource Caption}"/>
             <Grid Margin="0,0,0,14">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="96"/>
@@ -5400,11 +5781,11 @@ function Show-RegistryEditDialog {
                 </ComboBox>
                 <TextBox Name="txtSubKey" Grid.Column="1"/>
             </Grid>
-            <TextBlock Text="NAZWA (NAME)" Style="{StaticResource Caption}"/>
+            <TextBlock Text="Nazwa (Name)" Style="{StaticResource Caption}"/>
             <TextBox Name="txtName" Margin="0,0,0,14"/>
-            <TextBlock Text="WARTOŚĆ (VALUE)" Style="{StaticResource Caption}"/>
+            <TextBlock Text="Wartość (Value)" Style="{StaticResource Caption}"/>
             <TextBox Name="txtValue" Margin="0,0,0,14"/>
-            <TextBlock Text="TYP DANYCH (PROPERTYTYPE)" Style="{StaticResource Caption}"/>
+            <TextBlock Text="Typ danych (PropertyType)" Style="{StaticResource Caption}"/>
             <ComboBox Name="cmbType">
                 <ComboBoxItem Content="String"/>
                 <ComboBoxItem Content="DWord"/>
@@ -5509,7 +5890,7 @@ function Show-ScriptEditDialog {
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <StackPanel Margin="22,20,22,18">
-            <TextBlock Text="ŚCIEŻKA DO SKRYPTU (NAZWA PLIKU, UNC LUB URL)" Style="{StaticResource Caption}"/>
+            <TextBlock Text="Ścieżka do skryptu (nazwa pliku, UNC lub URL)" Style="{StaticResource Caption}"/>
             <TextBox Name="txtPath"/>
         </StackPanel>
         <Border Grid.Row="1" Background="{DynamicResource ThemeHeader}" BorderBrush="{DynamicResource ThemeBorder}" BorderThickness="0,1,0,0" Padding="16,12">
@@ -5566,10 +5947,10 @@ function Show-ProfileEditDialog {
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <StackPanel Grid.Row="0" Margin="20,18,20,0">
-            <TextBlock Text="NAZWA PROFILU (NP. KSIĘGOWOŚĆ)" Style="{StaticResource Caption}"/>
+            <TextBlock Text="Nazwa profilu (np. Księgowość)" Style="{StaticResource Caption}"/>
             <TextBox Name="txtName" Width="300" HorizontalAlignment="Left" Margin="0,0,0,14"/>
         </StackPanel>
-        <TextBlock Grid.Row="1" Text="APLIKACJE PRZYPISANE DO PROFILU" Style="{StaticResource Caption}" Margin="20,0,20,5"/>
+        <TextBlock Grid.Row="1" Text="Aplikacje przypisane do profilu" Style="{StaticResource Caption}" Margin="20,0,20,5"/>
         <!-- Programy w kolumnach (WrapPanel) zamiast jednej długiej listy do przewijania. -->
         <Border Grid.Row="2" Style="{StaticResource Card}" Margin="20,0,20,14" Padding="14,10,4,10">
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -5701,12 +6082,9 @@ function Show-ConfigEditor {
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Ustawienia" Width="920" Height="640" MinWidth="860" MinHeight="580" WindowStartupLocation="CenterOwner"
+        Title="Ustawienia" Width="1080" Height="720" MinWidth="860" MinHeight="580" WindowStartupLocation="CenterOwner"
         Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" FontSize="13">
     <Window.Resources>
-        <Style TargetType="TabItem" BasedOn="{StaticResource {x:Type TabItem}}">
-            <Setter Property="Padding" Value="11,7"/>
-        </Style>
         <Style x:Key="TabCard" TargetType="Border" BasedOn="{StaticResource Card}">
             <Setter Property="Padding" Value="16,14,2,2"/>
             <Setter Property="Margin" Value="0,0,0,12"/>
@@ -5745,8 +6123,8 @@ function Show-ConfigEditor {
             </DockPanel>
         </Border>
 
-        <TabControl Name="tabSettings" Grid.Row="1" Margin="20,12,20,12">
-            <TabItem Header="Źródła">
+        <TabControl Name="tabSettings" Style="{StaticResource NavTabControl}" Grid.Row="1" Margin="20,12,20,12">
+            <TabItem Header="Źródła" Tag="&#xE8B7;">
                 <ScrollViewer Style="{StaticResource TabScroll}">
                     <StackPanel>
                         <Border Style="{StaticResource TabCard}">
@@ -5754,22 +6132,22 @@ function Show-ConfigEditor {
                                 <TextBlock Text="Źródło instalacji programów" Style="{StaticResource CardTitle}"/>
                                 <WrapPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="150">
-                                        <TextBlock Text="DOMYŚLNE ŹRÓDŁO" Style="{StaticResource Caption}" ToolTip="DefaultInstallSource"/>
+                                        <TextBlock Text="Domyślne źródło" Style="{StaticResource Caption}" ToolTip="DefaultInstallSource"/>
                                         <ComboBox Name="cmbSrc"/>
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="340">
-                                        <TextBlock Text="ŚCIEŻKA SIECIOWA (UNC)" Style="{StaticResource Caption}" ToolTip="InstallSourcePaths.network, np. \\serwer\instalki\"/>
+                                        <TextBlock Text="Ścieżka sieciowa (UNC)" Style="{StaticResource Caption}" ToolTip="InstallSourcePaths.network, np. \\serwer\instalki\"/>
                                         <TextBox Name="txtNet"/>
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="380">
-                                        <TextBlock Text="ADRES WWW (URL)" Style="{StaticResource Caption}" ToolTip="InstallSourcePaths.web, np. https://serwer/instalki/"/>
+                                        <TextBlock Text="Adres WWW (URL)" Style="{StaticResource Caption}" ToolTip="InstallSourcePaths.web, np. https://serwer/instalki/"/>
                                         <DockPanel>
                                             <Button Name="btnTestWeb" Content="Testuj" DockPanel.Dock="Right" Margin="8,0,0,0" ToolTip="Sprawdza, czy adres odpowiada"/>
                                             <TextBox Name="txtWeb"/>
                                         </DockPanel>
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="360">
-                                        <TextBlock Text="DANE NIESTANDARDOWE (URL)" Style="{StaticResource Caption}" ToolTip="CustomWebDataLocation.URL"/>
+                                        <TextBlock Text="Dane niestandardowe (URL)" Style="{StaticResource Caption}" ToolTip="CustomWebDataLocation.URL"/>
                                         <TextBox Name="txtCwd"/>
                                     </StackPanel>
                                 </WrapPanel>
@@ -5780,11 +6158,11 @@ function Show-ConfigEditor {
                                 <TextBlock Text="Logowanie do serwera WWW" Style="{StaticResource CardTitle}"/>
                                 <WrapPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="240">
-                                        <TextBlock Text="UŻYTKOWNIK" Style="{StaticResource Caption}" ToolTip="WebAuth.Username"/>
+                                        <TextBlock Text="Użytkownik" Style="{StaticResource Caption}" ToolTip="WebAuth.Username"/>
                                         <TextBox Name="txtWebUser"/>
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="240">
-                                        <TextBlock Text="HASŁO" Style="{StaticResource Caption}" ToolTip="WebAuth.Password"/>
+                                        <TextBlock Text="Hasło" Style="{StaticResource Caption}" ToolTip="WebAuth.Password"/>
                                         <PasswordBox Name="txtWebPass"/>
                                     </StackPanel>
                                 </WrapPanel>
@@ -5794,7 +6172,7 @@ function Show-ConfigEditor {
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="Domena i Wi-Fi">
+            <TabItem Header="Domena i Wi-Fi" Tag="&#xE701;">
                 <ScrollViewer Style="{StaticResource TabScroll}">
                     <StackPanel>
                         <Border Style="{StaticResource TabCard}">
@@ -5802,15 +6180,15 @@ function Show-ConfigEditor {
                                 <TextBlock Text="Domena i konto lokalne" Style="{StaticResource CardTitle}"/>
                                 <WrapPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="240">
-                                        <TextBlock Text="NAZWA DOMENY" Style="{StaticResource Caption}" ToolTip="DomainJoin.DomainName"/>
+                                        <TextBlock Text="Nazwa domeny" Style="{StaticResource Caption}" ToolTip="DomainJoin.DomainName"/>
                                         <TextBox Name="txtDom"/>
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="240">
-                                        <TextBlock Text="KONTO DO DOŁĄCZANIA" Style="{StaticResource Caption}" ToolTip="DomainJoin.Username - konto uprawnione do dołączania komputerów"/>
+                                        <TextBlock Text="Konto do dołączania" Style="{StaticResource Caption}" ToolTip="DomainJoin.Username - konto uprawnione do dołączania komputerów"/>
                                         <TextBox Name="txtDomUser"/>
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="240">
-                                        <TextBlock Text="KONTO LOKALNEGO ADMINA" Style="{StaticResource Caption}" ToolTip="LocalAdmin.Username"/>
+                                        <TextBlock Text="Konto lokalnego admina" Style="{StaticResource Caption}" ToolTip="LocalAdmin.Username"/>
                                         <TextBox Name="txtLoc"/>
                                     </StackPanel>
                                 </WrapPanel>
@@ -5821,7 +6199,7 @@ function Show-ConfigEditor {
                                 <TextBlock Text="Profil Wi-Fi" Style="{StaticResource CardTitle}"/>
                                 <WrapPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="500">
-                                        <TextBlock Text="PLIKI PROFILI (ROZDZIEL PRZECINKAMI)" Style="{StaticResource Caption}" ToolTip="WiFiProfile.FileName - pliki XML wyeksportowane przez netsh wlan export profile"/>
+                                        <TextBlock Text="Pliki profili (rozdziel przecinkami)" Style="{StaticResource Caption}" ToolTip="WiFiProfile.FileName - pliki XML wyeksportowane przez netsh wlan export profile"/>
                                         <TextBox Name="txtWifiFile"/>
                                     </StackPanel>
                                 </WrapPanel>
@@ -5831,7 +6209,7 @@ function Show-ConfigEditor {
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="TeamViewer i AV">
+            <TabItem Header="TeamViewer i AV" Tag="&#xE7F4;">
                 <ScrollViewer Style="{StaticResource TabScroll}">
                     <StackPanel>
                         <Border Style="{StaticResource TabCard}">
@@ -5839,11 +6217,11 @@ function Show-ConfigEditor {
                                 <TextBlock Text="TeamViewer" Style="{StaticResource CardTitle}"/>
                                 <WrapPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="240">
-                                        <TextBlock Text="PLIK / WINGET ID" Style="{StaticResource Caption}" ToolTip="TeamViewer.FileName"/>
+                                        <TextBlock Text="Plik / Winget ID" Style="{StaticResource Caption}" ToolTip="TeamViewer.FileName"/>
                                         <TextBox Name="txtTvFile"/>
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="480">
-                                        <TextBlock Text="ARGUMENTY INSTALACJI" Style="{StaticResource Caption}" ToolTip="TeamViewer.Arguments"/>
+                                        <TextBlock Text="Argumenty instalacji" Style="{StaticResource Caption}" ToolTip="TeamViewer.Arguments"/>
                                         <TextBox Name="txtTvArgs"/>
                                     </StackPanel>
                                 </WrapPanel>
@@ -5854,27 +6232,27 @@ function Show-ConfigEditor {
                                 <TextBlock Text="Antywirus" Style="{StaticResource CardTitle}"/>
                                 <WrapPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="240">
-                                        <TextBlock Text="PLIK / WINGET ID" Style="{StaticResource Caption}" ToolTip="AntyVirus.FileName"/>
+                                        <TextBlock Text="Plik / Winget ID" Style="{StaticResource Caption}" ToolTip="AntyVirus.FileName"/>
                                         <TextBox Name="txtAvFile"/>
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="130">
-                                        <TextBlock Text="ŹRÓDŁO" Style="{StaticResource Caption}" ToolTip="AntyVirus.DefaultInstallSource"/>
+                                        <TextBlock Text="Źródło" Style="{StaticResource Caption}" ToolTip="AntyVirus.DefaultInstallSource"/>
                                         <ComboBox Name="cmbAvSrc"/>
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="340">
-                                        <TextBlock Text="ŚCIEŻKA SIECIOWA (UNC)" Style="{StaticResource Caption}" ToolTip="AntyVirus.InstallSourcePaths.network"/>
+                                        <TextBlock Text="Ścieżka sieciowa (UNC)" Style="{StaticResource Caption}" ToolTip="AntyVirus.InstallSourcePaths.network"/>
                                         <TextBox Name="txtAvNet"/>
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="340">
-                                        <TextBlock Text="ADRES WWW (URL)" Style="{StaticResource Caption}" ToolTip="AntyVirus.InstallSourcePaths.web"/>
+                                        <TextBlock Text="Adres WWW (URL)" Style="{StaticResource Caption}" ToolTip="AntyVirus.InstallSourcePaths.web"/>
                                         <TextBox Name="txtAvWeb"/>
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="180">
-                                        <TextBlock Text="UŻYTKOWNIK" Style="{StaticResource Caption}" ToolTip="AntyVirus.Credentials.Username"/>
+                                        <TextBlock Text="Użytkownik" Style="{StaticResource Caption}" ToolTip="AntyVirus.Credentials.Username"/>
                                         <TextBox Name="txtAvUser"/>
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="180">
-                                        <TextBlock Text="HASŁO" Style="{StaticResource Caption}" ToolTip="AntyVirus.Credentials.Password"/>
+                                        <TextBlock Text="Hasło" Style="{StaticResource Caption}" ToolTip="AntyVirus.Credentials.Password"/>
                                         <PasswordBox Name="txtAvPass"/>
                                     </StackPanel>
                                 </WrapPanel>
@@ -5884,7 +6262,7 @@ function Show-ConfigEditor {
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="Programy">
+            <TabItem Header="Programy" Tag="&#xE71D;">
                 <DockPanel>
                     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
@@ -5901,17 +6279,17 @@ function Show-ConfigEditor {
                     <ListView Name="lbPrograms">
                         <ListView.View>
                             <GridView>
-                                <GridViewColumn Header="Identyfikator" Width="230" DisplayMemberBinding="{Binding Name}"/>
-                                <GridViewColumn Header="Plik / Winget ID" Width="320" DisplayMemberBinding="{Binding File}"/>
-                                <GridViewColumn Header="Domyślnie" Width="100" DisplayMemberBinding="{Binding Default}"/>
-                                <GridViewColumn Header="Własny URL" Width="110" DisplayMemberBinding="{Binding Url}"/>
+                                <GridViewColumn Header="Identyfikator" Width="200" DisplayMemberBinding="{Binding Name}"/>
+                                <GridViewColumn Header="Plik / Winget ID" Width="260" DisplayMemberBinding="{Binding File}"/>
+                                <GridViewColumn Header="Domyślnie" Width="90" DisplayMemberBinding="{Binding Default}"/>
+                                <GridViewColumn Header="Własny URL" Width="100" DisplayMemberBinding="{Binding Url}"/>
                             </GridView>
                         </ListView.View>
                     </ListView>
                 </DockPanel>
             </TabItem>
 
-            <TabItem Header="Profile">
+            <TabItem Header="Profile" Tag="&#xE716;">
                 <DockPanel>
                     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
@@ -5927,15 +6305,15 @@ function Show-ConfigEditor {
                     <ListView Name="lbProfiles">
                         <ListView.View>
                             <GridView>
-                                <GridViewColumn Header="Profil" Width="200" DisplayMemberBinding="{Binding Name}"/>
-                                <GridViewColumn Header="Aplikacje" Width="560" DisplayMemberBinding="{Binding Apps}"/>
+                                <GridViewColumn Header="Profil" Width="180" DisplayMemberBinding="{Binding Name}"/>
+                                <GridViewColumn Header="Aplikacje" Width="420" DisplayMemberBinding="{Binding Apps}"/>
                             </GridView>
                         </ListView.View>
                     </ListView>
                 </DockPanel>
             </TabItem>
 
-            <TabItem Header="Zadania">
+            <TabItem Header="Zadania" Tag="&#xE9D5;">
                 <ScrollViewer Style="{StaticResource TabScroll}">
                     <Border Style="{StaticResource TabCard}">
                         <DockPanel>
@@ -5971,7 +6349,7 @@ function Show-ConfigEditor {
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="Rejestr">
+            <TabItem Header="Rejestr" Tag="&#xE943;">
                 <DockPanel>
                     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
@@ -5987,17 +6365,17 @@ function Show-ConfigEditor {
                     <ListView Name="lbRegistry">
                         <ListView.View>
                             <GridView>
-                                <GridViewColumn Header="Ścieżka" Width="340" DisplayMemberBinding="{Binding Path}"/>
-                                <GridViewColumn Header="Nazwa" Width="190" DisplayMemberBinding="{Binding Name}"/>
-                                <GridViewColumn Header="Wartość" Width="140" DisplayMemberBinding="{Binding Value}"/>
-                                <GridViewColumn Header="Typ" Width="90" DisplayMemberBinding="{Binding Type}"/>
+                                <GridViewColumn Header="Ścieżka" Width="260" DisplayMemberBinding="{Binding Path}"/>
+                                <GridViewColumn Header="Nazwa" Width="160" DisplayMemberBinding="{Binding Name}"/>
+                                <GridViewColumn Header="Wartość" Width="120" DisplayMemberBinding="{Binding Value}"/>
+                                <GridViewColumn Header="Typ" Width="80" DisplayMemberBinding="{Binding Type}"/>
                             </GridView>
                         </ListView.View>
                     </ListView>
                 </DockPanel>
             </TabItem>
 
-            <TabItem Header="Skrypty">
+            <TabItem Header="Skrypty" Tag="&#xE756;">
                 <DockPanel>
                     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
@@ -6014,7 +6392,7 @@ function Show-ConfigEditor {
                 </DockPanel>
             </TabItem>
 
-            <TabItem Header="Zaawansowane">
+            <TabItem Header="Zaawansowane" Tag="&#xE713;">
                 <ScrollViewer Style="{StaticResource TabScroll}">
                     <StackPanel>
                         <Border Style="{StaticResource TabCard}" Padding="16,14">
@@ -6040,7 +6418,7 @@ function Show-ConfigEditor {
                                 </DockPanel>
                                 <WrapPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" Width="500">
-                                        <TextBlock Text="ŚCIEŻKA AKTUALIZACJI (UNC LUB URL)" Style="{StaticResource Caption}" ToolTip="AutoUpdate.VersionCheckPath - katalog z plikiem std_version.json"/>
+                                        <TextBlock Text="Ścieżka aktualizacji (UNC lub URL)" Style="{StaticResource Caption}" ToolTip="AutoUpdate.VersionCheckPath - katalog z plikiem std_version.json"/>
                                         <TextBox Name="txtUpdatePath"/>
                                     </StackPanel>
                                     <StackPanel Style="{StaticResource FieldBox}" VerticalAlignment="Bottom">
@@ -6703,11 +7081,11 @@ if ($null -eq $global:PesterTesting) {
                     </StackPanel>
                     <StackPanel Orientation="Horizontal">
                         <StackPanel Margin="0,0,12,0">
-                            <TextBlock Text="PROFIL WDROŻENIA" Style="{StaticResource Caption}"/>
+                            <TextBlock Text="Profil wdrożenia" Style="{StaticResource Caption}"/>
                             <ComboBox Name="cmbProfiles" Width="240" ToolTip="Profil zaznacza zestaw aplikacji przypisany do roli (Ustawienia → Profile)"/>
                         </StackPanel>
                         <StackPanel>
-                            <TextBlock Text="APLIKACJE" Style="{StaticResource Caption}"/>
+                            <TextBlock Text="Aplikacje" Style="{StaticResource Caption}"/>
                             <Button Name="btnChooseApps" Content="Wybierz aplikacje" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left"/>
                         </StackPanel>
                     </StackPanel>
@@ -6736,7 +7114,7 @@ if ($null -eq $global:PesterTesting) {
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="20,0,0,0">
                     <Button Name="btnPause" Content="Pauza" Style="{StaticResource WarningButton}" MinWidth="90" Padding="16,9" Margin="0,0,8,0" IsEnabled="False" Visibility="Collapsed"/>
                     <Button Name="btnCancelDeploy" Content="Przerwij" Style="{StaticResource DangerButton}" MinWidth="90" Padding="16,9" Margin="0,0,8,0" IsEnabled="False" Visibility="Collapsed"/>
-                    <Button Name="btnStart" Content="▶  Rozpocznij konfigurację" Style="{StaticResource SuccessButton}" FontSize="14" Padding="22,9" MinWidth="230"/>
+                    <Button Name="btnStart" Content="▶  Rozpocznij konfigurację" Style="{StaticResource PrimaryButton}" FontSize="14" Padding="22,9" MinWidth="230"/>
                 </StackPanel>
                 <StackPanel VerticalAlignment="Center">
                     <DockPanel Margin="0,0,0,6">
@@ -6836,9 +7214,11 @@ try {
 # Wcześniej zmieniane były tylko zasoby okna głównego - otwarta przeglądarka logów zostawała
 # w starym motywie aż do ponownego otwarcia.
 function Set-AppTheme {
-    foreach ($w in (Get-OpenAppWindows)) { Update-WindowTheme $w }
+    # Zasoby okna + pasek tytułu (DWM) - w każdym otwartym oknie, także niemodalnym.
+    foreach ($w in (Get-OpenAppWindows)) { Update-WindowTheme $w; Set-WindowTitleBarTheme -TargetWindow $w }
     if ($null -ne $btnThemeToggle) {
-        $btnThemeToggle.Content = if ($script:isDarkTheme) { "☀" } else { "☾" }
+        # Ikona pokazuje motyw, na który przełącza przycisk: słońce = jasny, półksiężyc = ciemny.
+        $btnThemeToggle.Content = New-GlyphBlock -Code $(if ($script:isDarkTheme) { 'E706' } else { 'E708' }) -Size 15
         $btnThemeToggle.ToolTip = if ($script:isDarkTheme) { "Przełącz na jasny motyw" } else { "Przełącz na ciemny motyw" }
     }
     # Kolory wierszy logu są zapisane w danych wierszy (RowColorHex) - przebudowujemy tabelę,
