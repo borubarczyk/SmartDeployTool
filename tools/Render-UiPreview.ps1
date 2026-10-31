@@ -116,7 +116,11 @@ function global:Find-UiClipping {
 
         # 1) Czy tekst mieści się w samym TextBlocku.
         $typeface = New-Object System.Windows.Media.Typeface -ArgumentList $tb.FontFamily, $tb.FontStyle, $tb.FontWeight, $tb.FontStretch
-        $ft = New-Object System.Windows.Media.FormattedText -ArgumentList $tb.Text, ([System.Globalization.CultureInfo]::CurrentUICulture), $tb.FlowDirection, $typeface, $tb.FontSize, ([System.Windows.Media.Brushes]::Black), $pixelsPerDip
+        # Pomiar w trybie, w którym TextBlock się rysuje (okna narzędzia: Display - szerokości liter
+        # zaokrąglane do pikseli); domyślny Ideal różnił się o kilka px i dawał fałszywe alarmy.
+        # Konstruktor z 9 argumentami (NumberSubstitution = $null) jest w .NET od 4.6.2.
+        $mode = [System.Windows.Media.TextOptions]::GetTextFormattingMode($tb)
+        $ft = New-Object System.Windows.Media.FormattedText -ArgumentList $tb.Text, ([System.Globalization.CultureInfo]::CurrentUICulture), $tb.FlowDirection, $typeface, $tb.FontSize, ([System.Windows.Media.Brushes]::Black), $null, $mode, $pixelsPerDip
         if (-not [double]::IsNaN($tb.LineHeight)) { $ft.LineHeight = $tb.LineHeight }
         $innerW = $tb.ActualWidth - $tb.Padding.Left - $tb.Padding.Right
         $innerH = $tb.ActualHeight - $tb.Padding.Top - $tb.Padding.Bottom

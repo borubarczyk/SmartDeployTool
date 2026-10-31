@@ -832,15 +832,16 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             # W testach okno główne nigdy nie jest pokazane, więc Get-DialogOwner nie zwraca właściciela
             # (tak samo jak w trakcie wdrożenia z oknem głównym schowanym w zasobniku).
             $Window.IsLoaded | Should -BeFalse
-            [xml]$xaml = '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Width="300" SizeToContent="Height" WindowStartupLocation="CenterOwner" ShowInTaskbar="False"><Grid/></Window>'
-            $w = New-ThemedWindow -Xaml $xaml
+            # Każde wywołanie dostaje własny dokument [xml] - test nie polega na tym, że fabryka robi kopię.
+            $src = '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Width="300" SizeToContent="Height" WindowStartupLocation="CenterOwner" ShowInTaskbar="False"><Grid/></Window>'
+            $w = New-ThemedWindow -Xaml ([xml]$src)
             $w.Owner | Should -BeNullOrEmpty
             $w.Topmost | Should -BeTrue
             $w.ShowInTaskbar | Should -BeTrue
             $w.WindowStartupLocation | Should -Be ([System.Windows.WindowStartupLocation]::CenterScreen)
 
             # -NoOwner (logowanie, okno główne): okno decyduje samo, fabryka niczego nie zmienia.
-            $w2 = New-ThemedWindow -Xaml $xaml -NoOwner
+            $w2 = New-ThemedWindow -Xaml ([xml]$src) -NoOwner
             $w2.Topmost | Should -BeFalse
             $w2.WindowStartupLocation | Should -Be ([System.Windows.WindowStartupLocation]::CenterOwner)
         }

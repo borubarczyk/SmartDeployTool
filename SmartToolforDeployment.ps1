@@ -1022,7 +1022,7 @@ $script:ThemeStylesXaml = @'
             <Setter.Value>
                 <ControlTemplate TargetType="TabItem">
                     <Grid>
-                        <Border x:Name="b" Background="Transparent" CornerRadius="7" Padding="10,7">
+                        <Border x:Name="b" Background="Transparent" CornerRadius="7" Padding="10,6">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock x:Name="ic" Text="{TemplateBinding Tag}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="14" Width="18" Margin="2,0,11,0" VerticalAlignment="Center" Foreground="{DynamicResource ThemeMuted}"/>
                                 <ContentPresenter x:Name="hdr" ContentSource="Header" VerticalAlignment="Center" RecognizesAccessKey="True" TextElement.Foreground="{DynamicResource ThemeGhostText}"/>
@@ -1057,8 +1057,11 @@ $script:ThemeStylesXaml = @'
                 <ControlTemplate TargetType="TabControl">
                     <Grid>
                         <Grid.ColumnDefinitions><ColumnDefinition Width="196"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <!-- Przewijana lista: przy 1366x768 i 150% (472 DIP wysokości) 9 pozycji ledwo się mieści. -->
                         <Border Style="{StaticResource Card}" Padding="6" Margin="0,0,16,0" VerticalAlignment="Top">
-                            <StackPanel IsItemsHost="True" KeyboardNavigation.TabNavigation="Once" KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                                <StackPanel IsItemsHost="True" KeyboardNavigation.TabNavigation="Once" KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                            </ScrollViewer>
                         </Border>
                         <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Column="1" ContentSource="SelectedContent"/>
                     </Grid>
@@ -1265,6 +1268,9 @@ function global:New-ThemedWindow {
         [Parameter(Mandatory)][xml]$Xaml,
         [switch]$NoOwner
     )
+    # Kopia dokumentu: [xml] przychodzi przez referencję, a niżej dokładamy do niego Window.Resources.
+    # Bez kopii drugie wczytanie tego samego dokumentu zagnieżdżało słownik bez klucza (XamlParseException).
+    $Xaml = $Xaml.Clone()
     $ns = 'http://schemas.microsoft.com/winfx/2006/xaml/presentation'
     $root = $Xaml.DocumentElement
     $resNode = $null
@@ -1314,6 +1320,11 @@ function global:New-ThemedWindow {
             try { $win.Owner = $owner } catch {}
         }
     }
+    # Właściciel widoczny, ale nieaktywny (technik w przeglądarce, wdrożenie pyta o hasło albo kończy
+    # się komunikatem): bez Topmost okno otwierało się pod przeglądarką, a wdrożenie czekało po cichu.
+    # Get-DialogOwner zwraca nieaktywne okno tylko w awaryjnej ścieżce, więc okna otwierane
+    # kliknięciem użytkownika (właściciel aktywny) zostają zwykłymi oknami podległymi.
+    if (-not $NoOwner -and $null -ne $win.Owner -and -not $win.Owner.IsActive) { $win.Topmost = $true }
     if (-not $NoOwner -and $null -eq $win.Owner) {
         # Brak widocznego właściciela (np. okno główne schowane w zasobniku w trakcie wdrożenia):
         # okno dialogowe nie może zginąć pod innymi oknami - na wierzchu, z przyciskiem na pasku
@@ -7421,8 +7432,10 @@ if ($null -eq $global:PesterTesting) {
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Width="36" Height="36" CornerRadius="10">
+                <!-- DockPanel zamiast poziomego StackPanelu: tekst dostaje skończoną szerokość, więc przy
+                     wąskim oknie (900 px, 1366x768 przy 150%) kończy się wielokropkiem zamiast ucięcia. -->
+                <DockPanel VerticalAlignment="Center">
+                    <Border DockPanel.Dock="Left" Width="36" Height="36" CornerRadius="10">
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                                 <GradientStop Color="#4C7DF0" Offset="0"/>
@@ -7432,19 +7445,19 @@ if ($null -eq $global:PesterTesting) {
                         <TextBlock Style="{StaticResource Glyph}" Text="&#xE7B8;" FontSize="17" Foreground="{DynamicResource ThemeOnAccent}" HorizontalAlignment="Center"/>
                     </Border>
                     <StackPanel Margin="11,0,0,0" VerticalAlignment="Center">
-                        <StackPanel Orientation="Horizontal">
+                        <DockPanel HorizontalAlignment="Left">
+                            <TextBlock DockPanel.Dock="Right" Text="v$script:ScriptVersion" Foreground="{DynamicResource ThemeFaint}" FontSize="11" Margin="7,3,0,0"/>
                             <TextBlock Text="Smart Tool for Deployment" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource ThemeTitle}" TextTrimming="CharacterEllipsis"/>
-                            <TextBlock Text="v$script:ScriptVersion" Foreground="{DynamicResource ThemeFaint}" FontSize="11" Margin="7,3,0,0"/>
-                        </StackPanel>
+                        </DockPanel>
                         <TextBlock Name="txtSubtitle" Text="Konfiguracja stacji roboczych Windows" Foreground="{DynamicResource ThemeSubtle}" FontSize="11.5" TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
-                </StackPanel>
+                </DockPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
                     <Border Style="{StaticResource Chip}" Padding="10,4" MaxWidth="280" Margin="0,0,10,0">
-                        <StackPanel Orientation="Horizontal">
-                            <Ellipse Name="shpNetworkStatus" Width="8" Height="8" Fill="{DynamicResource ThemeWarning}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                        <DockPanel>
+                            <Ellipse Name="shpNetworkStatus" DockPanel.Dock="Left" Width="8" Height="8" Fill="{DynamicResource ThemeWarning}" Margin="0,0,8,0" VerticalAlignment="Center"/>
                             <TextBlock Name="txtNetworkStatus" Text="Sprawdzanie sieci..." FontSize="12" Foreground="{DynamicResource ThemeGhostText}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-                        </StackPanel>
+                        </DockPanel>
                     </Border>
                     <Button Name="btnLogs" Style="{StaticResource GhostButton}" Padding="10,7" ToolTip="Przeglądarka logów: filtry, wyszukiwanie, eksport raportu">
                         <StackPanel Orientation="Horizontal">
@@ -7599,7 +7612,11 @@ Set-ButtonContent $btnPause 'Pauza' 'E769'
 Set-ButtonContent $btnCancelDeploy 'Przerwij' 'E71A'
 # Login operatora dopisujemy po wczytaniu okna, nigdy wklejając go do XAML ([xml]) - znak & albo <
 # w loginie zepsułby XML i okno główne w ogóle by się nie otworzyło.
-if ($script:OperatorLogin) { $txtSubtitle.Text = "Konfiguracja stacji roboczych Windows  ·  operator: $($script:OperatorLogin)" }
+if ($script:OperatorLogin) {
+    $txtSubtitle.Text = "Konfiguracja stacji roboczych Windows  ·  operator: $($script:OperatorLogin)"
+    # W wąskim oknie podtytuł kończy się wielokropkiem - pełny tekst (z loginem) w podpowiedzi.
+    $txtSubtitle.ToolTip = $txtSubtitle.Text
+}
 $script:isPaused     = $false
 $script:isCancelled  = $false
 $script:ignoreProfileChange = $false
