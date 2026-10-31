@@ -25,7 +25,7 @@ param(
     [switch]$DumpLayout,
     # Kończy skrypt kodem 1, jeśli w którymkolwiek oknie wykryto ucięty tekst.
     [switch]$FailOnClipping,
-    # Kończy skrypt kodem 1 przy jakiejkolwiek uwadze: CLIP, STALE, GLYPH albo EMOJI (obejmuje -FailOnClipping).
+    # Kończy skrypt kodem 1 przy jakiejkolwiek uwadze (CLIP, STALE, GLYPH, EMOJI) albo błędzie renderowania okna (ERR); obejmuje -FailOnClipping.
     [switch]$FailOnFindings
 )
 if ($FailOnFindings) { $FailOnClipping = [switch]$true }
@@ -701,4 +701,4 @@ if ($env:GITHUB_ACTIONS -eq 'true') {
 }
 
 if ($FailOnClipping -and $global:UiClipping.Count -gt 0) { exit 1 }
-if ($FailOnFindings -and $global:UiFindings.Count -gt 0) { exit 1 }
+if ($FailOnFindings -and ($global:UiFindings.Count + $global:UiErrors.Count) -gt 0) { exit 1 }
