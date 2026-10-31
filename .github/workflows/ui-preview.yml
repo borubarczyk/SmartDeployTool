@@ -2,6 +2,9 @@ name: UI Preview
 
 # Renderuje wszystkie okna narzędzia (motyw ciemny i jasny) do plików PNG - podgląd wyglądu bez
 # uruchamiania aplikacji. Pliki są do pobrania jako artefakt "ui-preview" przy przebiegu workflow.
+# Uwagi z kontroli wyglądu (CLIP ucięty tekst, STALE kolor z poprzedniego motywu, GLYPH ikona
+# w zwykłej czcionce, EMOJI) są w logu kroku "Uwagi", w podsumowaniu przebiegu i w artefakcie
+# (ui-preview/<motyw>/uciety-tekst.txt i uwagi-motyw.txt).
 on:
   push:
     paths:
@@ -19,14 +22,35 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Na razie bez -FailOnFindings: uwagi z pierwszego przebiegu trzeba najpierw przejrzeć. Gdy oba
+      # motywy pokażą zero uwag, obie komendy dostają -FailOnFindings, a ostatnia linia kroku zmienia się
+      # na: if ($darkExit -ne 0 -or $lightExit -ne 0) { exit 1 }. Do tego czasu wynik kroku jak dotąd
+      # zależy tylko od przebiegu Light (kod Dark jest wypisywany).
       - name: Render windows (dark + light)
         shell: powershell
         run: |
           powershell -NoProfile -STA -ExecutionPolicy Bypass -File tools\Render-UiPreview.ps1 -Theme Dark -DumpLayout
+          $darkExit = $LASTEXITCODE
           powershell -NoProfile -STA -ExecutionPolicy Bypass -File tools\Render-UiPreview.ps1 -Theme Light
+          $lightExit = $LASTEXITCODE
           Get-ChildItem ui-preview -Recurse -Filter *.png | Measure-Object | ForEach-Object { "PNG: $($_.Count)" }
+          "Kod wyjscia: Dark $darkExit, Light $lightExit"
+          exit $lightExit
+
+      - name: Uwagi (CLIP / STALE / GLYPH / EMOJI)
+        if: always()
+        shell: powershell
+        run: |
+          foreach ($theme in 'dark', 'light') {
+            foreach ($file in 'uciety-tekst.txt', 'uwagi-motyw.txt') {
+              $path = Join-Path (Join-Path 'ui-preview' $theme) $file
+              Write-Host "==== $theme / $file ===="
+              if (Test-Path $path) { Get-Content -Path $path -Encoding UTF8 | ForEach-Object { Write-Host $_ } } else { Write-Host '(brak pliku)' }
+            }
+          }
 
       - name: Upload preview
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ui-preview
