@@ -1,1 +1,8 @@
 ui-preview/
+
+# Pliki lokalne - nie trafiają do repozytorium
+config.json
+*.exe
+deploy-log*.txt
+deploy-error-log*.txt
+Thumbs.db
