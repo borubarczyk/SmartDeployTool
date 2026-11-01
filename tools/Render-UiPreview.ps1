@@ -743,7 +743,8 @@ try {
         $row = New-Object System.Windows.Controls.StackPanel
         $row.Orientation = 'Horizontal'
         $decoder = New-Object System.Windows.Media.Imaging.IconBitmapDecoder -ArgumentList (New-Object System.IO.MemoryStream (, $variant.Bytes)), ([System.Windows.Media.Imaging.BitmapCreateOptions]::None), ([System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
-        foreach ($frame in $decoder.Frames) {
+        # Od najmniejszego: dekoder podaje klatki we własnej kolejności.
+        foreach ($frame in @($decoder.Frames | Sort-Object PixelWidth)) {
             $img = New-Object System.Windows.Controls.Image
             $img.Source = $frame
             $img.Width = $frame.PixelWidth

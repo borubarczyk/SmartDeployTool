@@ -669,9 +669,11 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             [BitConverter]::ToUInt16($bytes, 2) | Should -Be 1
             [BitConverter]::ToUInt16($bytes, 4) | Should -Be 8
             $decoder = New-Object System.Windows.Media.Imaging.IconBitmapDecoder -ArgumentList (New-Object System.IO.MemoryStream (, $bytes)), ([System.Windows.Media.Imaging.BitmapCreateOptions]::None), ([System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
-            @($decoder.Frames | ForEach-Object { $_.PixelWidth }) | Should -Be @(16, 20, 24, 32, 40, 48, 64, 256)
+            # Dekoder WIC podaje klatki we własnej kolejności (np. 48, 40, 32...), więc porównujemy zbiór rozmiarów.
+            @($decoder.Frames | ForEach-Object { $_.PixelWidth } | Sort-Object) | Should -Be @(16, 20, 24, 32, 40, 48, 64, 256)
             # 16 px: róg poza zaokrąglonym kafelkiem przezroczysty, środek kafelka kryjący.
-            $small = New-Object System.Windows.Media.Imaging.FormatConvertedBitmap -ArgumentList $decoder.Frames[0], ([System.Windows.Media.PixelFormats]::Bgra32), $null, 0
+            $frame16 = @($decoder.Frames | Where-Object { $_.PixelWidth -eq 16 })[0]
+            $small = New-Object System.Windows.Media.Imaging.FormatConvertedBitmap -ArgumentList $frame16, ([System.Windows.Media.PixelFormats]::Bgra32), $null, 0
             $px = New-Object byte[] (16 * 16 * 4)
             $small.CopyPixels($px, 64, 0)
             $px[3] | Should -Be 0
