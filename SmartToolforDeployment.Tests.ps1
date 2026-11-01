@@ -657,6 +657,38 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
                 $w.FindName($name).Foreground.Color.ToString() | Should -Be $expected
             }
         }
+
+        It "Ikona narzędzia: poprawny plik .ico ze wszystkimi rozmiarami (<Variant>)" -TestCases @(
+            @{ Variant = 'znak z czcionki'; Drawn = $false },
+            @{ Variant = 'paczka rysowana'; Drawn = $true }
+        ) {
+            param($Variant, $Drawn)
+            $bytes = if ($Drawn) { New-AppIconBytes -DrawnMark } else { New-AppIconBytes }
+            # ICONDIR: zarezerwowane 0, typ 1 (ikona), liczba obrazów.
+            [BitConverter]::ToUInt16($bytes, 0) | Should -Be 0
+            [BitConverter]::ToUInt16($bytes, 2) | Should -Be 1
+            [BitConverter]::ToUInt16($bytes, 4) | Should -Be 8
+            $decoder = New-Object System.Windows.Media.Imaging.IconBitmapDecoder -ArgumentList (New-Object System.IO.MemoryStream (, $bytes)), ([System.Windows.Media.Imaging.BitmapCreateOptions]::None), ([System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
+            @($decoder.Frames | ForEach-Object { $_.PixelWidth }) | Should -Be @(16, 20, 24, 32, 40, 48, 64, 256)
+            # 16 px: róg poza zaokrąglonym kafelkiem przezroczysty, środek kafelka kryjący.
+            $small = New-Object System.Windows.Media.Imaging.FormatConvertedBitmap -ArgumentList $decoder.Frames[0], ([System.Windows.Media.PixelFormats]::Bgra32), $null, 0
+            $px = New-Object byte[] (16 * 16 * 4)
+            $small.CopyPixels($px, 64, 0)
+            $px[3] | Should -Be 0
+            $px[(8 * 64) + (8 * 4) + 3] | Should -Be 255
+        }
+
+        It "Ikona narzędzia trafia do okien i daje się wczytać jako ikona zasobnika" {
+            $script:AppIcon | Should -Not -BeNullOrEmpty
+            $script:AppIcon.Decoder.Frames.Count | Should -Be 8
+            [xml]$xaml = '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><Grid/></Window>'
+            (New-ThemedWindow -Xaml $xaml -NoOwner).Icon | Should -Be $script:AppIcon
+            foreach ($size in 16, 32) {
+                $icon = New-Object System.Drawing.Icon -ArgumentList (New-Object System.IO.MemoryStream (, $script:AppIconBytes)), $size, $size
+                $icon.Width | Should -Be $size
+                $icon.Dispose()
+            }
+        }
     }
 
     Context "Nowy wygląd (ServerReview / AD Manager Diamond)" {

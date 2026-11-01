@@ -322,7 +322,7 @@ function global:Get-UiContrastRatio {
     return ($hi + 0.05) / ($lo + 0.05)
 }
 # Tło pod elementem: pędzle Background (Panel, Border, Control - TextBlock też) w górę drzewa aż do
-# pierwszego nieprzezroczystego; półprzezroczyste nakładamy na nie od dołu.
+# pierwszego nieprzezroczystego; półprzezroczyste nakładamy na nie od dołu. $null = tło z obrazu.
 function global:Get-UiEffectiveBackground {
     param($Element, [System.Windows.Window]$Win)
     $layers = New-Object System.Collections.Generic.List[object]
@@ -333,8 +333,20 @@ function global:Get-UiEffectiveBackground {
         elseif ($v -is [System.Windows.Controls.Border]) { $brush = $v.Background }
         elseif ($v -is [System.Windows.Controls.TextBlock]) { $brush = $v.Background }
         elseif ($v -is [System.Windows.Window]) { $brush = $v.Background }
-        if ($brush -is [System.Windows.Media.SolidColorBrush]) {
-            $c = $brush.Color
+        $c = $null
+        if ($brush -is [System.Windows.Media.SolidColorBrush]) { $c = $brush.Color }
+        elseif ($brush -is [System.Windows.Media.GradientBrush] -and $brush.GradientStops.Count -gt 0) {
+            # Gradient (np. kafelek logo w nagłówku): średnia kolorów punktów - znak stoi na środku kafelka.
+            $r = 0; $g = 0; $bl = 0; $al = 0
+            foreach ($stop in $brush.GradientStops) { $r += $stop.Color.R; $g += $stop.Color.G; $bl += $stop.Color.B; $al += $stop.Color.A }
+            $n = $brush.GradientStops.Count
+            $c = [System.Windows.Media.Color]::FromArgb([byte][Math]::Round($al / $n), [byte][Math]::Round($r / $n), [byte][Math]::Round($g / $n), [byte][Math]::Round($bl / $n))
+        }
+        elseif ($null -ne $brush) {
+            # Obraz / VisualBrush: tła nie da się policzyć z kolorów, więc tekstu nie oceniamy.
+            return $null
+        }
+        if ($null -ne $c) {
             $a = $c.A * $brush.Opacity
             if ($a -ge 255) { $layers.Add($c); break }
             if ($a -gt 0) { $layers.Add([System.Windows.Media.Color]::FromArgb([byte][Math]::Round($a), $c.R, $c.G, $c.B)) }
@@ -370,6 +382,7 @@ function global:Find-UiContrast {
         }
         if ($dimmed) { continue }
         $bg = Get-UiEffectiveBackground -Element $v -Win $Win
+        if ($null -eq $bg) { continue }
         $ratio = Get-UiContrastRatio $fg $bg
         if ($ratio -lt $global:UiMinContrast) {
             $results.Add(("CONTRAST {0} | {1} | tekst {2} na tle #{3:X2}{4:X2}{5:X2} = {6:N2}:1 (min {7})" -f $WindowName, (Get-UiElementPath $v), $fgHex, $bg.R, $bg.G, $bg.B, $ratio, $global:UiMinContrast))
@@ -709,6 +722,48 @@ Invoke-UiShot 'edycja-programu' { Show-ProgramEditDialog -IsNew $false -ProgramN
 Invoke-UiShot 'edycja-rejestru' { Show-RegistryEditDialog -IsNew $false -RegData ([PSCustomObject]@{ Path = 'HKLM:\SOFTWARE\MojaFirma'; Name = 'WdrozenieZakonczone'; Value = '1'; PropertyType = 'DWord' }) }
 Invoke-UiShot 'edycja-skryptu' { Show-ScriptEditDialog -IsNew $true -ScriptPath 'SkryptDrukarki.ps1' }
 Invoke-UiShot 'edycja-profilu' { Show-ProfileEditDialog -IsNew $false -ProfileName 'Standard' -ProfileApps @('7-Zip', 'Google Chrome') -config $cfg }
+
+# Ikona narzędzia (New-AppIconBytes): każdy rozmiar z pliku .ico w skali 1:1 na tle motywu - wersja ze
+# znakiem z czcionki i zapasowa rysowana kreską - oraz sam plik ikona.ico do obejrzenia w Eksploratorze.
+try {
+    [System.IO.File]::WriteAllBytes((Join-Path $global:UiShotDir 'ikona.ico'), $script:AppIconBytes)
+    $textBrush = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.ColorConverter]::ConvertFromString((Get-ThemeColor 'ThemeText')))
+    $iconPanel = New-Object System.Windows.Controls.StackPanel
+    $iconPanel.Margin = '12'
+    $variants = @(
+        @{ Label = 'Ikona narzędzia (znak z czcionki Segoe Fluent Icons / Segoe MDL2 Assets)'; Bytes = $script:AppIconBytes },
+        @{ Label = 'Zapas bez czcionki z ikonami (paczka rysowana kreską)'; Bytes = (New-AppIconBytes -DrawnMark) }
+    )
+    foreach ($variant in $variants) {
+        $caption = New-Object System.Windows.Controls.TextBlock
+        $caption.Text = $variant.Label
+        $caption.Foreground = $textBrush
+        $caption.Margin = '0,8,0,6'
+        [void]$iconPanel.Children.Add($caption)
+        $row = New-Object System.Windows.Controls.StackPanel
+        $row.Orientation = 'Horizontal'
+        $decoder = New-Object System.Windows.Media.Imaging.IconBitmapDecoder -ArgumentList (New-Object System.IO.MemoryStream (, $variant.Bytes)), ([System.Windows.Media.Imaging.BitmapCreateOptions]::None), ([System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
+        foreach ($frame in $decoder.Frames) {
+            $img = New-Object System.Windows.Controls.Image
+            $img.Source = $frame
+            $img.Width = $frame.PixelWidth
+            $img.Height = $frame.PixelHeight
+            $img.Stretch = 'Fill'
+            $img.VerticalAlignment = 'Bottom'
+            $img.Margin = '0,0,12,0'
+            [System.Windows.Media.RenderOptions]::SetBitmapScalingMode($img, [System.Windows.Media.BitmapScalingMode]::NearestNeighbor)
+            [void]$row.Children.Add($img)
+        }
+        [void]$iconPanel.Children.Add($row)
+    }
+    $iconPanel.Measure((New-Object System.Windows.Size ([double]::PositiveInfinity), ([double]::PositiveInfinity)))
+    $iconPanel.Arrange((New-Object System.Windows.Rect $iconPanel.DesiredSize))
+    $bgBrush = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.ColorConverter]::ConvertFromString((Get-ThemeColor 'ThemeBackground')))
+    Save-UiElementPng -Element $iconPanel -Background $bgBrush -Name 'ikona'
+} catch {
+    Write-Host "ERR  ikona: $($_.Exception.Message)"
+    [void]$global:UiErrors.Add("ikona: $($_.Exception.Message)")
+}
 
 Write-Host "Gotowe: $global:UiShotIndex plików w $global:UiShotDir"
 

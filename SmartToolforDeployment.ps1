@@ -1308,7 +1308,7 @@ function global:New-ThemedWindow {
     if ($win.ReadLocalValue([System.Windows.Controls.Control]::FontSizeProperty) -eq [System.Windows.DependencyProperty]::UnsetValue) { $win.FontSize = 13 }
     # Pasek tytułu w kolorach motywu, gdy tylko okno dostanie uchwyt (HWND).
     $win.Add_SourceInitialized({ param($s, $e) Set-WindowTitleBarTheme -TargetWindow $s })
-    # Ikona narzędzia na pasku tytułu i pasku zadań (Load-Cargo.ico obok skryptu, jeśli jest).
+    # Ikona narzędzia na pasku tytułu i pasku zadań (rysowana w kodzie, New-AppIconBytes).
     if ($null -ne $script:AppIcon) { try { $win.Icon = $script:AppIcon } catch {} }
     # Okno nigdy większe niż obszar roboczy ekranu. Narzędzie działa na świeżo zainstalowanych
     # komputerach - często jeszcze bez sterownika grafiki (1024x768) albo na laptopach ze
@@ -1458,16 +1458,123 @@ if ([string]::IsNullOrWhiteSpace($ScriptDir)) {
 }
 if ([string]::IsNullOrWhiteSpace($ScriptDir)) { $ScriptDir = $PWD.Path }
 
-# Ikona okien (New-ThemedWindow) wczytana raz; OnLoad = błąd uszkodzonego pliku wychodzi tutaj, w try,
-# a nie dopiero przy pokazywaniu okna. Bez pliku (np. sam .exe) okna mają ikonę domyślną.
-$script:AppIconPath = Join-Path $ScriptDir 'Load-Cargo.ico'
+# Ikona narzędzia rysowana w kodzie - ten sam kafelek co logo w nagłówku okna głównego: gradient
+# #4C7DF0 -> #E0913E, zaokrąglone rogi, biała paczka (znak E7B8 z Segoe Fluent Icons / MDL2 Assets).
+# Nie zależy od pliku obok skryptu, więc działa też po spakowaniu do .exe. Wynik to bajty pliku .ico
+# z kilkoma rozmiarami: małe jako 32-bitowy DIB (czyta go każdy Windows i System.Drawing.Icon dla
+# zasobnika), 256 px jako PNG - tak zapisuje go sam Windows.
+function global:New-AppIconBytes {
+    param(
+        [int[]]$Sizes = @(16, 20, 24, 32, 40, 48, 64, 256),
+        # Paczka narysowana kreską zamiast znaku z czcionki (sama czcionka z ikonami może nie istnieć).
+        [switch]$DrawnMark
+    )
+    $glyph = $null
+    $glyphIndex = 0
+    if (-not $DrawnMark) {
+        foreach ($familyName in 'Segoe Fluent Icons', 'Segoe MDL2 Assets') {
+            $typeface = New-Object System.Windows.Media.Typeface -ArgumentList (New-Object System.Windows.Media.FontFamily $familyName), ([System.Windows.FontStyles]::Normal), ([System.Windows.FontWeights]::Normal), ([System.Windows.FontStretches]::Normal)
+            $candidate = $null
+            # Brak czcionki = WPF podstawia inną (np. Segoe UI), która nie ma znaku E7B8 - szukamy dalej.
+            if ($typeface.TryGetGlyphTypeface([ref]$candidate) -and $candidate.CharacterToGlyphMap.ContainsKey(0xE7B8)) {
+                $glyph = $candidate
+                $glyphIndex = $candidate.CharacterToGlyphMap[0xE7B8]
+                break
+            }
+        }
+    }
+    # Zapas bez czcionki (np. Windows Server bez Segoe MDL2 Assets): ta sama paczka, w jednostkach 0-1.
+    $drawnGeometry = $null
+    if ($null -eq $glyph) { $drawnGeometry = [System.Windows.Media.Geometry]::Parse('M0.5,0.08 L0.92,0.29 L0.92,0.71 L0.5,0.92 L0.08,0.71 L0.08,0.29 Z M0.08,0.29 L0.5,0.5 L0.92,0.29 M0.5,0.5 L0.5,0.92') }
+    $from = [System.Windows.Media.Color]::FromRgb(0x4C, 0x7D, 0xF0)
+    $to = [System.Windows.Media.Color]::FromRgb(0xE0, 0x91, 0x3E)
+    $images = New-Object System.Collections.Generic.List[object]
+    foreach ($size in $Sizes) {
+        $dv = New-Object System.Windows.Media.DrawingVisual
+        $dc = $dv.RenderOpen()
+        $tile = New-Object System.Windows.Media.LinearGradientBrush -ArgumentList $from, $to, (New-Object System.Windows.Point 0, 0), (New-Object System.Windows.Point 1, 1)
+        $radius = $size * 0.22
+        $dc.DrawRoundedRectangle($tile, $null, (New-Object System.Windows.Rect 0, 0, $size, $size), $radius, $radius)
+        # W najmniejszych rozmiarach (pasek tytułu, zasobnik) znak większy, żeby był czytelny.
+        $mark = if ($size -le 24) { $size * 0.7 } else { $size * 0.6 }
+        if ($null -ne $glyph) {
+            $geo = $glyph.GetGlyphOutline($glyphIndex, $mark, $mark)
+            $b = $geo.Bounds
+            $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform -ArgumentList ((($size - $b.Width) / 2) - $b.X), ((($size - $b.Height) / 2) - $b.Y)))
+            $dc.DrawGeometry([System.Windows.Media.Brushes]::White, $null, $geo)
+            $dc.Pop()
+        } else {
+            $offset = ($size - $mark) / 2
+            $dc.PushTransform((New-Object System.Windows.Media.MatrixTransform -ArgumentList $mark, 0, 0, $mark, $offset, $offset))
+            $pen = New-Object System.Windows.Media.Pen -ArgumentList ([System.Windows.Media.Brushes]::White), 0.09
+            $pen.LineJoin = [System.Windows.Media.PenLineJoin]::Round
+            $dc.DrawGeometry($null, $pen, $drawnGeometry)
+            $dc.Pop()
+        }
+        $dc.Close()
+        $rtb = New-Object System.Windows.Media.Imaging.RenderTargetBitmap -ArgumentList $size, $size, 96, 96, ([System.Windows.Media.PixelFormats]::Pbgra32)
+        $rtb.Render($dv)
+        $ms = New-Object System.IO.MemoryStream
+        if ($size -ge 256) {
+            $png = New-Object System.Windows.Media.Imaging.PngBitmapEncoder
+            $png.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($rtb))
+            $png.Save($ms)
+        } else {
+            # DIB w .ico: BITMAPINFOHEADER z podwójną wysokością (obraz + maska AND), wiersze od dołu,
+            # kolory bez przemnożenia przez alfę (Bgra32, nie Pbgra32 z RenderTargetBitmap).
+            $bgra = [System.Windows.Media.Imaging.FormatConvertedBitmap]::new($rtb, [System.Windows.Media.PixelFormats]::Bgra32, $null, 0)
+            $stride = $size * 4
+            $pixels = New-Object byte[] ($stride * $size)
+            $bgra.CopyPixels($pixels, $stride, 0)
+            $maskStride = [int]([Math]::Ceiling($size / 32.0) * 4)
+            $mask = New-Object byte[] ($maskStride * $size)
+            for ($y = 0; $y -lt $size; $y++) {
+                $row = ($size - 1 - $y) * $maskStride
+                for ($x = 0; $x -lt $size; $x++) {
+                    # Bit 1 w masce AND = piksel w pełni przezroczysty (dla programów, które nie czytają alfy).
+                    if ($pixels[($y * $stride) + ($x * 4) + 3] -eq 0) {
+                        $i = $row + ($x -shr 3)
+                        $mask[$i] = $mask[$i] -bor (0x80 -shr ($x % 8))
+                    }
+                }
+            }
+            $bw = New-Object System.IO.BinaryWriter $ms
+            $bw.Write([int32]40); $bw.Write([int32]$size); $bw.Write([int32]($size * 2))
+            $bw.Write([int16]1); $bw.Write([int16]32); $bw.Write([int32]0)
+            $bw.Write([int32]($pixels.Length + $mask.Length))
+            $bw.Write([int32]0); $bw.Write([int32]0); $bw.Write([int32]0); $bw.Write([int32]0)
+            for ($y = $size - 1; $y -ge 0; $y--) { $bw.Write($pixels, $y * $stride, $stride) }
+            $bw.Write($mask)
+            $bw.Flush()
+        }
+        $images.Add([pscustomobject]@{ Size = $size; Data = $ms.ToArray() })
+    }
+    # Plik .ico: ICONDIR (6 B), po jednym ICONDIRENTRY (16 B) na rozmiar, potem dane obrazów.
+    $out = New-Object System.IO.MemoryStream
+    $w = New-Object System.IO.BinaryWriter $out
+    $w.Write([uint16]0); $w.Write([uint16]1); $w.Write([uint16]$images.Count)
+    $dataOffset = 6 + (16 * $images.Count)
+    foreach ($img in $images) {
+        $dim = if ($img.Size -ge 256) { 0 } else { $img.Size }
+        $w.Write([byte]$dim); $w.Write([byte]$dim); $w.Write([byte]0); $w.Write([byte]0)
+        $w.Write([uint16]1); $w.Write([uint16]32)
+        $w.Write([uint32]$img.Data.Length); $w.Write([uint32]$dataOffset)
+        $dataOffset += $img.Data.Length
+    }
+    foreach ($img in $images) { $w.Write([byte[]]$img.Data) }
+    $w.Flush()
+    return ,$out.ToArray()
+}
+
+# Ikona okien (New-ThemedWindow) i zasobnika tworzona raz. BitmapFrame z całego .ico: WPF sam wybiera
+# z niego rozmiar na pasek tytułu (16-24 px) i pasek zadań (32-48 px). Błąd = ikona domyślna.
+$script:AppIconBytes = $null
 $script:AppIcon = $null
 try {
-    if (Test-Path -LiteralPath $script:AppIconPath) {
-        $script:AppIcon = [System.Windows.Media.Imaging.BitmapFrame]::Create([Uri]$script:AppIconPath, [System.Windows.Media.Imaging.BitmapCreateOptions]::None, [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
-        if ($script:AppIcon.CanFreeze) { $script:AppIcon.Freeze() }
-    }
-} catch { $script:AppIcon = $null }
+    $script:AppIconBytes = New-AppIconBytes
+    $script:AppIcon = [System.Windows.Media.Imaging.BitmapFrame]::Create((New-Object System.IO.MemoryStream (, $script:AppIconBytes)), [System.Windows.Media.Imaging.BitmapCreateOptions]::None, [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
+    if ($script:AppIcon.CanFreeze) { $script:AppIcon.Freeze() }
+} catch { $script:AppIconBytes = $null; $script:AppIcon = $null }
 
 $script:ScriptVersion = "3.1.0"
 $configPath = Join-Path $ScriptDir "config.json"
@@ -7901,16 +8008,20 @@ $Window.Add_KeyDown({
 })
 
 $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
-try {
-    $procPath = (Get-Process -Id $pid).Path
-    if ($procPath -and (Test-Path $procPath)) {
-        $notifyIcon.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($procPath)
-    } else {
-        $notifyIcon.Icon = [System.Drawing.SystemIcons]::Information
-    }
-} catch {
-    $notifyIcon.Icon = [System.Drawing.SystemIcons]::Information
+# Ikona w zasobniku = ikona narzędzia (rozmiar wybrany z .ico pod systemowy mały rozmiar ikony);
+# w razie błędu ikona procesu (powershell.exe / .exe), a na końcu systemowa.
+$trayIcon = $null
+if ($null -ne $script:AppIconBytes) {
+    try { $trayIcon = New-Object System.Drawing.Icon -ArgumentList (New-Object System.IO.MemoryStream (, $script:AppIconBytes)), ([System.Windows.Forms.SystemInformation]::SmallIconSize) } catch { $trayIcon = $null }
 }
+if ($null -eq $trayIcon) {
+    try {
+        $procPath = (Get-Process -Id $pid).Path
+        if ($procPath -and (Test-Path $procPath)) { $trayIcon = [System.Drawing.Icon]::ExtractAssociatedIcon($procPath) }
+    } catch { $trayIcon = $null }
+}
+if ($null -eq $trayIcon) { $trayIcon = [System.Drawing.SystemIcons]::Information }
+$notifyIcon.Icon = $trayIcon
 $notifyIcon.Text = "Smart Tool for Deployment"
 
 $notifyIcon.add_DoubleClick({
