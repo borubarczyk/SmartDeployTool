@@ -44,7 +44,7 @@
 
 ## Przykładowa struktura `config.json`
 
-Plik generuje się i jest zarządzany automatycznie przez aplikację, lecz można też edytować go w Notatniku.
+Plik generuje się i jest zarządzany automatycznie przez aplikację, lecz można też edytować go w Notatniku. Plik `config.json` zawiera dane konkretnego środowiska (ścieżki, loginy, hasła), dlatego nie jest przechowywany w repozytorium (`.gitignore`). Gotowy przykład bez danych wrażliwych znajdziesz w `config.example.json` - skopiuj go jako `config.json` obok skryptu i uzupełnij. Nowy plik przykładowy z własnej konfiguracji wygenerujesz skryptem `Create-ConfigExample.ps1`.
 
 ```json
 {

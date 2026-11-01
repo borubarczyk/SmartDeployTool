@@ -2,4 +2,9 @@ ui-preview/
 Thumbs.db
 desktop.ini
 *.log
-deploy-log.txt
+
+# Pliki lokalne - nie trafiają do repozytorium
+config.json
+*.exe
+deploy-log*.txt
+deploy-error-log*.txt
