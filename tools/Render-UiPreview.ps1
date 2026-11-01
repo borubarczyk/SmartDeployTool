@@ -718,10 +718,24 @@ Invoke-UiShot 'szczegoly-wpisu-logu' { Show-LogEntryDetail -Entry ([PSCustomObje
 Invoke-UiShot 'informacje-o-systemie' { Show-SystemInfoWindow }
 Invoke-UiShot 'deinstalator' { Show-SoftwareUninstaller }
 Invoke-UiShot 'ustawienia' { Show-ConfigEditor }
-Invoke-UiShot 'edycja-programu' { Show-ProgramEditDialog -IsNew $false -ProgramName 'Google Chrome' -ProgramData ([PSCustomObject]@{ Enabled = $true; FileName = 'Google.Chrome'; SilentArgs = ''; DownloadUrl = 'https://dl.google.com/chrome/install/ChromeStandaloneSetup64.exe' }) }
+Invoke-UiShot 'edycja-programu' { Show-ProgramEditDialog -IsNew $false -ProgramName 'Google Chrome' -ProgramData ([PSCustomObject]@{ Enabled = $true; FileName = 'ChromeSetup.exe'; SilentArgs = '/silent /install'; WingetId = 'Google.Chrome'; WingetArgs = '--scope machine'; DownloadUrl = 'https://dl.google.com/chrome/install/ChromeStandaloneSetup64.exe' }) }
+Invoke-UiShot 'katalog-winget' { Show-WingetCatalogDialog -Programs $cfg.Programs }
 Invoke-UiShot 'edycja-rejestru' { Show-RegistryEditDialog -IsNew $false -RegData ([PSCustomObject]@{ Path = 'HKLM:\SOFTWARE\MojaFirma'; Name = 'WdrozenieZakonczone'; Value = '1'; PropertyType = 'DWord' }) }
 Invoke-UiShot 'edycja-skryptu' { Show-ScriptEditDialog -IsNew $true -ScriptPath 'SkryptDrukarki.ps1' }
 Invoke-UiShot 'edycja-profilu' { Show-ProfileEditDialog -IsNew $false -ProfileName 'Standard' -ProfileApps @('7-Zip', 'Google Chrome') -config $cfg }
+
+# Puste listy (config.json bez programów): podpowiedź, skąd wziąć programy, zamiast pustej karty.
+Invoke-UiShot 'edycja-profilu-bez-programow' { Show-ProfileEditDialog -IsNew $true -ProfileName '' -ProfileApps @() -config ([PSCustomObject]@{ Programs = [PSCustomObject]@{} }) }
+$realConfigPath = $configPath
+$emptyConfigPath = Join-Path ([System.IO.Path]::GetTempPath()) 'sdt-preview-bez-programow.json'
+try {
+    '{ "DefaultInstallSource": "winget", "Programs": {} }' | Set-Content -Path $emptyConfigPath -Encoding UTF8
+    $configPath = $emptyConfigPath
+    Invoke-UiShot 'wybor-aplikacji-bez-programow' { Show-AppSelectionWindow }
+} finally {
+    $configPath = $realConfigPath
+    Remove-Item -LiteralPath $emptyConfigPath -Force -ErrorAction SilentlyContinue
+}
 
 # Ikona narzędzia (New-AppIconBytes): każdy rozmiar z pliku .ico w skali 1:1 na tle motywu - wersja ze
 # znakiem z czcionki i zapasowa rysowana kreską - oraz sam plik ikona.ico do obejrzenia w Eksploratorze.

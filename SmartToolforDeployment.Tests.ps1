@@ -243,6 +243,91 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
 
             Should -Invoke Write-Log -ParameterFilter { $Text -match "Mało wolnego miejsca na dysku C:" } -Times 1
         }
+
+        It "Program z samym WingetId nie wymaga pliku przy źródle network, a brak winget daje ostrzeżenie" {
+            Mock Get-CimInstance {}
+            Mock Test-Path { return $true }
+            Mock Get-Content { return '{ "DefaultInstallSource": "network", "InstallSourcePaths": { "network": "\\\\srv\\share\\" }, "Programs": { "Google Chrome": { "Enabled": true, "FileName": "", "WingetId": "Google.Chrome" } } }' }
+            Mock Get-WingetPath { return $null }
+            Mock Show-ThemedMessageBox { return [System.Windows.MessageBoxResult]::OK }
+            Mock Write-Log {}
+
+            Test-BeforeRun -SelectedApps @{ "Google Chrome" = $true } -CheckboxControls @{ 'InstallApplications' = [PSCustomObject]@{ IsChecked = $true } } | Out-Null
+
+            Should -Invoke Write-Log -ParameterFilter { $Text -match "Brak 'FileName'" } -Times 0
+            Should -Invoke Write-Log -ParameterFilter { $Text -match "Nie znaleziono programu winget" -and $Text -match "Google Chrome" } -Times 1
+        }
+    }
+
+    Context "Katalog programów winget i źródło instalacji programu" {
+        It "Katalog: unikalne nazwy, aliasy i Winget ID, poprawny format, każda pozycja ma kategorię" {
+            $script:WingetCatalog.Count | Should -BeGreaterThan 30
+            $allNames = @($script:WingetCatalog | ForEach-Object { @($_.Name) + @($_.Aliases) } | ForEach-Object { ([string]$_).ToLowerInvariant() })
+            @($allNames | Select-Object -Unique).Count | Should -Be $allNames.Count
+            $ids = @($script:WingetCatalog | ForEach-Object { $_.WingetId.ToLowerInvariant() })
+            @($ids | Select-Object -Unique).Count | Should -Be $ids.Count
+            foreach ($item in $script:WingetCatalog) {
+                $item.WingetId | Should -Match '^[A-Za-z0-9][\w+-]*(\.[\w+-]+)+$'
+                $item.Category | Should -Not -BeNullOrEmpty
+                $item.Args | Should -BeIn @('', '--scope machine')
+            }
+        }
+
+        It "Źródło: <Case>" -TestCases @(
+            @{ Case = 'własny URL ma pierwszeństwo'; App = @{ FileName = 'a.exe'; WingetId = 'A.B'; DownloadUrl = 'https://x/a.exe' }; Default = 'winget'; Source = 'url'; Id = ''; ArgsText = '' }
+            @{ Case = 'winget globalnie: WingetId i WingetArgs'; App = @{ FileName = 'a.exe'; SilentArgs = '/S'; WingetId = 'A.B'; WingetArgs = '--scope machine' }; Default = 'winget'; Source = 'winget'; Id = 'A.B'; ArgsText = '--scope machine' }
+            @{ Case = 'winget globalnie: dawny zapis ID w FileName'; App = @{ FileName = 'Old.Id'; SilentArgs = '--force' }; Default = 'winget'; Source = 'winget'; Id = 'Old.Id'; ArgsText = '--force' }
+            @{ Case = 'network: plik ma pierwszeństwo przed WingetId'; App = @{ FileName = 'a.exe'; WingetId = 'A.B' }; Default = 'network'; Source = 'network'; Id = ''; ArgsText = '' }
+            @{ Case = 'web bez pliku, z WingetId: winget'; App = @{ FileName = ''; WingetId = 'A.B'; WingetArgs = '--scope machine' }; Default = 'web'; Source = 'winget'; Id = 'A.B'; ArgsText = '--scope machine' }
+            @{ Case = 'brak pliku i WingetId: none'; App = @{ FileName = ''; SilentArgs = '/S' }; Default = 'network'; Source = 'none'; Id = ''; ArgsText = '' }
+            @{ Case = 'winget globalnie bez niczego: none'; App = @{ FileName = '' }; Default = 'winget'; Source = 'none'; Id = ''; ArgsText = '' }
+        ) {
+            param($Case, $App, $Default, $Source, $Id, $ArgsText)
+            $r = Resolve-AppInstallSource -App ([PSCustomObject]$App) -DefaultSource $Default
+            $r.Source | Should -Be $Source
+            $r.WingetId | Should -Be $Id
+            $r.WingetArgs | Should -Be $ArgsText
+        }
+
+        It "Wpis z katalogu ma WingetId bez pliku, a WingetArgs tylko gdy pozycja ich wymaga" {
+            $git = $script:WingetCatalog | Where-Object { $_.Name -eq 'Git' }
+            $chrome = $script:WingetCatalog | Where-Object { $_.Name -eq 'Google Chrome' }
+            $e = New-CatalogProgramEntry -Item $git -Enabled $true
+            $e.Enabled | Should -Be $true
+            $e.FileName | Should -Be ''
+            $e.WingetId | Should -Be 'Git.Git'
+            $e.WingetArgs | Should -Be '--scope machine'
+            (New-CatalogProgramEntry -Item $chrome).Contains('WingetArgs') | Should -Be $false
+            # Taki wpis instaluje się przez winget także przy źródle network (bez pliku na udziale).
+            (Resolve-AppInstallSource -App $e -DefaultSource 'network').Source | Should -Be 'winget'
+        }
+
+        It "Katalog rozpoznaje program już obecny w konfiguracji (nazwa, alias, Winget ID)" {
+            $chrome = $script:WingetCatalog | Where-Object { $_.Name -eq 'Google Chrome' }
+            $sevenZip = $script:WingetCatalog | Where-Object { $_.Name -eq '7-Zip' }
+            $vlc = $script:WingetCatalog | Where-Object { $_.Name -eq 'VLC media player' }
+            $programs = [PSCustomObject]@{
+                'chrome'   = [PSCustomObject]@{ FileName = 'ChromeSetup.exe' }
+                'Archiwum' = [PSCustomObject]@{ FileName = ''; WingetId = '7zip.7zip' }
+                'Odtwarzacz' = [PSCustomObject]@{ FileName = 'VideoLAN.VLC' }
+            }
+            Find-CatalogMatch -Item $chrome -Programs $programs | Should -Be 'chrome'
+            Find-CatalogMatch -Item $sevenZip -Programs $programs | Should -Be 'Archiwum'
+            Find-CatalogMatch -Item $vlc -Programs $programs | Should -Be 'Odtwarzacz'
+            Find-CatalogMatch -Item ($script:WingetCatalog | Where-Object { $_.Name -eq 'Git' }) -Programs $programs | Should -BeNullOrEmpty
+        }
+
+        It "config.example.json: profile wskazują istniejące programy, Winget ID są z katalogu" {
+            $example = Get-Content "$PSScriptRoot\config.example.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+            $names = @($example.Programs.PSObject.Properties.Name)
+            foreach ($prof in $example.Profiles.PSObject.Properties) {
+                foreach ($appName in @($prof.Value)) { $names | Should -Contain $appName }
+            }
+            $catalogIds = @($script:WingetCatalog | ForEach-Object { $_.WingetId })
+            foreach ($prog in $example.Programs.PSObject.Properties) {
+                if ($prog.Value.WingetId) { $catalogIds | Should -Contain $prog.Value.WingetId }
+            }
+        }
     }
 
     Context "Wstrzymywanie hibernacji (Suspend-Hibernation)" {

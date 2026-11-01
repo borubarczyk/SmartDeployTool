@@ -2048,6 +2048,18 @@ function Ensure-Configuration {
             $msg = "Nie znaleziono pliku konfiguracyjnego. Zostanie utworzony domyślny szablon w lokalizacji:`n$configPath`n`nMożesz go później edytować w Ustawieniach."
             Show-ThemedMessageBox -Message $msg -Title "Tworzenie konfiguracji" -Button "OK" -Image "Information" | Out-Null
             
+            # Na start kilka popularnych programów z katalogu winget: instalują się bez plików na udziale,
+            # więc profile poniżej mają co zaznaczyć (wcześniej lista programów była pusta, a profile
+            # wskazywały programy, których nie było). Kolejne: Ustawienia -> Programy -> Dodaj z katalogu.
+            $starterPrograms = [ordered]@{}
+            foreach ($starter in @(
+                    @{ Name = 'Google Chrome'; Enabled = $true }, @{ Name = '7-Zip'; Enabled = $true }, @{ Name = 'Adobe Acrobat Reader'; Enabled = $true },
+                    @{ Name = 'Mozilla Firefox'; Enabled = $false }, @{ Name = 'Notepad++'; Enabled = $false }, @{ Name = 'VLC media player'; Enabled = $false },
+                    @{ Name = 'LibreOffice'; Enabled = $false }, @{ Name = 'PowerToys'; Enabled = $false }
+                )) {
+                $starterItem = @($script:WingetCatalog | Where-Object { $_.Name -eq $starter.Name })[0]
+                if ($null -ne $starterItem) { $starterPrograms[$starterItem.Name] = New-CatalogProgramEntry -Item $starterItem -Enabled $starter.Enabled }
+            }
             $defaultConfig = [ordered]@{
                 DefaultInstallSource = "network"
                 InstallSourcePaths = @{ network = "\\server\share\"; web = "https://example.com/apps/" }
@@ -2059,10 +2071,10 @@ function Ensure-Configuration {
                 TeamViewer = @{ FileName = ""; Arguments = "" }
                 AntyVirus = @{ DefaultInstallSource = "network"; InstallSourcePaths = @{ network = ""; web = "" }; Credentials = @{ Username = ""; Password = "" }; FileName = "" }
                 WiFiProfile = @{ FileName = "" }
-                Programs = @{}
+                Programs = $starterPrograms
                 Profiles = @{
-                    "Standard" = @("Chrome", "7zip", "PowerToys")
-                    "Księgowość" = @("Chrome", "7zip", "Szafir_KIR", "AdobeReader")
+                    "Standard" = @("Google Chrome", "7-Zip", "Adobe Acrobat Reader")
+                    "Księgowość" = @("Google Chrome", "7-Zip", "Adobe Acrobat Reader", "LibreOffice")
                 }
                 PostInstallScripts = @()
                 HardwareAudit = @{ ExportPath = "C:\Audit\" }
@@ -2303,6 +2315,124 @@ function Join-InstallSource {
     return (Join-Path $BasePath $FileName)
 }
 
+# --- Katalog programów winget (Ustawienia -> Programy -> "Dodaj z katalogu winget...") ---
+# Identyfikatory sprawdzone w repozytorium winget-pkgs (listopad 2026). Program z katalogu ma tylko
+# WingetId (bez FileName), więc instaluje się przez winget niezależnie od globalnego źródła - nie
+# trzeba trzymać jego instalatora na udziale. Args = dodatkowe argumenty winget: "--scope machine"
+# tam, gdzie pakiet ma też instalator tylko dla bieżącego użytkownika (wdrożenie ma objąć wszystkich).
+# Aliases = nazwy, pod którymi program bywa już w config.json (np. "Chrome") - katalog pokazuje go
+# wtedy jako już dodany. Celowo pominięte: Microsoft Teams i Slack (w winget tylko instalacja dla
+# jednego użytkownika), Oracle Java 8 (licencja komercyjna; jest Temurin 8), FortiClient (brak w winget).
+$script:WingetCatalog = @(
+    [pscustomobject]@{ Name = 'Google Chrome'; WingetId = 'Google.Chrome'; Category = 'Przeglądarki'; Args = ''; Note = ''; Aliases = @('Chrome', 'GoogleChrome') }
+    [pscustomobject]@{ Name = 'Mozilla Firefox'; WingetId = 'Mozilla.Firefox.pl'; Category = 'Przeglądarki'; Args = ''; Note = 'Polska wersja językowa.'; Aliases = @('Firefox', 'MozillaFirefox') }
+    [pscustomobject]@{ Name = 'Mozilla Thunderbird'; WingetId = 'Mozilla.Thunderbird.pl'; Category = 'Poczta i komunikacja'; Args = ''; Note = 'Polska wersja językowa.'; Aliases = @('Thunderbird', 'MozillaThunderbird') }
+    [pscustomobject]@{ Name = 'Zoom Workplace'; WingetId = 'Zoom.Zoom'; Category = 'Poczta i komunikacja'; Args = ''; Note = ''; Aliases = @('Zoom') }
+    [pscustomobject]@{ Name = 'Microsoft 365 Apps'; WingetId = 'Microsoft.Office'; Category = 'Biuro i PDF'; Args = ''; Note = 'Wymaga licencji Microsoft 365. Domyślna konfiguracja Microsoft - bez wyboru języka i kanału aktualizacji.'; Aliases = @('Office_M365', 'Office365', 'Microsoft365', 'M365') }
+    [pscustomobject]@{ Name = 'LibreOffice'; WingetId = 'TheDocumentFoundation.LibreOffice'; Category = 'Biuro i PDF'; Args = ''; Note = ''; Aliases = @('Libre_Office') }
+    [pscustomobject]@{ Name = 'Adobe Acrobat Reader'; WingetId = 'Adobe.Acrobat.Reader.64-bit'; Category = 'Biuro i PDF'; Args = ''; Note = 'Wersja 64-bitowa.'; Aliases = @('AdobeReader', 'AcrobatReader', 'Adobe_Reader') }
+    [pscustomobject]@{ Name = 'Foxit PDF Reader'; WingetId = 'Foxit.FoxitReader'; Category = 'Biuro i PDF'; Args = ''; Note = ''; Aliases = @('FoxitReader', 'Foxit') }
+    [pscustomobject]@{ Name = 'SumatraPDF'; WingetId = 'SumatraPDF.SumatraPDF'; Category = 'Biuro i PDF'; Args = '--scope machine'; Note = ''; Aliases = @('Sumatra') }
+    [pscustomobject]@{ Name = 'Notepad++'; WingetId = 'Notepad++.Notepad++'; Category = 'Biuro i PDF'; Args = ''; Note = ''; Aliases = @('NotepadPlusPlus', 'Notepadpp') }
+    [pscustomobject]@{ Name = 'Dropbox'; WingetId = 'Dropbox.Dropbox'; Category = 'Chmura'; Args = ''; Note = ''; Aliases = @() }
+    [pscustomobject]@{ Name = 'Google Drive'; WingetId = 'Google.GoogleDrive'; Category = 'Chmura'; Args = ''; Note = ''; Aliases = @('GoogleDrive') }
+    [pscustomobject]@{ Name = 'Microsoft OneDrive'; WingetId = 'Microsoft.OneDrive'; Category = 'Chmura'; Args = '--scope machine'; Note = ''; Aliases = @('OneDrive') }
+    [pscustomobject]@{ Name = '7-Zip'; WingetId = '7zip.7zip'; Category = 'Narzędzia'; Args = ''; Note = ''; Aliases = @('7zip', '7z') }
+    [pscustomobject]@{ Name = 'PowerToys'; WingetId = 'Microsoft.PowerToys'; Category = 'Narzędzia'; Args = '--scope machine'; Note = ''; Aliases = @('Microsoft_PowerToys') }
+    [pscustomobject]@{ Name = 'Everything'; WingetId = 'voidtools.Everything'; Category = 'Narzędzia'; Args = ''; Note = 'Szybkie wyszukiwanie plików.'; Aliases = @() }
+    [pscustomobject]@{ Name = 'TreeSize Free'; WingetId = 'JAMSoftware.TreeSize.Free'; Category = 'Narzędzia'; Args = '--scope machine'; Note = ''; Aliases = @('TreeSize', 'TreeSizeFree') }
+    [pscustomobject]@{ Name = 'WinMerge'; WingetId = 'WinMerge.WinMerge'; Category = 'Narzędzia'; Args = '--scope machine'; Note = ''; Aliases = @() }
+    [pscustomobject]@{ Name = 'Total Commander'; WingetId = 'Ghisler.TotalCommander'; Category = 'Narzędzia'; Args = '--scope machine'; Note = 'Shareware - do użytku w firmie potrzebna licencja.'; Aliases = @('TotalCommander', 'TotalCmd') }
+    [pscustomobject]@{ Name = 'Double Commander'; WingetId = 'alexx2000.DoubleCommander'; Category = 'Narzędzia'; Args = ''; Note = ''; Aliases = @('DoubleCommander', 'DoubleCmd') }
+    [pscustomobject]@{ Name = 'Greenshot'; WingetId = 'Greenshot.Greenshot'; Category = 'Narzędzia'; Args = '--scope machine'; Note = 'Zrzuty ekranu.'; Aliases = @() }
+    [pscustomobject]@{ Name = 'ShareX'; WingetId = 'ShareX.ShareX'; Category = 'Narzędzia'; Args = '--scope machine'; Note = 'Zrzuty i nagrania ekranu.'; Aliases = @() }
+    [pscustomobject]@{ Name = 'PowerShell 7'; WingetId = 'Microsoft.PowerShell'; Category = 'Administracja i zdalny dostęp'; Args = ''; Note = ''; Aliases = @('PowerShell_7', 'PowerShell7', 'pwsh') }
+    [pscustomobject]@{ Name = 'WinSCP'; WingetId = 'WinSCP.WinSCP'; Category = 'Administracja i zdalny dostęp'; Args = '--scope machine'; Note = ''; Aliases = @() }
+    [pscustomobject]@{ Name = 'PuTTY'; WingetId = 'PuTTY.PuTTY'; Category = 'Administracja i zdalny dostęp'; Args = ''; Note = ''; Aliases = @() }
+    [pscustomobject]@{ Name = 'mRemoteNG'; WingetId = 'mRemoteNG.mRemoteNG'; Category = 'Administracja i zdalny dostęp'; Args = ''; Note = 'Ostatnia stabilna wersja pochodzi z 2019 r.'; Aliases = @() }
+    [pscustomobject]@{ Name = 'AnyDesk'; WingetId = 'AnyDesk.AnyDesk'; Category = 'Administracja i zdalny dostęp'; Args = ''; Note = 'Do użytku w firmie potrzebna licencja.'; Aliases = @() }
+    [pscustomobject]@{ Name = 'KeePassXC'; WingetId = 'KeePassXCTeam.KeePassXC'; Category = 'Bezpieczeństwo'; Args = ''; Note = ''; Aliases = @() }
+    [pscustomobject]@{ Name = 'KeePass'; WingetId = 'DominikReichl.KeePass'; Category = 'Bezpieczeństwo'; Args = ''; Note = ''; Aliases = @('KeePass2') }
+    [pscustomobject]@{ Name = 'VLC media player'; WingetId = 'VideoLAN.VLC'; Category = 'Multimedia i grafika'; Args = ''; Note = ''; Aliases = @('VLC') }
+    [pscustomobject]@{ Name = 'paint.net'; WingetId = 'dotPDN.PaintDotNet'; Category = 'Multimedia i grafika'; Args = ''; Note = ''; Aliases = @('PaintNET', 'PaintDotNet') }
+    [pscustomobject]@{ Name = 'IrfanView'; WingetId = 'IrfanSkiljan.IrfanView'; Category = 'Multimedia i grafika'; Args = ''; Note = 'Bezpłatny tylko do użytku prywatnego - w firmie potrzebna licencja.'; Aliases = @() }
+    [pscustomobject]@{ Name = 'Java 21 (Temurin JRE)'; WingetId = 'EclipseAdoptium.Temurin.21.JRE'; Category = 'Środowiska uruchomieniowe'; Args = ''; Note = 'Eclipse Temurin - darmowa Java bez licencji Oracle.'; Aliases = @('Java21', 'Temurin21') }
+    [pscustomobject]@{ Name = 'Java 8 (Temurin JRE)'; WingetId = 'EclipseAdoptium.Temurin.8.JRE'; Category = 'Środowiska uruchomieniowe'; Args = ''; Note = 'Darmowy zamiennik Oracle Java 8 dla starszych aplikacji.'; Aliases = @('Java', 'Java8', 'JRE8') }
+    [pscustomobject]@{ Name = '.NET Desktop Runtime 10'; WingetId = 'Microsoft.DotNet.DesktopRuntime.10'; Category = 'Środowiska uruchomieniowe'; Args = ''; Note = 'Aktualna wersja LTS.'; Aliases = @('DotNet10', 'DotNetDesktop10') }
+    [pscustomobject]@{ Name = '.NET Desktop Runtime 8'; WingetId = 'Microsoft.DotNet.DesktopRuntime.8'; Category = 'Środowiska uruchomieniowe'; Args = ''; Note = 'Wsparcie Microsoft kończy się 10.11.2026 - tylko dla aplikacji, które go wymagają.'; Aliases = @('DotNet8', 'DotNetDesktop8') }
+    [pscustomobject]@{ Name = 'Visual C++ Redistributable (x64)'; WingetId = 'Microsoft.VCRedist.2015+.x64'; Category = 'Środowiska uruchomieniowe'; Args = ''; Note = 'Wersja 2015-2022 (v14).'; Aliases = @('VCRedist', 'VCRedist_x64', 'VCRedistX64') }
+    [pscustomobject]@{ Name = 'Visual Studio Code'; WingetId = 'Microsoft.VisualStudioCode'; Category = 'Programowanie'; Args = '--scope machine'; Note = ''; Aliases = @('VSCode', 'VS_Code') }
+    [pscustomobject]@{ Name = 'Git'; WingetId = 'Git.Git'; Category = 'Programowanie'; Args = '--scope machine'; Note = ''; Aliases = @('GitForWindows') }
+    [pscustomobject]@{ Name = 'Python 3.13'; WingetId = 'Python.Python.3.13'; Category = 'Programowanie'; Args = '--scope machine'; Note = ''; Aliases = @('Python', 'Python3') }
+)
+
+# Wpis programu z katalogu w formacie config.json (Programs.<nazwa>).
+function global:New-CatalogProgramEntry {
+    param([Parameter(Mandatory)]$Item, [bool]$Enabled = $false)
+    $entry = [ordered]@{ Enabled = $Enabled; FileName = ''; SilentArgs = ''; WingetId = [string]$Item.WingetId }
+    if (-not [string]::IsNullOrWhiteSpace([string]$Item.Args)) { $entry.WingetArgs = [string]$Item.Args }
+    return $entry
+}
+
+# Nazwa programu z config.json, który jest już tą pozycją katalogu (ta sama nazwa, alias albo Winget ID
+# w polu WingetId / FileName), albo $null. Bez rozróżniania wielkości liter.
+function global:Find-CatalogMatch {
+    param([Parameter(Mandatory)]$Item, $Programs)
+    if ($null -eq $Programs) { return $null }
+    $names = @([string]$Item.Name) + @($Item.Aliases | ForEach-Object { [string]$_ })
+    foreach ($prop in $Programs.PSObject.Properties) {
+        if ($names -contains $prop.Name) { return $prop.Name }
+        $p = $prop.Value
+        if ($null -eq $p) { continue }
+        foreach ($id in @([string]$p.WingetId, [string]$p.FileName)) {
+            if (-not [string]::IsNullOrWhiteSpace($id) -and $id -eq [string]$Item.WingetId) { return $prop.Name }
+        }
+    }
+    return $null
+}
+
+# Skąd zainstalować program. Kolejność:
+#   1. własny adres URL (DownloadUrl)                      -> 'url'
+#   2. globalne źródło winget                              -> 'winget', ID = WingetId, a bez niego FileName
+#                                                             (dawny zapis: Winget ID w polu FileName)
+#   3. globalne źródło network / web i jest FileName       -> 'network' / 'web' (plik ma pierwszeństwo)
+#   4. bez FileName, ale z WingetId (np. program z katalogu) -> 'winget' mimo innego źródła globalnego
+#   5. nic z powyższych                                    -> 'none' (błąd walidacji)
+# Argumenty winget: WingetArgs, gdy ID pochodzi z WingetId; przy dawnym zapisie (ID w FileName) - SilentArgs.
+function global:Resolve-AppInstallSource {
+    param($App, [string]$DefaultSource)
+    $downloadUrl = [string]$App.DownloadUrl
+    $fileName = [string]$App.FileName
+    $wingetId = [string]$App.WingetId
+    if (-not [string]::IsNullOrWhiteSpace($downloadUrl)) { return [pscustomobject]@{ Source = 'url'; WingetId = ''; WingetArgs = '' } }
+    $hasWingetId = -not [string]::IsNullOrWhiteSpace($wingetId)
+    if ($DefaultSource -eq 'winget') {
+        if ($hasWingetId) { return [pscustomobject]@{ Source = 'winget'; WingetId = $wingetId.Trim(); WingetArgs = [string]$App.WingetArgs } }
+        if (-not [string]::IsNullOrWhiteSpace($fileName)) { return [pscustomobject]@{ Source = 'winget'; WingetId = $fileName.Trim(); WingetArgs = [string]$App.SilentArgs } }
+        return [pscustomobject]@{ Source = 'none'; WingetId = ''; WingetArgs = '' }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($fileName)) { return [pscustomobject]@{ Source = $DefaultSource; WingetId = ''; WingetArgs = '' } }
+    if ($hasWingetId) { return [pscustomobject]@{ Source = 'winget'; WingetId = $wingetId.Trim(); WingetArgs = [string]$App.WingetArgs } }
+    return [pscustomobject]@{ Source = 'none'; WingetId = ''; WingetArgs = '' }
+}
+
+# Pełna ścieżka winget.exe albo $null. Zwykle jest na PATH (alias z WindowsApps); na koncie SYSTEM
+# albo w świeżym profilu aliasu brak, ale pakiet "Instalator aplikacji" leży w Program Files\WindowsApps.
+function global:Get-WingetPath {
+    $cmd = Get-Command -Name 'winget.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -ne $cmd) { return [string]$cmd.Source }
+    try {
+        $appsDir = Join-Path $env:ProgramFiles 'WindowsApps'
+        $pkg = Get-ChildItem -LiteralPath $appsDir -Directory -Filter 'Microsoft.DesktopAppInstaller_*_8wekyb3d8bbwe' -ErrorAction SilentlyContinue |
+            Sort-Object { try { [version]($_.Name.Split('_')[1]) } catch { [version]'0.0' } } -Descending
+        foreach ($dir in @($pkg)) {
+            $exe = Join-Path $dir.FullName 'winget.exe'
+            if (Test-Path -LiteralPath $exe) { return $exe }
+        }
+    } catch {}
+    return $null
+}
+
 # Kody wyjścia instalatorów uznawane za sukces:
 #   0    - sukces
 #   1641 - sukces, instalator MSI sam zainicjował restart
@@ -2364,6 +2494,8 @@ function Test-BeforeRun {
     if ($errors.Count -eq 0) {
         $source = $config.DefaultInstallSource
         $sourcePath = $config.InstallSourcePaths.$source
+        # Pozycje, które zainstaluje winget - na końcu sprawdzamy, czy winget w ogóle jest na komputerze.
+        $wingetNeededBy = New-Object System.Collections.Generic.List[string]
 
         switch ($source) {
             'network' {
@@ -2393,12 +2525,15 @@ function Test-BeforeRun {
                 foreach ($appName in $SelectedApps.Keys) {
                     $app = $config.Programs.$appName
                     if ($null -eq $app) { $errors.Add("Brak konfiguracji dla aplikacji '$appName'.") | Out-Null; continue }
+                    $resolved = Resolve-AppInstallSource -App $app -DefaultSource $source
                     # Własny adres URL programu (DownloadUrl) nadpisuje globalne źródło - wtedy sprawdzamy tylko ten adres.
-                    if (-not [string]::IsNullOrWhiteSpace([string]$app.DownloadUrl)) {
+                    if ($resolved.Source -eq 'url') {
                         if (-not (Test-UrlValid -Url ([string]$app.DownloadUrl))) { $errors.Add("Niepoprawny własny URL (DownloadUrl) dla '$appName': $($app.DownloadUrl)") | Out-Null }
                         continue
                     }
-                    if ([string]::IsNullOrWhiteSpace($app.FileName)) { $errors.Add("Brak 'FileName' dla '$appName'.") | Out-Null; continue }
+                    if ($resolved.Source -eq 'none') { $errors.Add("Brak 'FileName' dla '$appName' (ani 'WingetId' do instalacji przez winget).") | Out-Null; continue }
+                    # Program instalowany przez winget (np. z katalogu) nie potrzebuje pliku na udziale ani w sieci.
+                    if ($resolved.Source -eq 'winget') { $wingetNeededBy.Add($appName) | Out-Null; continue }
                     if ($source -eq 'network') {
                         $full = Join-Path $sourcePath $app.FileName
                         if (-not (Test-Path -LiteralPath $full)) { $errors.Add("Nie znaleziono pliku dla '$appName': ${full}") | Out-Null }
@@ -2424,6 +2559,19 @@ function Test-BeforeRun {
 
         if ($CheckboxControls.ContainsKey('InstallAV') -and $CheckboxControls['InstallAV'].IsChecked -eq $true) {
             if (-not $config.AntyVirus -or [string]::IsNullOrWhiteSpace($config.AntyVirus.FileName)) { $errors.Add("Brak konfiguracji antywirusa lub FileName.") | Out-Null }
+            else {
+                $avSource = if ($config.AntyVirus.DefaultInstallSource) { [string]$config.AntyVirus.DefaultInstallSource } else { $source }
+                if ($avSource -eq 'winget') { $wingetNeededBy.Add('Antywirus') | Out-Null }
+            }
+        }
+        if ($source -eq 'winget' -and $CheckboxControls.ContainsKey('InstallTeamViewer') -and $CheckboxControls['InstallTeamViewer'].IsChecked -eq $true) {
+            $wingetNeededBy.Add('TeamViewer') | Out-Null
+        }
+        # Brak winget to ostrzeżenie, nie błąd: pozostałe zadania mogą się wykonać, a te pozycje zapiszą
+        # w logu czytelny błąd. Na świeżym Windows winget bywa niedostępny przez pierwsze minuty po
+        # zalogowaniu (Instalator aplikacji rejestruje się w tle) albo jest za stary.
+        if ($wingetNeededBy.Count -gt 0 -and [string]::IsNullOrWhiteSpace((Get-WingetPath))) {
+            $warnings.Add("Nie znaleziono programu winget (Instalator aplikacji). Przez winget nie zainstalują się: $($wingetNeededBy -join ', '). Zaktualizuj Instalator aplikacji w Microsoft Store albo odznacz te pozycje.") | Out-Null
         }
 
         if ($CheckboxControls.ContainsKey('ImportWiFiProfile') -and $CheckboxControls['ImportWiFiProfile'].IsChecked -eq $true) {
@@ -2483,18 +2631,26 @@ function Install-SelectedApps {
         $localPath = $null
 
         try {
-            # Własny adres URL programu (pole "Zawsze pobieraj z niestandardowego adresu URL" w edytorze)
-            # ma pierwszeństwo przed globalnym źródłem. Wcześniej był zapisywany, ale nigdy nieużywany.
-            $appSource = if (-not [string]::IsNullOrWhiteSpace($downloadUrl)) { 'url' } else { $source }
+            # Źródło programu: własny adres URL (pole "Zawsze pobieraj z niestandardowego adresu URL"),
+            # winget (globalne źródło albo sam WingetId, np. program z katalogu) albo plik z udziału / web.
+            $resolved = Resolve-AppInstallSource -App $app -DefaultSource $source
+            $appSource = $resolved.Source
 
-            if ($appSource -eq 'winget') {
-                $cmdArgs = "install --id `"$fileName`" -e --silent --accept-package-agreements --accept-source-agreements $silentArgs"
+            if ($appSource -eq 'none') {
+                Write-Log "Pominięto $($appName): brak FileName i WingetId w config.json." -IsError
+            } elseif ($appSource -eq 'winget') {
+                $cmdArgs = "install --id `"$($resolved.WingetId)`" -e --silent --accept-package-agreements --accept-source-agreements $($resolved.WingetArgs)".TrimEnd()
                 if ($script:DryRun) {
                     Write-Log "[DRY-RUN] Zainstalowano by $appName przez Winget: winget $cmdArgs"
                 } else {
-                    Write-Log "Instalacja $appName (Winget)..."
-                    $exitCode = Start-ProcessWithEvents -FilePath "winget.exe" -ArgumentList $cmdArgs
-                    Write-InstallResult -Name $appName -ExitCode $exitCode -Winget | Out-Null
+                    $wingetExe = Get-WingetPath
+                    if ([string]::IsNullOrWhiteSpace($wingetExe)) {
+                        Write-Log "Nie zainstalowano $($appName): brak programu winget (Instalator aplikacji) na tym komputerze." -IsError
+                    } else {
+                        Write-Log "Instalacja $appName (Winget: $($resolved.WingetId))..."
+                        $exitCode = Start-ProcessWithEvents -FilePath $wingetExe -ArgumentList $cmdArgs
+                        Write-InstallResult -Name $appName -ExitCode $exitCode -Winget | Out-Null
+                    }
                 }
             } else {
                 $fullPath = if ($appSource -eq 'url') { $downloadUrl } else { Join-InstallSource -BasePath $sourcePath -FileName $fileName }
@@ -2664,7 +2820,10 @@ function Install-TeamViewer {
 
         if ($source -eq 'winget') {
             Write-Log "Instalacja TeamViewer przez Winget..."
-            $exitCode = Start-ProcessWithEvents -FilePath "winget.exe" -ArgumentList "install --id `"$fileName`" -e --silent --accept-package-agreements --accept-source-agreements $msiArgs"
+            # Pełna ścieżka winget (też na koncie SYSTEM); bez niej zwykłe wywołanie po nazwie.
+            $wingetExe = Get-WingetPath
+            if ([string]::IsNullOrWhiteSpace($wingetExe)) { $wingetExe = 'winget.exe' }
+            $exitCode = Start-ProcessWithEvents -FilePath $wingetExe -ArgumentList "install --id `"$fileName`" -e --silent --accept-package-agreements --accept-source-agreements $msiArgs"
             Write-InstallResult -Name "TeamViewer" -ExitCode $exitCode -Winget | Out-Null
         } else {
             $sourceFile = Join-InstallSource -BasePath $sourcePath -FileName $fileName
@@ -2732,7 +2891,10 @@ function Install-AV {
 
         if ($source -eq 'winget') {
             Write-Log "Instalacja antywirusa przez Winget..."
-            $exitCode = Start-ProcessWithEvents -FilePath "winget.exe" -ArgumentList "install --id `"$fileName`" -e --silent --accept-package-agreements --accept-source-agreements"
+            # Pełna ścieżka winget (też na koncie SYSTEM); bez niej zwykłe wywołanie po nazwie.
+            $wingetExe = Get-WingetPath
+            if ([string]::IsNullOrWhiteSpace($wingetExe)) { $wingetExe = 'winget.exe' }
+            $exitCode = Start-ProcessWithEvents -FilePath $wingetExe -ArgumentList "install --id `"$fileName`" -e --silent --accept-package-agreements --accept-source-agreements"
             Write-InstallResult -Name "Antywirus" -ExitCode $exitCode -Winget | Out-Null
             return
         }
@@ -3899,9 +4061,12 @@ function Show-AppSelectionWindow {
 
         <Border Grid.Row="2" Style="{StaticResource Card}" Padding="14,10,4,10">
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                <!-- Bez ItemWidth: przy ItemWidth ukryte (Collapsed) pozycje nadal zajmują miejsce w wierszu
-                     i wyniki wyszukiwania rozsypywały się z dziurami. Szerokość ma każda pozycja. -->
-                <WrapPanel Name="spApps"/>
+                <StackPanel>
+                    <!-- Bez ItemWidth: przy ItemWidth ukryte (Collapsed) pozycje nadal zajmują miejsce w wierszu
+                         i wyniki wyszukiwania rozsypywały się z dziurami. Szerokość ma każda pozycja. -->
+                    <WrapPanel Name="spApps"/>
+                    <TextBlock Name="txtNoApps" Visibility="Collapsed" Style="{StaticResource HintText}" Margin="0,6,10,6"/>
+                </StackPanel>
             </ScrollViewer>
         </Border>
 
@@ -3925,6 +4090,7 @@ function Show-AppSelectionWindow {
     $btnCancel = $popup.FindName("btnCancel")
     $txtSearch = $popup.FindName("txtSearch")
     $txtSelectedApps = $popup.FindName("txtSelectedApps")
+    $txtNoApps = $popup.FindName("txtNoApps")
 
     $checkboxes = @{}
     $updateSelectedCount = { $txtSelectedApps.Text = "Wybrano: $(@($checkboxes.Values | Where-Object { $_.IsChecked -eq $true }).Count) z $($checkboxes.Count)" }
@@ -3948,15 +4114,30 @@ function Show-AppSelectionWindow {
         $checkboxes[$name] = $cb
     }
     & $updateSelectedCount
+    # Pusta lista (brak programów w config.json) albo brak wyników wyszukiwania: podpowiedź zamiast pustej karty.
+    $noAppsText = "Brak programów w config.json. Dodaj je w Ustawieniach, w zakładce Programy - własne instalatory albo gotowe programy z katalogu winget."
+    if ($checkboxes.Count -eq 0) {
+        $txtNoApps.Text = $noAppsText
+        $txtNoApps.Visibility = [System.Windows.Visibility]::Visible
+    }
 
     $txtSearch.Add_TextChanged({
         $filter = $txtSearch.Text.ToLower()
+        $visibleCount = 0
         foreach ($cb in $checkboxes.Values) {
             if ($cb.Content.ToLower().Contains($filter)) {
                 $cb.Visibility = [System.Windows.Visibility]::Visible
+                $visibleCount++
             } else {
                 $cb.Visibility = [System.Windows.Visibility]::Collapsed
             }
+        }
+        if ($checkboxes.Count -eq 0) { return }
+        if ($visibleCount -eq 0) {
+            $txtNoApps.Text = "Brak aplikacji pasujących do $([char]0x201E)$($txtSearch.Text.Trim())$([char]0x201D)."
+            $txtNoApps.Visibility = [System.Windows.Visibility]::Visible
+        } else {
+            $txtNoApps.Visibility = [System.Windows.Visibility]::Collapsed
         }
     })
 
@@ -6121,10 +6302,36 @@ function Show-ProgramEditDialog {
         <StackPanel Grid.Row="1">
             <TextBlock Text="Identyfikator (np. Chrome)" Style="{StaticResource Caption}"/>
             <TextBox Name="txtName" Margin="0,0,0,12"/>
-            <TextBlock Text="Nazwa pliku / Winget ID" Style="{StaticResource Caption}"/>
-            <TextBox Name="txtFile" Margin="0,0,0,12"/>
-            <TextBlock Text="Argumenty cichej instalacji" Style="{StaticResource Caption}"/>
-            <TextBox Name="txtArgs" Margin="0,0,0,16"/>
+            <!-- Plik instalatora i Winget ID obok swoich argumentów: dwie kolumny zamiast czterech wierszy,
+                 żeby okno zmieściło się w pionie na 1366x768 przy 150%. -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="12"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,0,12">
+                    <TextBlock Text="Plik instalatora (udział / web)" Style="{StaticResource Caption}"/>
+                    <TextBox Name="txtFile" ToolTip="Nazwa pliku w folderze źródła (np. ChromeSetup.exe). Przy źródle winget: Winget ID, jeśli pole Winget ID jest puste."/>
+                </StackPanel>
+                <StackPanel Grid.Row="0" Grid.Column="2" Margin="0,0,0,12">
+                    <TextBlock Text="Argumenty cichej instalacji" Style="{StaticResource Caption}"/>
+                    <TextBox Name="txtArgs" ToolTip="Argumenty instalatora z pliku (np. /S albo /qn /norestart)."/>
+                </StackPanel>
+                <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,0,6">
+                    <TextBlock Text="Winget ID (np. Google.Chrome)" Style="{StaticResource Caption}"/>
+                    <TextBox Name="txtWingetId" ToolTip="Identyfikator pakietu winget. Bez pliku instalatora program instaluje się przez winget przy każdym źródle globalnym."/>
+                </StackPanel>
+                <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,0,0,6">
+                    <TextBlock Text="Dodatkowe argumenty winget" Style="{StaticResource Caption}"/>
+                    <TextBox Name="txtWingetArgs" ToolTip="Np. --scope machine (instalacja dla wszystkich użytkowników)."/>
+                </StackPanel>
+            </Grid>
+            <TextBlock Text="Plik ma pierwszeństwo przy źródle udział / web. Bez pliku program instaluje się przez winget." Style="{StaticResource HintText}" Margin="0,0,0,14"/>
             <CheckBox Name="chkForceUrl" Content="Zawsze pobieraj z niestandardowego adresu URL" Margin="0,0,0,8" ToolTip="Nadpisuje globalne źródło instalacji dla tego konkretnego programu."/>
             <TextBox Name="txtUrl" Margin="24,0,0,16" IsEnabled="False" ToolTip="Pełny bezpośredni adres URL do instalatora (np. https://.../plik.exe)"/>
             <CheckBox Name="chkEnabled" Content="Domyślnie zaznaczone do instalacji"/>
@@ -6144,6 +6351,8 @@ function Show-ProgramEditDialog {
     $txtName = $dlg.FindName("txtName")
     $txtFile = $dlg.FindName("txtFile")
     $txtArgs = $dlg.FindName("txtArgs")
+    $txtWingetId = $dlg.FindName("txtWingetId")
+    $txtWingetArgs = $dlg.FindName("txtWingetArgs")
     $chkForceUrl = $dlg.FindName("chkForceUrl")
     $txtUrl = $dlg.FindName("txtUrl")
     $chkEnabled = $dlg.FindName("chkEnabled")
@@ -6154,6 +6363,7 @@ function Show-ProgramEditDialog {
     if (-not $IsNew) { $txtName.IsReadOnly = $true; $txtName.Opacity = 0.6 }
     if ($ProgramData) { $txtFile.Text = $ProgramData.FileName }
     if ($ProgramData) { $txtArgs.Text = $ProgramData.SilentArgs }
+    if ($ProgramData) { $txtWingetId.Text = [string]$ProgramData.WingetId; $txtWingetArgs.Text = [string]$ProgramData.WingetArgs }
     if ($ProgramData) { $chkEnabled.IsChecked = [bool]$ProgramData.Enabled } else { $chkEnabled.IsChecked = $true }
     if ($ProgramData -and -not [string]::IsNullOrWhiteSpace($ProgramData.DownloadUrl)) {
         $chkForceUrl.IsChecked = $true
@@ -6172,14 +6382,28 @@ function Show-ProgramEditDialog {
             Show-ThemedMessageBox -Message "Identyfikator nie może być pusty." -Title "Błąd" -Button "OK" -Image "Warning" | Out-Null
             return
         }
+        $data = [ordered]@{
+            Enabled = $chkEnabled.IsChecked -eq $true
+            FileName = $txtFile.Text.Trim()
+            SilentArgs = $txtArgs.Text.Trim()
+            DownloadUrl = if ($chkForceUrl.IsChecked -eq $true) { $txtUrl.Text.Trim() } else { "" }
+        }
+        # Pola winget zapisujemy tylko, gdy są wypełnione - wpisy bez winget wyglądają w config.json jak dawniej.
+        if (-not [string]::IsNullOrWhiteSpace($txtWingetId.Text)) { $data.WingetId = $txtWingetId.Text.Trim() }
+        if (-not [string]::IsNullOrWhiteSpace($txtWingetArgs.Text)) { $data.WingetArgs = $txtWingetArgs.Text.Trim() }
+        # Pozostałe pola wpisu (np. dodane ręcznie w config.json) przechodzą bez zmian - edycja ich nie gubi.
+        # Wpis bywa obiektem z JSON albo słownikiem (dodany w tym oknie przed zapisem pliku).
+        if ($ProgramData) {
+            $known = @('Enabled', 'FileName', 'SilentArgs', 'DownloadUrl', 'WingetId', 'WingetArgs')
+            if ($ProgramData -is [System.Collections.IDictionary]) {
+                foreach ($key in @($ProgramData.Keys)) { if ([string]$key -notin $known) { $data[[string]$key] = $ProgramData[$key] } }
+            } else {
+                foreach ($prop in $ProgramData.PSObject.Properties) { if ($prop.Name -notin $known) { $data[$prop.Name] = $prop.Value } }
+            }
+        }
         $script:progEditResult = @{
             Name = $txtName.Text.Trim()
-            Data = [ordered]@{
-                Enabled = $chkEnabled.IsChecked -eq $true
-                FileName = $txtFile.Text.Trim()
-                SilentArgs = $txtArgs.Text.Trim()
-                DownloadUrl = if ($chkForceUrl.IsChecked -eq $true) { $txtUrl.Text.Trim() } else { "" }
-            }
+            Data = $data
         }
         $dlg.DialogResult = $true
         $dlg.Close()
@@ -6193,6 +6417,155 @@ function Show-ProgramEditDialog {
     if ($dlg.ShowDialog() -eq $true) {
         return $script:progEditResult
     }
+    return $null
+}
+
+# Katalog gotowych programów winget ($script:WingetCatalog) do zaznaczenia. Programy, które już są
+# w konfiguracji (ta sama nazwa, alias albo Winget ID), są wyszarzone. Zwraca @{ Items; Enabled }
+# (Enabled = "zaznaczaj domyślnie do instalacji") albo $null po anulowaniu.
+function Show-WingetCatalogDialog {
+    param($Programs)
+    [xml]$xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Katalog programów winget" Width="700" Height="620" MinWidth="520" MinHeight="400" WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{DynamicResource ThemeHeader}" Foreground="{DynamicResource ThemeText}" FontFamily="Segoe UI" FontSize="13">
+    <Window.Resources>
+        <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+            <Setter Property="Margin" Value="0,4,12,6"/>
+            <Setter Property="VerticalContentAlignment" Value="Top"/>
+        </Style>
+    </Window.Resources>
+    <Grid Margin="22,20,22,18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Border Style="{StaticResource IconTile}">
+                <TextBlock Style="{StaticResource Glyph}" Text="&#xE7B8;" FontSize="17" Foreground="{DynamicResource ThemeInfoFore}" HorizontalAlignment="Center"/>
+            </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock Text="Katalog programów winget" Style="{StaticResource DialogTitle}"/>
+                <TextBlock Text="Gotowe programy instalowane przez winget - bez instalatora na udziale i bez szukania argumentów" Style="{StaticResource DialogSubtitle}"/>
+            </StackPanel>
+        </Grid>
+        <TextBox Grid.Row="1" Name="txtSearch" Tag="Szukaj programu (nazwa, kategoria, Winget ID)..." Margin="0,0,0,12"/>
+        <Border Grid.Row="2" Style="{StaticResource Card}" Padding="14,10,4,10">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+                    <StackPanel Name="spCatalog"/>
+                    <TextBlock Name="txtNoResults" Visibility="Collapsed" Style="{StaticResource HintText}" Margin="0,8,10,8" Text="Brak programów pasujących do wyszukiwania."/>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+        <DockPanel Grid.Row="3" Margin="0,16,0,0">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Bottom">
+                <Button Name="btnCancel" Content="Anuluj" MinWidth="96" IsCancel="True"/>
+                <Button Name="btnAdd" Content="Dodaj" MinWidth="96" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" IsDefault="True" IsEnabled="False"/>
+            </StackPanel>
+            <StackPanel Margin="0,0,12,0">
+                <CheckBox Name="chkEnabled" Content="Zaznaczaj dodane programy domyślnie do instalacji" Margin="0,0,0,4"/>
+                <TextBlock Name="txtCount" Style="{StaticResource HintText}"/>
+            </StackPanel>
+        </DockPanel>
+    </Grid>
+</Window>
+"@
+    $dlg = New-ThemedWindow -Xaml $xaml
+    $spCatalog = $dlg.FindName("spCatalog")
+    $txtSearch = $dlg.FindName("txtSearch")
+    $txtNoResults = $dlg.FindName("txtNoResults")
+    $txtCount = $dlg.FindName("txtCount")
+    $chkEnabled = $dlg.FindName("chkEnabled")
+    $btnAdd = $dlg.FindName("btnAdd")
+    $btnCancel = $dlg.FindName("btnCancel")
+    $sectionStyle = $dlg.FindResource('SectionCaps')
+    $hintStyle = $dlg.FindResource('HintText')
+
+    # Kategorie w kolejności z katalogu; w każdej WrapPanel z polami (dwie kolumny w oknie 700 px).
+    $rows = New-Object System.Collections.Generic.List[object]
+    $sections = New-Object System.Collections.Generic.List[object]
+    foreach ($category in @($script:WingetCatalog | ForEach-Object { $_.Category } | Select-Object -Unique)) {
+        $header = New-Object System.Windows.Controls.TextBlock
+        $header.Text = $category.ToUpper()
+        $header.Style = $sectionStyle
+        $header.Margin = '0,6,0,4'
+        $wrap = New-Object System.Windows.Controls.WrapPanel
+        [void]$spCatalog.Children.Add($header)
+        [void]$spCatalog.Children.Add($wrap)
+        $section = [pscustomobject]@{ Header = $header; Panel = $wrap; Rows = (New-Object System.Collections.Generic.List[object]) }
+        $sections.Add($section)
+        foreach ($item in @($script:WingetCatalog | Where-Object { $_.Category -eq $category })) {
+            $existing = Find-CatalogMatch -Item $item -Programs $Programs
+            $cb = New-Object System.Windows.Controls.CheckBox
+            $cb.Width = 290
+            $content = New-Object System.Windows.Controls.StackPanel
+            $nameText = New-Object System.Windows.Controls.TextBlock
+            $nameText.Text = $item.Name
+            $nameText.TextWrapping = [System.Windows.TextWrapping]::Wrap
+            [void]$content.Children.Add($nameText)
+            $detail = New-Object System.Windows.Controls.TextBlock
+            $detail.Style = $hintStyle
+            $detail.Text = if ($existing) { "Już w konfiguracji jako $existing" } elseif ([string]::IsNullOrWhiteSpace($item.Note)) { $item.WingetId } else { "$($item.WingetId) - $($item.Note)" }
+            [void]$content.Children.Add($detail)
+            $cb.Content = $content
+            $cb.ToolTip = "Winget ID: $($item.WingetId)" + $(if ($item.Args) { "`nArgumenty winget: $($item.Args)" } else { "" }) + $(if ($item.Note) { "`n$($item.Note)" } else { "" })
+            if ($existing) { $cb.IsEnabled = $false }
+            [void]$wrap.Children.Add($cb)
+            $row = [pscustomobject]@{ Item = $item; CheckBox = $cb; Search = (@($item.Name, $item.WingetId, $item.Category) + @($item.Aliases)) -join ' ' }
+            $rows.Add($row)
+            $section.Rows.Add($row)
+        }
+    }
+
+    $updateCount = {
+        $n = @($rows | Where-Object { $_.CheckBox.IsChecked -eq $true }).Count
+        $txtCount.Text = "Zaznaczono: $n z $(@($rows | Where-Object { $_.CheckBox.IsEnabled }).Count) dostępnych"
+        $btnAdd.IsEnabled = ($n -gt 0)
+        $btnAdd.Content = if ($n -gt 0) { "Dodaj ($n)" } else { "Dodaj" }
+    }
+    foreach ($row in $rows) {
+        $row.CheckBox.Add_Checked({ & $updateCount })
+        $row.CheckBox.Add_Unchecked({ & $updateCount })
+    }
+    & $updateCount
+
+    $txtSearch.Add_TextChanged({
+        $filter = $txtSearch.Text.Trim()
+        $anyVisible = $false
+        foreach ($section in $sections) {
+            $sectionVisible = $false
+            foreach ($row in $section.Rows) {
+                $match = [string]::IsNullOrEmpty($filter) -or $row.Search.IndexOf($filter, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+                $row.CheckBox.Visibility = if ($match) { [System.Windows.Visibility]::Visible } else { [System.Windows.Visibility]::Collapsed }
+                if ($match) { $sectionVisible = $true }
+            }
+            $vis = if ($sectionVisible) { [System.Windows.Visibility]::Visible } else { [System.Windows.Visibility]::Collapsed }
+            $section.Header.Visibility = $vis
+            $section.Panel.Visibility = $vis
+            if ($sectionVisible) { $anyVisible = $true }
+        }
+        $txtNoResults.Visibility = if ($anyVisible) { [System.Windows.Visibility]::Collapsed } else { [System.Windows.Visibility]::Visible }
+    })
+
+    $script:catalogDialogResult = $null
+    $btnAdd.Add_Click({
+        $script:catalogDialogResult = @{
+            Items = @($rows | Where-Object { $_.CheckBox.IsChecked -eq $true } | ForEach-Object { $_.Item })
+            Enabled = ($chkEnabled.IsChecked -eq $true)
+        }
+        $dlg.DialogResult = $true
+        $dlg.Close()
+    })
+    $btnCancel.Add_Click({ $dlg.DialogResult = $false; $dlg.Close() })
+    if ($dlg.ShowDialog() -eq $true) { return $script:catalogDialogResult }
     return $null
 }
 
@@ -6434,7 +6807,12 @@ function Show-ProfileEditDialog {
         <!-- Programy w kolumnach (WrapPanel) zamiast jednej długiej listy do przewijania. -->
         <Border Grid.Row="3" Style="{StaticResource Card}" Padding="14,10,4,10">
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                <WrapPanel Name="spApps" ItemWidth="200"/>
+                <StackPanel>
+                    <WrapPanel Name="spApps" ItemWidth="200"/>
+                    <!-- Bez programów w konfiguracji nie ma czego przypisać - mówimy, skąd je wziąć. -->
+                    <TextBlock Name="txtNoApps" Visibility="Collapsed" Style="{StaticResource HintText}" Margin="0,6,10,6"
+                               Text="Brak programów w konfiguracji. Najpierw dodaj je w zakładce Programy (przycisk &#x201E;Dodaj...&#x201D; albo &#x201E;Dodaj z katalogu winget...&#x201D;), a potem przypisz do profilu."/>
+                </StackPanel>
             </ScrollViewer>
         </Border>
         <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
@@ -6473,6 +6851,7 @@ function Show-ProfileEditDialog {
             $checkboxes[$p] = $cb
         }
     }
+    if ($checkboxes.Count -eq 0) { $dlg.FindName("txtNoApps").Visibility = [System.Windows.Visibility]::Visible }
     
     $script:profileEditResult = $null
     
@@ -6767,16 +7146,27 @@ function Show-ConfigEditor {
                             <TextBlock Text="Lista w oknie &#x201E;Wybierz aplikacje&#x201D;. Dwuklik otwiera edycję." Style="{StaticResource ListHint}"/>
                         </StackPanel>
                     </DockPanel>
-                    <ListView Name="lbPrograms">
-                        <ListView.View>
-                            <GridView>
-                                <GridViewColumn Header="Identyfikator" Width="200" DisplayMemberBinding="{Binding Name}"/>
-                                <GridViewColumn Header="Plik / Winget ID" Width="260" DisplayMemberBinding="{Binding File}"/>
-                                <GridViewColumn Header="Domyślnie" Width="90" DisplayMemberBinding="{Binding Default}"/>
-                                <GridViewColumn Header="Własny URL" Width="100" DisplayMemberBinding="{Binding Url}"/>
-                            </GridView>
-                        </ListView.View>
-                    </ListView>
+                    <!-- Gotowe programy z katalogu winget: pod listą, żeby nie ściskać paska przycisków nad nią. -->
+                    <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+                        <Button Name="btnProgCatalog" DockPanel.Dock="Right" Content="Dodaj z katalogu winget..." Style="{StaticResource BarButton}" Margin="10,0,0,0"/>
+                        <TextBlock Text="Gotowe programy (Chrome, Firefox, 7-Zip, Adobe Reader, LibreOffice...) instalowane przez winget - bez instalatora na udziale." Style="{StaticResource ListHint}" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                    </DockPanel>
+                    <Grid>
+                        <ListView Name="lbPrograms">
+                            <ListView.View>
+                                <GridView>
+                                    <GridViewColumn Header="Identyfikator" Width="190" DisplayMemberBinding="{Binding Name}"/>
+                                    <GridViewColumn Header="Instalator (plik / Winget ID)" Width="250" DisplayMemberBinding="{Binding File}"/>
+                                    <GridViewColumn Header="Winget" Width="70" DisplayMemberBinding="{Binding Winget}"/>
+                                    <GridViewColumn Header="Domyślnie" Width="80" DisplayMemberBinding="{Binding Default}"/>
+                                    <GridViewColumn Header="URL" Width="60" DisplayMemberBinding="{Binding Url}"/>
+                                </GridView>
+                            </ListView.View>
+                        </ListView>
+                        <!-- Pusta lista: podpowiedź zamiast samego nagłówka tabeli. -->
+                        <TextBlock Name="txtProgEmpty" Visibility="Collapsed" Style="{StaticResource HintText}" TextAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="420" Margin="16,40,16,16"
+                                   Text="Brak programów. Dodaj własny instalator przyciskiem &#x201E;Dodaj...&#x201D; albo wybierz gotowe programy z katalogu winget (przycisk pod listą)."/>
+                    </Grid>
                 </DockPanel>
             </TabItem>
 
@@ -6968,6 +7358,8 @@ function Show-ConfigEditor {
     $btnProgEdit = $dlg.FindName("btnProgEdit")
     $btnProgClone = $dlg.FindName("btnProgClone")
     $btnProgRemove = $dlg.FindName("btnProgRemove")
+    $btnProgCatalog = $dlg.FindName("btnProgCatalog")
+    $txtProgEmpty = $dlg.FindName("txtProgEmpty")
     $lbProfiles = $dlg.FindName("lbProfiles")
     $txtProfTitle = $dlg.FindName("txtProfTitle")
     $btnProfAdd = $dlg.FindName("btnProfAdd")
@@ -7000,7 +7392,7 @@ function Show-ConfigEditor {
     # Ikony przycisków w paskach zakładek (czcionka ikon, jak w ServerReview / AD Manager Diamond);
     # tekst bez zmian - brany z XAML.
     foreach ($toolbarIcon in @(
-        @($btnProgAdd, 'E710'), @($btnProgEdit, 'E70F'), @($btnProgClone, 'E8C8'), @($btnProgRemove, 'E74D'),
+        @($btnProgAdd, 'E710'), @($btnProgEdit, 'E70F'), @($btnProgClone, 'E8C8'), @($btnProgRemove, 'E74D'), @($btnProgCatalog, 'E7B8'),
         @($btnProfAdd, 'E710'), @($btnProfEdit, 'E70F'), @($btnProfRemove, 'E74D'),
         @($btnRegAdd, 'E710'), @($btnRegEdit, 'E70F'), @($btnRegRemove, 'E74D'),
         @($btnScriptAdd, 'E710'), @($btnScriptEdit, 'E70F'), @($btnScriptRemove, 'E74D'),
@@ -7070,15 +7462,20 @@ function Show-ConfigEditor {
         if ($config.Programs) {
             foreach ($progName in $config.Programs.PSObject.Properties.Name | Sort-Object) {
                 $progData = $config.Programs.$progName
+                $progFile = [string]$progData.FileName
+                $progWinget = [string]$progData.WingetId
                 [void]$lbPrograms.Items.Add([PSCustomObject]@{
                     Name    = $progName
-                    File    = [string]$progData.FileName
+                    # Bez pliku pokazujemy Winget ID - tym program się zainstaluje.
+                    File    = if (-not [string]::IsNullOrWhiteSpace($progFile)) { $progFile } else { $progWinget }
+                    Winget  = if (-not [string]::IsNullOrWhiteSpace($progWinget)) { "tak" } else { "" }
                     Default = if ($progData.Enabled -eq $true -or [string]$progData.Enabled -match 'true') { "tak" } else { "" }
                     Url     = if (-not [string]::IsNullOrWhiteSpace([string]$progData.DownloadUrl)) { "tak" } else { "" }
                 })
             }
         }
         $txtProgTitle.Text = "Programy ($($lbPrograms.Items.Count))"
+        $txtProgEmpty.Visibility = if ($lbPrograms.Items.Count -eq 0) { [System.Windows.Visibility]::Visible } else { [System.Windows.Visibility]::Collapsed }
     }
     $refreshProfiles = {
         $lbProfiles.Items.Clear()
@@ -7189,6 +7586,16 @@ function Show-ConfigEditor {
             & $refreshPrograms
             & $markDirty
         }
+    })
+    $btnProgCatalog.Add_Click({
+        $picked = Show-WingetCatalogDialog -Programs $config.Programs
+        if ($null -eq $picked -or @($picked.Items).Count -eq 0) { return }
+        foreach ($item in @($picked.Items)) {
+            if ($config.Programs.PSObject.Properties.Name -contains $item.Name) { continue }
+            Add-Member -InputObject $config.Programs -NotePropertyName $item.Name -NotePropertyValue (New-CatalogProgramEntry -Item $item -Enabled $picked.Enabled) -Force
+        }
+        & $refreshPrograms
+        & $markDirty
     })
     $btnProgEdit.Add_Click({ & $editProgram })
     $lbPrograms.Add_MouseDoubleClick({ & $editProgram })

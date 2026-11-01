@@ -11,6 +11,7 @@
 - **Monitorowanie połączenia (Dynamiczny Status Sieci):** Kropka wizualnie informująca o poprawności adresu IP oraz o dostępności repozytorium WWW (żądanie HTTP HEAD wykonywane w osobnym wątku, więc nawet niedostępny serwer nie spowalnia interfejsu).
 - **Zarządzanie Oprogramowaniem:**
   - Automatyczna, cicha instalacja wybranych aplikacji z różnych źródeł (ścieżki sieciowe UNC, zasoby Web/HTTP(S), oraz pakiety **Winget**).
+  - **Katalog programów winget** (Ustawienia → Programy → *Dodaj z katalogu winget...*): ok. 40 sprawdzonych programów (przeglądarki, biuro i PDF, chmura, narzędzia, administracja, środowiska uruchomieniowe) do zaznaczenia jednym kliknięciem. Program z katalogu ma tylko `WingetId`, więc instaluje się przez winget przy każdym źródle globalnym - bez instalatora na udziale. Programy, które już są w konfiguracji (ta sama nazwa, alias albo Winget ID), są wyszarzone.
   - Zintegrowane uwierzytelnianie (WebAuth) do pobierania zastrzeżonych instalatorów HTTP.
   - Bieżący wgląd w działanie deinstalacji/instalacji za sprawą dynamicznych komunikatów nad paskiem postępu wdrożenia.
   - **Pełna kontrola:** Możliwość **wstrzymania (Pauza)**, **wznowienia** lub **przerwania** wdrożenia w każdym momencie jego trwania.
@@ -71,8 +72,8 @@ Plik generuje się i jest zarządzany automatycznie przez aplikację, lecz możn
         "SkryptDrukarki.ps1"
     ],
     "Profiles": {
-        "Standard": ["7-Zip", "Google Chrome", "PowerToys"],
-        "Księgowość": ["7-Zip", "Google Chrome", "Szafir_KIR"]
+        "Standard": ["7-Zip", "Google Chrome"],
+        "Programiści": ["7-Zip", "Google Chrome", "Git"]
     },
     "Programs": {
         "7-Zip": {
@@ -82,8 +83,16 @@ Plik generuje się i jest zarządzany automatycznie przez aplikację, lecz możn
         },
         "Google Chrome": {
             "Enabled": true,
-            "FileName": "Google.Chrome",
-            "SilentArgs": ""
+            "FileName": "ChromeSetup.exe",
+            "SilentArgs": "/silent /install",
+            "WingetId": "Google.Chrome"
+        },
+        "Git": {
+            "Enabled": false,
+            "FileName": "",
+            "SilentArgs": "",
+            "WingetId": "Git.Git",
+            "WingetArgs": "--scope machine"
         }
     },
     "SystemSettings": {
@@ -117,6 +126,16 @@ Plik generuje się i jest zarządzany automatycznie przez aplikację, lecz możn
     "DarkTheme": true
 }
 ```
+
+### Skąd instaluje się program
+
+| Wpis programu | Źródło globalne `network` / `web` | Źródło globalne `winget` |
+| --- | --- | --- |
+| `DownloadUrl` (własny adres URL) | zawsze ten adres | zawsze ten adres |
+| `FileName` (+ ewentualnie `WingetId`) | plik z udziału / spod adresu web, argumenty `SilentArgs` | winget z `WingetId`, a bez niego `FileName` jako Winget ID (dawny zapis) |
+| tylko `WingetId` (np. z katalogu) | winget | winget |
+
+`WingetArgs` to dodatkowe argumenty winget (np. `--scope machine` - instalacja dla wszystkich użytkowników, gdy pakiet ma też wariant tylko dla bieżącego). Brak programu winget na komputerze zgłasza walidacja przed startem (ostrzeżenie z listą pozycji, których dotyczy). Nowy, domyślny `config.json` zawiera na start kilka programów z katalogu, więc profile *Standard* i *Księgowość* od razu mają co zaznaczyć.
 
 ## Licencja
 

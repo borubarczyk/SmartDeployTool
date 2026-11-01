@@ -50,32 +50,38 @@
         "Chrome": {
             "Enabled": true,
             "FileName": "ChromeSetup.exe",
-            "SilentArgs": "/silent /install"
+            "SilentArgs": "/silent /install",
+            "WingetId": "Google.Chrome"
         },
         "7zip": {
             "Enabled": true,
             "FileName": "7z.exe",
-            "SilentArgs": "/S"
+            "SilentArgs": "/S",
+            "WingetId": "7zip.7zip"
         },
         "VLC": {
             "Enabled": false,
             "FileName": "vlc.exe",
-            "SilentArgs": "/L=1045 /S"
+            "SilentArgs": "/L=1045 /S",
+            "WingetId": "VideoLAN.VLC"
         },
         "Firefox": {
             "Enabled": true,
             "FileName": "FirefoxSetup.exe",
-            "SilentArgs": "-ms -ma"
+            "SilentArgs": "-ms -ma",
+            "WingetId": "Mozilla.Firefox.pl"
         },
         "Notepad++": {
             "Enabled": true,
             "FileName": "npp.exe",
-            "SilentArgs": "/S"
+            "SilentArgs": "/S",
+            "WingetId": "Notepad++.Notepad++"
         },
         "DoubleCommander": {
             "Enabled": true,
             "FileName": "doublecmd.msi",
-            "SilentArgs": "/qn /norestart"
+            "SilentArgs": "/qn /norestart",
+            "WingetId": "alexx2000.DoubleCommander"
         },
         "LanSweeper_Agent": {
             "Enabled": true,
@@ -90,22 +96,27 @@
         "AdobeReader": {
             "Enabled": true,
             "FileName": "AcroRdr.exe",
-            "SilentArgs": "/sAll"
+            "SilentArgs": "/sAll",
+            "WingetId": "Adobe.Acrobat.Reader.64-bit"
         },
         "PowerToys": {
             "Enabled": true,
             "FileName": "PowerToysSetup.exe",
-            "SilentArgs": "/quiet"
+            "SilentArgs": "/quiet",
+            "WingetId": "Microsoft.PowerToys",
+            "WingetArgs": "--scope machine"
         },
         "PowerShell_7": {
             "Enabled": true,
             "FileName": "PowerShell.msi",
-            "SilentArgs": "/qn /norestart"
+            "SilentArgs": "/qn /norestart",
+            "WingetId": "Microsoft.PowerShell"
         },
         "FoxitReader": {
             "Enabled": true,
             "FileName": "FoxitReader.exe",
-            "SilentArgs": "/SP- /VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
+            "SilentArgs": "/SP- /VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
+            "WingetId": "Foxit.FoxitReader"
         },
         "Java": {
             "Enabled": true,
@@ -115,7 +126,8 @@
         "LibreOffice": {
             "Enabled": true,
             "FileName": "LibreOffice.msi",
-            "SilentArgs": "/qn /norestart"
+            "SilentArgs": "/qn /norestart",
+            "WingetId": "TheDocumentFoundation.LibreOffice"
         },
         "Revit_2024": {
             "Enabled": true,
@@ -140,12 +152,14 @@
         "DropBox": {
             "Enabled": false,
             "FileName": "DropboxInstaller.exe",
-            "SilentArgs": "/S"
+            "SilentArgs": "/S",
+            "WingetId": "Dropbox.Dropbox"
         },
         "Zoom": {
             "Enabled": false,
             "FileName": "ZoomInstaller.exe",
-            "SilentArgs": "/silent /install"
+            "SilentArgs": "/silent /install",
+            "WingetId": "Zoom.Zoom"
         },
         "iManageAgentService": {
             "Enabled": true,
@@ -175,12 +189,116 @@
         "Office_M365": {
             "Enabled": false,
             "FileName": "Office365Setup.exe",
-            "SilentArgs": "/quiet /norestart"
+            "SilentArgs": "/quiet /norestart",
+            "WingetId": "Microsoft.Office"
         },
         "Szafir_KIR": {
             "Enabled": true,
             "FileName": "Szafir_Instalator.msi",
             "SilentArgs": "/Q"
+        },
+        "Mozilla Thunderbird": {
+            "Enabled": false,
+            "FileName": "",
+            "SilentArgs": "",
+            "WingetId": "Mozilla.Thunderbird.pl"
+        },
+        "Microsoft OneDrive": {
+            "Enabled": false,
+            "FileName": "",
+            "SilentArgs": "",
+            "WingetId": "Microsoft.OneDrive",
+            "WingetArgs": "--scope machine"
+        },
+        "Google Drive": {
+            "Enabled": false,
+            "FileName": "",
+            "SilentArgs": "",
+            "WingetId": "Google.GoogleDrive"
+        },
+        "Everything": {
+            "Enabled": false,
+            "FileName": "",
+            "SilentArgs": "",
+            "WingetId": "voidtools.Everything"
+        },
+        "TreeSize Free": {
+            "Enabled": false,
+            "FileName": "",
+            "SilentArgs": "",
+            "WingetId": "JAMSoftware.TreeSize.Free",
+            "WingetArgs": "--scope machine"
+        },
+        "WinMerge": {
+            "Enabled": false,
+            "FileName": "",
+            "SilentArgs": "",
+            "WingetId": "WinMerge.WinMerge",
+            "WingetArgs": "--scope machine"
+        },
+        "Greenshot": {
+            "Enabled": false,
+            "FileName": "",
+            "SilentArgs": "",
+            "WingetId": "Greenshot.Greenshot",
+            "WingetArgs": "--scope machine"
+        },
+        "WinSCP": {
+            "Enabled": false,
+            "FileName": "",
+            "SilentArgs": "",
+            "WingetId": "WinSCP.WinSCP",
+            "WingetArgs": "--scope machine"
+        },
+        "PuTTY": {
+            "Enabled": false,
+            "FileName": "",
+            "SilentArgs": "",
+            "WingetId": "PuTTY.PuTTY"
+        },
+        "KeePassXC": {
+            "Enabled": false,
+            "FileName": "",
+            "SilentArgs": "",
+            "WingetId": "KeePassXCTeam.KeePassXC"
+        },
+        "paint.net": {
+            "Enabled": false,
+            "FileName": "",
+            "SilentArgs": "",
+            "WingetId": "dotPDN.PaintDotNet"
+        },
+        "Java 21 (Temurin JRE)": {
+            "Enabled": false,
+            "FileName": "",
+            "SilentArgs": "",
+            "WingetId": "EclipseAdoptium.Temurin.21.JRE"
+        },
+        ".NET Desktop Runtime 10": {
+            "Enabled": false,
+            "FileName": "",
+            "SilentArgs": "",
+            "WingetId": "Microsoft.DotNet.DesktopRuntime.10"
+        },
+        "Visual C++ Redistributable (x64)": {
+            "Enabled": false,
+            "FileName": "",
+            "SilentArgs": "",
+            "WingetId": "Microsoft.VCRedist.2015+.x64"
+        },
+        "Visual Studio Code": {
+            "Enabled": false,
+            "FileName": "",
+            "SilentArgs": "",
+            "WingetId": "Microsoft.VisualStudioCode",
+            "WingetArgs": "--scope machine"
+        },
+        "Git": {
+            "Enabled": false,
+            "FileName": "",
+            "SilentArgs": "",
+            "WingetId": "Git.Git",
+            "WingetArgs": "--scope machine"
         }
     },
     "DarkTheme": true,
