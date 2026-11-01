@@ -2319,7 +2319,8 @@ function Join-InstallSource {
 # Identyfikatory sprawdzone w repozytorium winget-pkgs (listopad 2026). Program z katalogu ma tylko
 # WingetId (bez FileName), więc instaluje się przez winget niezależnie od globalnego źródła - nie
 # trzeba trzymać jego instalatora na udziale. Args = dodatkowe argumenty winget: "--scope machine"
-# tam, gdzie pakiet ma też instalator tylko dla bieżącego użytkownika (wdrożenie ma objąć wszystkich).
+# tam, gdzie pakiet ma też instalator tylko dla bieżącego użytkownika (wdrożenie ma objąć wszystkich),
+# a "--installer-type wix" tam, gdzie winget wybrałby pakiet MSIX (instalowany tylko dla jednego konta).
 # Aliases = nazwy, pod którymi program bywa już w config.json (np. "Chrome") - katalog pokazuje go
 # wtedy jako już dodany. Celowo pominięte: Microsoft Teams i Slack (w winget tylko instalacja dla
 # jednego użytkownika), Oracle Java 8 (licencja komercyjna; jest Temurin 8), FortiClient (brak w winget).
@@ -2346,7 +2347,7 @@ $script:WingetCatalog = @(
     [pscustomobject]@{ Name = 'Double Commander'; WingetId = 'alexx2000.DoubleCommander'; Category = 'Narzędzia'; Args = ''; Note = ''; Aliases = @('DoubleCommander', 'DoubleCmd') }
     [pscustomobject]@{ Name = 'Greenshot'; WingetId = 'Greenshot.Greenshot'; Category = 'Narzędzia'; Args = '--scope machine'; Note = 'Zrzuty ekranu.'; Aliases = @() }
     [pscustomobject]@{ Name = 'ShareX'; WingetId = 'ShareX.ShareX'; Category = 'Narzędzia'; Args = '--scope machine'; Note = 'Zrzuty i nagrania ekranu.'; Aliases = @() }
-    [pscustomobject]@{ Name = 'PowerShell 7'; WingetId = 'Microsoft.PowerShell'; Category = 'Administracja i zdalny dostęp'; Args = ''; Note = ''; Aliases = @('PowerShell_7', 'PowerShell7', 'pwsh') }
+    [pscustomobject]@{ Name = 'PowerShell 7'; WingetId = 'Microsoft.PowerShell'; Category = 'Administracja i zdalny dostęp'; Args = '--installer-type wix --scope machine'; Note = 'Instalator MSI dla wszystkich użytkowników (bez tego winget wybiera pakiet MSIX tylko dla bieżącego konta). Wymaga winget 1.6+.'; Aliases = @('PowerShell_7', 'PowerShell7', 'pwsh') }
     [pscustomobject]@{ Name = 'WinSCP'; WingetId = 'WinSCP.WinSCP'; Category = 'Administracja i zdalny dostęp'; Args = '--scope machine'; Note = ''; Aliases = @() }
     [pscustomobject]@{ Name = 'PuTTY'; WingetId = 'PuTTY.PuTTY'; Category = 'Administracja i zdalny dostęp'; Args = ''; Note = ''; Aliases = @() }
     [pscustomobject]@{ Name = 'mRemoteNG'; WingetId = 'mRemoteNG.mRemoteNG'; Category = 'Administracja i zdalny dostęp'; Args = ''; Note = 'Ostatnia stabilna wersja pochodzi z 2019 r.'; Aliases = @() }
@@ -2398,7 +2399,7 @@ function global:Find-CatalogMatch {
 #   3. globalne źródło network / web i jest FileName       -> 'network' / 'web' (plik ma pierwszeństwo)
 #   4. bez FileName, ale z WingetId (np. program z katalogu) -> 'winget' mimo innego źródła globalnego
 #   5. nic z powyższych                                    -> 'none' (błąd walidacji)
-# Argumenty winget: WingetArgs, gdy ID pochodzi z WingetId; przy dawnym zapisie (ID w FileName) - SilentArgs.
+# Argumenty winget: WingetArgs; przy dawnym zapisie (ID w FileName) bez WingetArgs - SilentArgs.
 function global:Resolve-AppInstallSource {
     param($App, [string]$DefaultSource)
     $downloadUrl = [string]$App.DownloadUrl
@@ -2408,7 +2409,11 @@ function global:Resolve-AppInstallSource {
     $hasWingetId = -not [string]::IsNullOrWhiteSpace($wingetId)
     if ($DefaultSource -eq 'winget') {
         if ($hasWingetId) { return [pscustomobject]@{ Source = 'winget'; WingetId = $wingetId.Trim(); WingetArgs = [string]$App.WingetArgs } }
-        if (-not [string]::IsNullOrWhiteSpace($fileName)) { return [pscustomobject]@{ Source = 'winget'; WingetId = $fileName.Trim(); WingetArgs = [string]$App.SilentArgs } }
+        if (-not [string]::IsNullOrWhiteSpace($fileName)) {
+            # Dawny zapis (ID w FileName): argumenty z pola "Dodatkowe argumenty winget", a gdy puste - z SilentArgs.
+            $legacyArgs = if (-not [string]::IsNullOrWhiteSpace([string]$App.WingetArgs)) { [string]$App.WingetArgs } else { [string]$App.SilentArgs }
+            return [pscustomobject]@{ Source = 'winget'; WingetId = $fileName.Trim(); WingetArgs = $legacyArgs }
+        }
         return [pscustomobject]@{ Source = 'none'; WingetId = ''; WingetArgs = '' }
     }
     if (-not [string]::IsNullOrWhiteSpace($fileName)) { return [pscustomobject]@{ Source = $DefaultSource; WingetId = ''; WingetArgs = '' } }
@@ -6537,6 +6542,8 @@ function Show-WingetCatalogDialog {
     }
     & $updateCount
 
+    # Enter w wyszukiwarce nie zamyka okna przyciskiem domyślnym "Dodaj" - technik zwykle szuka kilka razy.
+    $txtSearch.Add_PreviewKeyDown({ param($s, $e) if ($e.Key -eq [System.Windows.Input.Key]::Enter -or $e.Key -eq [System.Windows.Input.Key]::Return) { $e.Handled = $true } })
     $txtSearch.Add_TextChanged({
         $filter = $txtSearch.Text.Trim()
         $anyVisible = $false

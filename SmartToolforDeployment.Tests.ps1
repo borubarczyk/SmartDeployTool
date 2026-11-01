@@ -269,7 +269,7 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             foreach ($item in $script:WingetCatalog) {
                 $item.WingetId | Should -Match '^[A-Za-z0-9][\w+-]*(\.[\w+-]+)+$'
                 $item.Category | Should -Not -BeNullOrEmpty
-                $item.Args | Should -BeIn @('', '--scope machine')
+                $item.Args | Should -BeIn @('', '--scope machine', '--installer-type wix --scope machine')
             }
         }
 
@@ -277,6 +277,7 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             @{ Case = 'własny URL ma pierwszeństwo'; App = @{ FileName = 'a.exe'; WingetId = 'A.B'; DownloadUrl = 'https://x/a.exe' }; Default = 'winget'; Source = 'url'; Id = ''; ArgsText = '' }
             @{ Case = 'winget globalnie: WingetId i WingetArgs'; App = @{ FileName = 'a.exe'; SilentArgs = '/S'; WingetId = 'A.B'; WingetArgs = '--scope machine' }; Default = 'winget'; Source = 'winget'; Id = 'A.B'; ArgsText = '--scope machine' }
             @{ Case = 'winget globalnie: dawny zapis ID w FileName'; App = @{ FileName = 'Old.Id'; SilentArgs = '--force' }; Default = 'winget'; Source = 'winget'; Id = 'Old.Id'; ArgsText = '--force' }
+            @{ Case = 'dawny zapis ID w FileName + WingetArgs z edytora'; App = @{ FileName = 'Old.Id'; SilentArgs = ''; WingetArgs = '--scope machine' }; Default = 'winget'; Source = 'winget'; Id = 'Old.Id'; ArgsText = '--scope machine' }
             @{ Case = 'network: plik ma pierwszeństwo przed WingetId'; App = @{ FileName = 'a.exe'; WingetId = 'A.B' }; Default = 'network'; Source = 'network'; Id = ''; ArgsText = '' }
             @{ Case = 'web bez pliku, z WingetId: winget'; App = @{ FileName = ''; WingetId = 'A.B'; WingetArgs = '--scope machine' }; Default = 'web'; Source = 'winget'; Id = 'A.B'; ArgsText = '--scope machine' }
             @{ Case = 'brak pliku i WingetId: none'; App = @{ FileName = ''; SilentArgs = '/S' }; Default = 'network'; Source = 'none'; Id = ''; ArgsText = '' }
@@ -287,6 +288,12 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             $r.Source | Should -Be $Source
             $r.WingetId | Should -Be $Id
             $r.WingetArgs | Should -Be $ArgsText
+        }
+
+        It "PowerShell 7 z katalogu wymusza instalator MSI (WiX) dla wszystkich użytkowników, nie MSIX" {
+            $pwsh = $script:WingetCatalog | Where-Object { $_.WingetId -eq 'Microsoft.PowerShell' }
+            $pwsh.Args | Should -Match '--installer-type wix'
+            $pwsh.Args | Should -Match '--scope machine'
         }
 
         It "Wpis z katalogu ma WingetId bez pliku, a WingetArgs tylko gdy pozycja ich wymaga" {

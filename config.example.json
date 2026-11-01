@@ -110,7 +110,8 @@
             "Enabled": true,
             "FileName": "PowerShell.msi",
             "SilentArgs": "/qn /norestart",
-            "WingetId": "Microsoft.PowerShell"
+            "WingetId": "Microsoft.PowerShell",
+            "WingetArgs": "--installer-type wix --scope machine"
         },
         "FoxitReader": {
             "Enabled": true,
