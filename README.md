@@ -117,3 +117,9 @@ Plik generuje się i jest zarządzany automatycznie przez aplikację, lecz możn
     "DarkTheme": true
 }
 ```
+
+## Licencja
+
+Copyright (c) 2025-2026 Borys Kaleta. **Wszelkie prawa zastrzeżone** - [licencja zastrzeżona](LICENSE).
+
+Używanie, kopiowanie, modyfikowanie i rozpowszechnianie programu (w całości lub w części) wymaga uprzedniej zgody autora. Publiczna dostępność kodu nie oznacza zgody na korzystanie z niego.
