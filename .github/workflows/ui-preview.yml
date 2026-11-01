@@ -30,7 +30,7 @@ jobs:
         run: |
           if (-not (Test-Path config.json)) { Copy-Item config.example.json config.json; 'Uzyto config.example.json jako config.json' }
 
-      # -FailOnFindings: krok jest czerwony, gdy którykolwiek motyw ma uwagi (CLIP / STALE / GLYPH /
+      # -FailOnFindings: krok jest czerwony, gdy którykolwiek motyw ma uwagi (CLIP / STALE / GLYPH / CONTRAST /
       # EMOJI) albo błąd renderowania. Pierwszy przebieg nowego wyglądu dał zero uwag w obu motywach.
       - name: Render windows (dark + light)
         shell: powershell
@@ -43,7 +43,7 @@ jobs:
           "Kod wyjscia: Dark $darkExit, Light $lightExit"
           if ($darkExit -ne 0 -or $lightExit -ne 0) { exit 1 }
 
-      - name: Uwagi (CLIP / STALE / GLYPH / EMOJI)
+      - name: Uwagi (CLIP / STALE / GLYPH / EMOJI / CONTRAST)
         if: always()
         shell: powershell
         run: |

@@ -18,6 +18,7 @@
 #   STALE  kolor z poprzedniego motywu po przełączeniu w locie   -> uwagi-motyw.txt
 #   GLYPH  znak ikony (U+E000-U+F8FF) w zwykłej czcionce         -> uwagi-motyw.txt
 #   EMOJI  emoji w tekście okna                                  -> uwagi-motyw.txt
+#   CONTRAST  tekst za słabo odcina się od tła (< 3:1)           -> uwagi-motyw.txt
 param(
     [ValidateSet('Dark', 'Light')][string]$Theme = 'Dark',
     [string]$OutDir,
@@ -25,7 +26,7 @@ param(
     [switch]$DumpLayout,
     # Kończy skrypt kodem 1, jeśli w którymkolwiek oknie wykryto ucięty tekst.
     [switch]$FailOnClipping,
-    # Kończy skrypt kodem 1 przy jakiejkolwiek uwadze (CLIP, STALE, GLYPH, EMOJI) albo błędzie renderowania okna (ERR); obejmuje -FailOnClipping.
+    # Kończy skrypt kodem 1 przy jakiejkolwiek uwadze (CLIP, STALE, GLYPH, EMOJI, CONTRAST) albo błędzie renderowania okna (ERR); obejmuje -FailOnClipping.
     [switch]$FailOnFindings
 )
 if ($FailOnFindings) { $FailOnClipping = [switch]$true }
@@ -301,6 +302,82 @@ function global:Find-UiEmoji {
     return ,$results
 }
 
+# CONTRAST: widoczny tekst, którego kolor ma za mały kontrast z faktycznym tłem (pierwsze nieprzezroczyste
+# tło w górę drzewa wizualnego, z mieszaniem półprzezroczystych warstw). Łapie np. czarny tekst
+# odziedziczony z domyślnego stylu Windows na ciemnej karcie. Pomijamy tekst celowo przygaszony
+# (kolor ThemeFaint: podpowiedzi w polach, wersja) i tekst w wyłączonych / półprzezroczystych elementach.
+$global:UiMinContrast = 3.0
+function global:Get-UiRelativeLuminance {
+    param([System.Windows.Media.Color]$Color)
+    $ch = foreach ($c in @($Color.R, $Color.G, $Color.B)) {
+        $v = $c / 255.0
+        if ($v -le 0.03928) { $v / 12.92 } else { [Math]::Pow(($v + 0.055) / 1.055, 2.4) }
+    }
+    return 0.2126 * $ch[0] + 0.7152 * $ch[1] + 0.0722 * $ch[2]
+}
+function global:Get-UiContrastRatio {
+    param([System.Windows.Media.Color]$A, [System.Windows.Media.Color]$B)
+    $la = Get-UiRelativeLuminance $A; $lb = Get-UiRelativeLuminance $B
+    $hi = [Math]::Max($la, $lb); $lo = [Math]::Min($la, $lb)
+    return ($hi + 0.05) / ($lo + 0.05)
+}
+# Tło pod elementem: pędzle Background (Panel, Border, Control - TextBlock też) w górę drzewa aż do
+# pierwszego nieprzezroczystego; półprzezroczyste nakładamy na nie od dołu.
+function global:Get-UiEffectiveBackground {
+    param($Element, [System.Windows.Window]$Win)
+    $layers = New-Object System.Collections.Generic.List[object]
+    $v = $Element
+    while ($null -ne $v) {
+        $brush = $null
+        if ($v -is [System.Windows.Controls.Panel]) { $brush = $v.Background }
+        elseif ($v -is [System.Windows.Controls.Border]) { $brush = $v.Background }
+        elseif ($v -is [System.Windows.Controls.TextBlock]) { $brush = $v.Background }
+        elseif ($v -is [System.Windows.Window]) { $brush = $v.Background }
+        if ($brush -is [System.Windows.Media.SolidColorBrush]) {
+            $c = $brush.Color
+            $a = $c.A * $brush.Opacity
+            if ($a -ge 255) { $layers.Add($c); break }
+            if ($a -gt 0) { $layers.Add([System.Windows.Media.Color]::FromArgb([byte][Math]::Round($a), $c.R, $c.G, $c.B)) }
+        }
+        $v = [System.Windows.Media.VisualTreeHelper]::GetParent($v)
+    }
+    $result = [System.Windows.Media.Colors]::White
+    if ($layers.Count -gt 0 -and $layers[$layers.Count - 1].A -ge 255) { $result = $layers[$layers.Count - 1] }
+    elseif ($Win.Background -is [System.Windows.Media.SolidColorBrush]) { $result = $Win.Background.Color }
+    for ($i = $layers.Count - 1; $i -ge 0; $i--) {
+        $l = $layers[$i]
+        if ($l.A -ge 255) { $result = $l; continue }
+        $f = $l.A / 255.0
+        $result = [System.Windows.Media.Color]::FromRgb([byte][Math]::Round($l.R * $f + $result.R * (1 - $f)), [byte][Math]::Round($l.G * $f + $result.G * (1 - $f)), [byte][Math]::Round($l.B * $f + $result.B * (1 - $f)))
+    }
+    return $result
+}
+function global:Find-UiContrast {
+    param([System.Windows.Window]$Win, [string]$WindowName)
+    $results = New-Object System.Collections.Generic.List[string]
+    $faint = ([string](Get-ThemePalette)['ThemeFaint']).ToUpperInvariant()
+    foreach ($v in (Get-UiVisibleVisuals -Root $Win)) {
+        if ($v -isnot [System.Windows.Controls.TextBlock] -or [string]::IsNullOrWhiteSpace($v.Text)) { continue }
+        if ($v.Foreground -isnot [System.Windows.Media.SolidColorBrush]) { continue }
+        $fg = $v.Foreground.Color
+        $fgHex = ('#{0:X2}{1:X2}{2:X2}' -f $fg.R, $fg.G, $fg.B)
+        if ($fgHex -eq $faint) { continue }
+        $dimmed = $false
+        $p = $v
+        while ($null -ne $p) {
+            if (($p -is [System.Windows.UIElement]) -and ($p.Opacity -lt 0.99 -or -not $p.IsEnabled)) { $dimmed = $true; break }
+            $p = [System.Windows.Media.VisualTreeHelper]::GetParent($p)
+        }
+        if ($dimmed) { continue }
+        $bg = Get-UiEffectiveBackground -Element $v -Win $Win
+        $ratio = Get-UiContrastRatio $fg $bg
+        if ($ratio -lt $global:UiMinContrast) {
+            $results.Add(("CONTRAST {0} | {1} | tekst {2} na tle #{3:X2}{4:X2}{5:X2} = {6:N2}:1 (min {7})" -f $WindowName, (Get-UiElementPath $v), $fgHex, $bg.R, $bg.G, $bg.B, $ratio, $global:UiMinContrast))
+        }
+    }
+    return ,$results
+}
+
 # STALE: po przełączeniu motywu w locie żaden widoczny element nie może mieć koloru, który jest tylko
 # w poprzedniej palecie (stare wartości minus nowe). Taki kolor to znak {StaticResource Theme...},
 # koloru HEX w danych wiersza albo pędzla przypisanego w kodzie (New-ThemeBrush) zamiast
@@ -414,6 +491,7 @@ function global:Save-UiView {
     if ($Lint) {
         foreach ($issue in (Find-UiGlyphFont -Win $Win -WindowName $Name)) { Add-UiFinding $issue }
         foreach ($issue in (Find-UiEmoji -Win $Win -WindowName $Name)) { Add-UiFinding $issue }
+        foreach ($issue in (Find-UiContrast -Win $Win -WindowName $Name)) { Add-UiFinding $issue }
         Test-UiThemeSwitch -Win $Win -WindowName $Name
     }
 }
@@ -647,11 +725,11 @@ $findingsReport = Join-Path $global:UiShotDir 'uwagi-motyw.txt'
 if ($global:UiFindings.Count -gt 0) {
     $global:UiFindings | Set-Content -Path $findingsReport -Encoding UTF8
 } else {
-    'Brak uwag (STALE / GLYPH / EMOJI).' | Set-Content -Path $findingsReport -Encoding UTF8
+    'Brak uwag (STALE / GLYPH / EMOJI / CONTRAST).' | Set-Content -Path $findingsReport -Encoding UTF8
 }
 
 # --- Podsumowanie na końcu logu: w CI linie CLIP/STALE giną wśród linii MAP (-DumpLayout) ---
-$findingCount = @{ STALE = 0; GLYPH = 0; EMOJI = 0 }
+$findingCount = @{ STALE = 0; GLYPH = 0; EMOJI = 0; CONTRAST = 0 }
 foreach ($finding in $global:UiFindings) {
     $kind = ([string]$finding).Split(' ')[0]
     if ($findingCount.ContainsKey($kind)) { $findingCount[$kind]++ }
@@ -662,6 +740,7 @@ $summary.Add("CLIP  ucięty tekst                  : $($global:UiClipping.Count)
 $summary.Add("STALE kolor z poprzedniego motywu   : $($findingCount.STALE)")
 $summary.Add("GLYPH ikona w zwykłej czcionce      : $($findingCount.GLYPH)")
 $summary.Add("EMOJI emoji w tekście okna          : $($findingCount.EMOJI)")
+$summary.Add("CONTRAST za słaby kontrast tekstu   : $($findingCount.CONTRAST)")
 $summary.Add("ERR   błąd przy renderowaniu okna   : $($global:UiErrors.Count)")
 foreach ($clipLine in $global:UiClipping) { $summary.Add("CLIP $clipLine") }
 foreach ($finding in $global:UiFindings) { $summary.Add([string]$finding) }
@@ -671,7 +750,7 @@ foreach ($line in $summary) { Write-Host $line }
 
 # GitHub Actions: liczniki jako adnotacja przebiegu i lista w podsumowaniu zadania (Job summary).
 if ($env:GITHUB_ACTIONS -eq 'true') {
-    $totals = "CLIP $($global:UiClipping.Count), STALE $($findingCount.STALE), GLYPH $($findingCount.GLYPH), EMOJI $($findingCount.EMOJI), ERR $($global:UiErrors.Count)"
+    $totals = "CLIP $($global:UiClipping.Count), STALE $($findingCount.STALE), GLYPH $($findingCount.GLYPH), EMOJI $($findingCount.EMOJI), CONTRAST $($findingCount.CONTRAST), ERR $($global:UiErrors.Count)"
     if (($global:UiClipping.Count + $global:UiFindings.Count + $global:UiErrors.Count) -gt 0) {
         Write-Host "::warning title=Podgląd UI (${Theme})::$totals - lista w logu kroku i w ui-preview/$($Theme.ToLower())/uwagi-motyw.txt"
     }
@@ -682,7 +761,7 @@ if ($env:GITHUB_ACTIONS -eq 'true') {
             [void]$md.AppendLine('')
             [void]$md.AppendLine("PNG: $global:UiShotIndex | $totals")
             $details = New-Object System.Collections.Generic.List[string]
-            foreach ($line in $summary) { if ($line -match '^(CLIP|STALE|GLYPH|EMOJI|ERR) ') { $details.Add($line) } }
+            foreach ($line in $summary) { if ($line -match '^(CLIP|STALE|GLYPH|EMOJI|CONTRAST|ERR) ') { $details.Add($line) } }
             if ($details.Count -gt 0) {
                 [void]$md.AppendLine('')
                 [void]$md.AppendLine('```text')

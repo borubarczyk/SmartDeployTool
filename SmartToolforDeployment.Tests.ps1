@@ -630,6 +630,33 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             $w.Background.Color.ToString() | Should -Be ('#FF' + (Get-ThemeColor 'ThemeBackground').TrimStart('#'))
             $w.Background.Color.ToString() | Should -Be ('#FF' + $script:ThemePalettes.Light.ThemeBackground.TrimStart('#'))
         }
+
+        It "Tekst na stronie zakładki ma kolor ThemeText, nie systemowy czarny (motyw <Theme>)" -TestCases @(
+            @{ Theme = 'Dark'; Dark = $true },
+            @{ Theme = 'Light'; Dark = $false }
+        ) {
+            param($Theme, $Dark)
+            # Informacje o systemie: wartości (system, BIOS, procesor...) bez własnego Foreground dziedziczą
+            # kolor z TabControl / TabItem. Bez settera w stylu był to czarny z domyślnego stylu Windows.
+            $script:isDarkTheme = $Dark
+            [xml]$xaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+  <StackPanel>
+    <TabControl><TabItem Header="A"><TextBlock Name="plain" Text="Wartość"/></TabItem></TabControl>
+    <TabControl Style="{DynamicResource NavTabControl}">
+      <TabItem Header="B" Style="{DynamicResource NavTabItem}"><TextBlock Name="nav" Text="Wartość"/></TabItem>
+    </TabControl>
+  </StackPanel>
+</Window>
+'@
+            $w = New-ThemedWindow -Xaml $xaml -NoOwner
+            $w.Content.Measure((New-Object System.Windows.Size 600, 400))
+            $w.Content.Arrange((New-Object System.Windows.Rect 0, 0, 600, 400))
+            $expected = '#FF' + (Get-ThemeColor 'ThemeText').TrimStart('#')
+            foreach ($name in 'plain', 'nav') {
+                $w.FindName($name).Foreground.Color.ToString() | Should -Be $expected
+            }
+        }
     }
 
     Context "Nowy wygląd (ServerReview / AD Manager Diamond)" {

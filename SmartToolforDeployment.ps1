@@ -972,7 +972,11 @@ $script:ThemeStylesXaml = @'
     <!-- ===== Zakładki: domyślnie przełącznik segmentowy (jak przełącznik widoków w ServerReview) ===== -->
     <!-- Kolor nagłówka przez TextElement.Foreground prezentera, NIGDY przez TabItem.Foreground: WPF
          przekazuje Foreground zakładki do jej zawartości, więc zabarwiłby całą stronę. -->
+    <!-- Foreground tekstu strony (zawartości zakładki) ustawia TabControl i TabItem: bez tego treść
+         dziedziczyła systemowy czarny z domyślnego stylu Windows (czarny tekst na ciemnym tle w
+         Informacjach o systemie). Kolor nagłówka zakładki idzie osobno, przez TextElement.Foreground. -->
     <Style TargetType="TabItem">
+        <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
         <Setter Property="Padding" Value="14,5"/>
@@ -994,6 +998,7 @@ $script:ThemeStylesXaml = @'
         </Setter>
     </Style>
     <Style TargetType="TabControl">
+        <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Padding" Value="0"/>
@@ -1014,6 +1019,7 @@ $script:ThemeStylesXaml = @'
     <!-- Nawigacja po lewej (Ustawienia): ikona z TabItem.Tag (encja XAML), wygląd NavItem z AD Manager
          Diamond z paskiem akcentu 3 px przy zaznaczonej pozycji. -->
     <Style x:Key="NavTabItem" TargetType="TabItem">
+        <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="Margin" Value="0,1"/>
         <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
@@ -1047,6 +1053,7 @@ $script:ThemeStylesXaml = @'
         </Setter>
     </Style>
     <Style x:Key="NavTabControl" TargetType="TabControl">
+        <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Padding" Value="0"/>
