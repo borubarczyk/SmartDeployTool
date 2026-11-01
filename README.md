@@ -44,7 +44,7 @@
 
 ## Przykładowa struktura `config.json`
 
-Plik generuje się i jest zarządzany automatycznie przez aplikację, lecz można też edytować go w Notatniku.
+Plik generuje się i jest zarządzany automatycznie przez aplikację, lecz można też edytować go w Notatniku. Plik `config.json` zawiera dane konkretnego środowiska (ścieżki, loginy, hasła), dlatego nie jest przechowywany w repozytorium (`.gitignore`). Gotowy przykład bez danych wrażliwych znajdziesz w `config.example.json` - skopiuj go jako `config.json` obok skryptu i uzupełnij. Nowy plik przykładowy z własnej konfiguracji wygenerujesz skryptem `Create-ConfigExample.ps1`.
 
 ```json
 {
@@ -120,4 +120,6 @@ Plik generuje się i jest zarządzany automatycznie przez aplikację, lecz możn
 
 ## Licencja
 
-Copyright © 2025–2026 Borys Kaleta. Wszelkie prawa zastrzeżone. Narzędzie wolno używać, kopiować, modyfikować i rozpowszechniać wyłącznie na podstawie pisemnej zgody albo umowy licencyjnej z autorem i w zakresie w niej określonym — szczegóły w pliku [`LICENSE`](LICENSE).
+Copyright (c) 2025-2026 Borys Kaleta. **Wszelkie prawa zastrzeżone** - [licencja zastrzeżona](LICENSE).
+
+Używanie, kopiowanie, modyfikowanie i rozpowszechnianie programu (w całości lub w części) wymaga uprzedniej zgody autora. Publiczna dostępność kodu nie oznacza zgody na korzystanie z niego.

@@ -11,6 +11,7 @@ on:
       - 'SmartToolforDeployment.ps1'
       - 'tools/Render-UiPreview.ps1'
       - '.github/workflows/ui-preview.yml'
+      - 'config.example.json'
   workflow_dispatch:
 
 jobs:
@@ -21,6 +22,13 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # config.json (dane środowiska) nie jest w repozytorium - okna (Ustawienia, profile, programy)
+      # renderujemy na przykładowej konfiguracji bez danych wrażliwych.
+      - name: Przykładowa konfiguracja
+        shell: powershell
+        run: |
+          if (-not (Test-Path config.json)) { Copy-Item config.example.json config.json; 'Uzyto config.example.json jako config.json' }
 
       # -FailOnFindings: krok jest czerwony, gdy którykolwiek motyw ma uwagi (CLIP / STALE / GLYPH /
       # EMOJI) albo błąd renderowania. Pierwszy przebieg nowego wyglądu dał zero uwag w obu motywach.
