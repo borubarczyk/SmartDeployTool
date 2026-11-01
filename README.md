@@ -117,3 +117,8 @@ Plik generuje się i jest zarządzany automatycznie przez aplikację, lecz możn
     "DarkTheme": true
 }
 ```
+## Licencja
+
+Copyright (c) 2025-2026 Borys Kaleta. Wszelkie prawa zastrzeżone.
+
+Program jest objęty [licencją zastrzeżoną](LICENSE). Używanie, kopiowanie, modyfikowanie i rozpowszechnianie programu wymaga zgody autora (licencji), a publiczna dostępność kodu nie oznacza takiej zgody. Licencja obowiązuje od 1 listopada 2026 r. i zastępuje wcześniejszą licencję Apache 2.0. W sprawie licencji skontaktuj się z autorem: https://github.com/borubarczyk
