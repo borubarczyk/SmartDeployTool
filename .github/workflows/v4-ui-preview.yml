@@ -1,0 +1,65 @@
+name: STD 4 - podgląd okien
+
+# Renderuje wszystkie okna STD 4 (motyw ciemny i jasny) z przykładowymi danymi do plików PNG - podgląd
+# wyglądu bez uruchamiania programu (SPEC 9). Pliki są do pobrania jako artefakt "v4-ui-preview".
+# Uwagi z kontroli wyglądu (CLIP ucięty tekst, STALE kolor z poprzedniego motywu, GLYPH ikona w zwykłej
+# czcionce, EMOJI, CONTRAST za słaby kontrast, ERR błąd renderowania okna) są w logu kroku "Uwagi",
+# w podsumowaniu przebiegu i w artefakcie (v4-ui-preview/<motyw>/uciety-tekst.txt, uwagi-motyw.txt,
+# bledy-renderowania.txt).
+on:
+  push:
+    paths:
+      - 'v4/GUI/**'
+      - 'v4/Modules/**'
+      - 'v4/Steps/**'
+      - 'v4/STD.psd1'
+      - 'v4/STD.psm1'
+      - 'v4/SmartToolforDeployment.ps1'
+      - 'v4/Tools/Render-StdUiPreview.ps1'
+      - '.github/workflows/v4-ui-preview.yml'
+  workflow_dispatch:
+
+jobs:
+  render:
+    name: Podgląd okien STD 4
+    runs-on: windows-latest
+    # Okno, które się nie zamknie, skrypt zamyka sam po 120 s; limit zadania to zapas na wypadek zawieszenia.
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -FailOnFindings: krok jest czerwony, gdy którykolwiek motyw ma uwagi (CLIP / STALE / GLYPH / EMOJI /
+      # CONTRAST) albo błąd renderowania (ERR). Oba motywy renderujemy zawsze, nawet gdy pierwszy ma uwagi.
+      - name: Renderowanie okien (ciemny + jasny)
+        shell: powershell
+        run: |
+          powershell -NoProfile -STA -ExecutionPolicy Bypass -File v4\Tools\Render-StdUiPreview.ps1 -Theme Dark -DumpLayout -FailOnFindings
+          $darkExit = $LASTEXITCODE
+          powershell -NoProfile -STA -ExecutionPolicy Bypass -File v4\Tools\Render-StdUiPreview.ps1 -Theme Light -FailOnFindings
+          $lightExit = $LASTEXITCODE
+          Get-ChildItem v4\ui-preview -Recurse -Filter *.png | Measure-Object | ForEach-Object { "PNG: $($_.Count)" }
+          "Kod wyjscia: Dark $darkExit, Light $lightExit"
+          if ($darkExit -ne 0 -or $lightExit -ne 0) { exit 1 }
+          exit 0
+
+      - name: Uwagi (CLIP / STALE / GLYPH / EMOJI / CONTRAST / ERR)
+        if: always()
+        shell: powershell
+        run: |
+          foreach ($theme in 'dark', 'light') {
+            foreach ($file in 'uciety-tekst.txt', 'uwagi-motyw.txt', 'bledy-renderowania.txt') {
+              $path = Join-Path (Join-Path 'v4\ui-preview' $theme) $file
+              Write-Host "==== $theme / $file ===="
+              if (Test-Path $path) { Get-Content -Path $path -Encoding UTF8 | ForEach-Object { Write-Host $_ } } else { Write-Host '(brak pliku)' }
+            }
+          }
+
+      - name: Upload preview
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v4-ui-preview
+          path: v4/ui-preview
+          if-no-files-found: error

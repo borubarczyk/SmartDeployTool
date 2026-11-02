@@ -1,6 +1,6 @@
 ﻿# STD (Smart Tool for Deployment) 4 - Copyright (c) 2025-2026 Borys Kaleta. Wszelkie prawa zastrzeżone - warunki w pliku LICENSE.
 #
-# Moduł główny STD. Wczytuje pliki z Modules\ w stałej kolejności (SPEC 0.3). Wszystkie pliki są
+# Moduł główny STD. Wczytuje pliki z Modules\ w stałej kolejności (SPEC 0.3 i 6). Wszystkie pliki są
 # dot-source'owane w zakresie tego modułu, więc funkcje i zmienne $script: (odbiorniki logu, maski)
 # są wspólne. Brakujący plik jest pomijany z ostrzeżeniem, żeby moduł dało się wczytać także wtedy,
 # gdy część plików jeszcze powstaje.
@@ -11,6 +11,8 @@ $script:StdModuleFiles = @(
     'Std.Crypto.ps1'
     'Std.Config.ps1'
     'Std.Legacy.ps1'
+    'Std.Engine.ps1'
+    'Std.App.ps1'
 )
 
 $script:StdModulesDir = Join-Path -Path $PSScriptRoot -ChildPath 'Modules'

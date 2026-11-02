@@ -3,3 +3,4 @@
 * text=auto eol=lf
 *.sh text eol=lf
 Server/Linux/std-server text eol=lf
+Start-STD.cmd text eol=crlf
