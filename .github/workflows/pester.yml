@@ -32,3 +32,9 @@ jobs:
           $config.Run.Exit = $true # Zwróci kod błędu dla GitHuba w przypadku oblanych testów
 
           Invoke-Pester -Configuration $config
+
+      # STD 4: test od początku do końca (konwersja starego config.json, publikacja, pobranie
+      # z kopii lustrzanej, sekrety, maskowanie w logu) na Windows PowerShell 5.1, bez Pestera.
+      - name: Test dymny STD 4
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File v4\Tests\Invoke-StdSmoke.ps1

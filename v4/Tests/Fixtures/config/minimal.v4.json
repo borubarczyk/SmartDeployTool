@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 4,
+  "kind": "std.release",
+  "client": { "id": "minimalny", "name": "Klient minimalny" },
+  "sources": {
+    "web": { "type": "https", "url": "https://pobieranie.example.com/std/files/minimalny/", "auth": "session" }
+  },
+  "catalog": {
+    "Chrome": { "name": "Google Chrome", "winget": "Google.Chrome" }
+  },
+  "sites": [
+    { "id": "biuro", "name": "Biuro", "profiles": { "Standard": { "apps": [ "Chrome" ] } } }
+  ]
+}

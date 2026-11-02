@@ -1,0 +1,573 @@
+#!/usr/bin/env bash
+# STD - Smart Tool for Deployment: zarządzanie serwerem plików (Linux + nginx).
+#
+# Konta techników i administratorów, stan serwera, odbudowa pliku kont do odczytu.
+# Instalka (install-std-server.sh) kopiuje ten plik do /usr/local/sbin/std-server.
+#
+#   std-server add-tech <login> [--password-stdin]
+#   std-server add-admin <login> [--password-stdin]
+#   std-server remove <login>
+#   std-server list
+#   std-server status
+#   std-server rebuild
+#
+# Hasła: pytane dwa razy w terminalu albo czytane z wejścia (--password-stdin, jedna linia).
+# Hasło nigdy nie trafia do wiersza poleceń żadnego programu, do logu ani na ekran.
+set -euo pipefail
+umask 077
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+# Stałe reguły dopasowania znaków ([A-Za-z] tylko ASCII); polskie komunikaty to zwykłe bajty UTF-8.
+export LC_ALL=C
+
+readonly ETC_DIR=/etc/std-server
+readonly SETTINGS_FILE=$ETC_DIR/settings.conf
+readonly TECH_FILE=$ETC_DIR/technicians.htpasswd
+readonly ADMIN_FILE=$ETC_DIR/admins.htpasswd
+readonly READERS_FILE=$ETC_DIR/readers.htpasswd
+readonly STATE_DIR=/var/lib/std-server
+readonly LOCK_FILE=$STATE_DIR/lock
+readonly NGINX_MAIN_CONF=/etc/nginx/nginx.conf
+readonly NGINX_CONF=/etc/nginx/conf.d/std-server.conf
+readonly BCRYPT_COST=10
+readonly MIN_PASSWORD_LENGTH=8
+
+# --------------------------------------------------------------------------------------------
+# Komunikaty
+# --------------------------------------------------------------------------------------------
+
+info() { printf '%s\n' "$*"; }
+warn() { printf 'UWAGA: %s\n' "$*" >&2; }
+die() { printf 'BŁĄD: %s\n' "$*" >&2; exit 1; }
+usage_error() { printf 'BŁĄD: %s\n' "$*" >&2; printf 'Pomoc: std-server help\n' >&2; exit 2; }
+
+usage() {
+    cat <<'EOF'
+STD - Smart Tool for Deployment: zarządzanie serwerem plików
+
+Użycie:
+  std-server add-tech <login> [--password-stdin]    dodaje technika albo zmienia jego hasło
+  std-server add-admin <login> [--password-stdin]   dodaje administratora albo zmienia jego hasło
+  std-server remove <login>                         usuwa konto (technika albo administratora)
+  std-server list                                   lista kont i ról
+  std-server status                                 stan serwera, adres, role i bootstrap.json
+  std-server rebuild                                odbudowa readers.htpasswd, uprawnień danych, przeładowanie nginx
+  std-server help                                   ta pomoc
+
+Role:
+  technik         odczyt /std/ oraz zapis raportów do /std/drop/ (bez odczytu i listowania)
+  administrator   to samo co technik oraz /std-admin/ (publikacja: GET, PUT, DELETE, MKCOL)
+
+Hasło jest pytane dwa razy. W skryptach: printf '%s\n' "$HASLO" | std-server add-tech jan --password-stdin
+Login: litery, cyfry oraz . _ @ - (do 64 znaków). Hasło: co najmniej 8 znaków, najwyżej 72 bajty.
+Dodanie istniejącego loginu z inną rolą zmienia jego rolę.
+EOF
+}
+
+# --------------------------------------------------------------------------------------------
+# Pliki tymczasowe i blokada
+# --------------------------------------------------------------------------------------------
+
+TMP_FILES=()
+cleanup() {
+    local f
+    for f in "${TMP_FILES[@]+"${TMP_FILES[@]}"}"; do
+        [ -n "$f" ] && rm -f -- "$f"
+    done
+}
+trap cleanup EXIT
+
+TMP=''
+make_temp() {
+    # Ustawia zmienną TMP (plik w tym samym katalogu, żeby mv było atomowe).
+    TMP=$(mktemp "$1/.$2.XXXXXX")
+    TMP_FILES+=("$TMP")
+}
+
+acquire_lock() {
+    command -v flock >/dev/null 2>&1 || return 0
+    exec 9>"$LOCK_FILE"
+    flock -w 60 9 || die "Instalka albo inne polecenie std-server działa w tej chwili. Spróbuj za chwilę."
+}
+
+# --------------------------------------------------------------------------------------------
+# Ustawienia (czytane parserem, nigdy przez "source")
+# --------------------------------------------------------------------------------------------
+
+declare -A SETTINGS=()
+readonly SETTINGS_KEYS='DOMAIN PORT DATA_DIR TLS_MODE CERT_FILE KEY_FILE NGINX_USER NGINX_GROUP INSTALLED_VERSION INSTALLED_AT UPDATED_AT'
+
+load_settings() {
+    local file=$1 line key value
+    [ -f "$file" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        line=${line%$'\r'}
+        [[ $line =~ ^[[:space:]]*(#.*)?$ ]] && continue
+        if [[ $line =~ ^[[:space:]]*([A-Z][A-Z0-9_]*)[[:space:]]*=[[:space:]]*(.*)$ ]]; then
+            key=${BASH_REMATCH[1]}
+            value=${BASH_REMATCH[2]}
+            value=${value%"${value##*[![:space:]]}"}
+            if [[ $value =~ ^\"(.*)\"$ ]] || [[ $value =~ ^\'(.*)\'$ ]]; then
+                value=${BASH_REMATCH[1]}
+            fi
+            case " $SETTINGS_KEYS " in
+                *" $key "*) SETTINGS[$key]=$value ;;
+            esac
+        fi
+    done < "$file"
+}
+
+setting() {
+    printf '%s' "${SETTINGS[$1]-}"
+}
+
+is_ipv4() {
+    local ip=$1 part
+    [[ $ip =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+    local IFS=.
+    for part in $ip; do
+        [ "$((10#$part))" -le 255 ] || return 1
+    done
+    return 0
+}
+
+valid_domain() {
+    local d=$1
+    is_ipv4 "$d" && return 0
+    [ "${#d}" -le 253 ] || return 1
+    [[ $d =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$ ]]
+}
+
+valid_abs_path() {
+    local p=$1
+    [[ $p =~ ^/[A-Za-z0-9._@+/-]+$ ]] || return 1
+    case "$p/" in
+        *//*|*/./*|*/../*) return 1 ;;
+    esac
+    return 0
+}
+
+valid_unix_name() {
+    [[ $1 =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]
+}
+
+DOMAIN=''
+PORT=''
+DATA_DIR=''
+NGINX_USER=''
+NGINX_GROUP=''
+
+detect_nginx_user() {
+    local u
+    u=$(awk '!/^[[:space:]]*#/ && $1 == "user" { sub(/;.*/, "", $2); print $2; exit }' "$NGINX_MAIN_CONF" 2>/dev/null || true)
+    if [ -n "$u" ] && valid_unix_name "$u" && id -u "$u" >/dev/null 2>&1; then
+        printf '%s\n' "$u"
+        return 0
+    fi
+    for u in www-data nginx; do
+        if id -u "$u" >/dev/null 2>&1; then
+            printf '%s\n' "$u"
+            return 0
+        fi
+    done
+    return 1
+}
+
+COMMAND_LINE=''
+require_root() {
+    [ "$(id -u)" -eq 0 ] || die "To polecenie uruchamia root: sudo std-server $COMMAND_LINE"
+}
+
+require_installed() {
+    [ -f "$SETTINGS_FILE" ] || die "Serwer STD nie jest zainstalowany (brak $SETTINGS_FILE). Uruchom najpierw install-std-server.sh."
+    load_settings "$SETTINGS_FILE"
+    DOMAIN=$(setting DOMAIN)
+    PORT=$(setting PORT)
+    DATA_DIR=$(setting DATA_DIR)
+    valid_domain "$DOMAIN" || die "$SETTINGS_FILE: nieprawidłowa wartość DOMAIN. Uruchom instalkę ponownie z --domain."
+    [[ $PORT =~ ^[0-9]{1,5}$ ]] || die "$SETTINGS_FILE: nieprawidłowa wartość PORT. Uruchom instalkę ponownie z --port."
+    valid_abs_path "$DATA_DIR" || die "$SETTINGS_FILE: nieprawidłowa wartość DATA_DIR. Uruchom instalkę ponownie z --data-dir."
+    NGINX_USER=$(setting NGINX_USER)
+    NGINX_GROUP=$(setting NGINX_GROUP)
+    if ! valid_unix_name "$NGINX_USER" || ! id -u "$NGINX_USER" >/dev/null 2>&1; then
+        NGINX_USER=$(detect_nginx_user) || die "Nie znaleziono użytkownika nginx."
+    fi
+    if ! valid_unix_name "$NGINX_GROUP" || ! getent group "$NGINX_GROUP" >/dev/null 2>&1; then
+        NGINX_GROUP=$(id -gn "$NGINX_USER") || die "Nie znaleziono grupy użytkownika $NGINX_USER."
+    fi
+    [ -f "$TECH_FILE" ] || die "Brak $TECH_FILE. Uruchom instalkę ponownie (konta nie zostaną usunięte)."
+    [ -f "$ADMIN_FILE" ] || die "Brak $ADMIN_FILE. Uruchom instalkę ponownie (konta nie zostaną usunięte)."
+}
+
+# --------------------------------------------------------------------------------------------
+# nginx
+# --------------------------------------------------------------------------------------------
+
+have_systemd() {
+    [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1
+}
+
+nginx_pid_file() {
+    local p
+    p=$(awk '!/^[[:space:]]*#/ && $1 == "pid" { sub(/;.*/, "", $2); print $2; exit }' "$NGINX_MAIN_CONF" 2>/dev/null || true)
+    if [ -z "$p" ]; then
+        p=$(nginx -V 2>&1 | tr ' ' '\n' | sed -n 's/^--pid-path=//p' | head -n 1 || true)
+    fi
+    printf '%s\n' "${p:-/run/nginx.pid}"
+}
+
+nginx_master_running() {
+    local pf pid
+    pf=$(nginx_pid_file)
+    [ -r "$pf" ] || return 1
+    pid=$(head -n 1 "$pf" 2>/dev/null || true)
+    [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
+}
+
+nginx_running() {
+    if have_systemd && systemctl is-active --quiet nginx; then
+        return 0
+    fi
+    nginx_master_running
+}
+
+reload_nginx() {
+    # Przeładowanie tylko gdy konfiguracja przechodzi test; nginx, który nie działa, zostaje
+    # wyłączony (włącza go instalka albo administrator).
+    local out
+    if ! out=$(nginx -t 2>&1); then
+        printf '%s\n' "$out" >&2
+        warn "Test konfiguracji nginx (nginx -t) nie przechodzi - nie przeładowuję. Pliki kont są już zapisane."
+        return 1
+    fi
+    if have_systemd && systemctl is-active --quiet nginx; then
+        systemctl reload nginx 9>&-
+    elif nginx_master_running; then
+        # "nginx -s reload" wypisuje komunikat [notice] na stderr - pokazujemy go tylko przy błędzie.
+        if ! out=$(nginx -s reload 2>&1 9>&-); then
+            printf '%s\n' "$out" >&2
+            return 1
+        fi
+    else
+        warn "nginx nie działa. Uruchom go: systemctl start nginx (albo ponownie instalkę)."
+        return 1
+    fi
+}
+
+# --------------------------------------------------------------------------------------------
+# Konta
+# --------------------------------------------------------------------------------------------
+
+valid_login() {
+    [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$ ]]
+}
+
+has_login() {
+    # $1 = plik, $2 = login
+    awk -F: -v u="$2" '$1 == u { found = 1 } END { exit !found }' "$1"
+}
+
+count_accounts() {
+    awk -F: 'NF >= 2 && $1 != "" && $1 !~ /^[[:space:]]*#/ { n++ } END { print n + 0 }' "$1"
+}
+
+list_logins() {
+    awk -F: 'NF >= 2 && $1 != "" && $1 !~ /^[[:space:]]*#/ { print $1 }' "$1"
+}
+
+install_password_file() {
+    # $1 = gotowy plik tymczasowy, $2 = plik docelowy
+    chown "root:$NGINX_GROUP" -- "$1"
+    chmod 640 -- "$1"
+    mv -f -- "$1" "$2"
+}
+
+remove_login_from() {
+    # $1 = plik, $2 = login
+    local tmp
+    make_temp "$ETC_DIR" htpasswd
+    tmp=$TMP
+    awk -F: -v u="$2" '$1 != u' "$1" > "$tmp"
+    install_password_file "$tmp" "$1"
+}
+
+rebuild_readers() {
+    local tmp
+    make_temp "$ETC_DIR" readers
+    tmp=$TMP
+    awk -F: 'NF >= 2 && $1 != "" && $1 !~ /^[[:space:]]*#/ && !seen[$1]++' "$ADMIN_FILE" "$TECH_FILE" > "$tmp"
+    install_password_file "$tmp" "$READERS_FILE"
+}
+
+PASSWORD=''
+read_password() {
+    # $1 = login, $2 = 1 gdy --password-stdin
+    local again=''
+    if [ "$2" = 1 ]; then
+        if ! IFS= read -r PASSWORD && [ -z "$PASSWORD" ]; then
+            die "Brak hasła na wejściu (--password-stdin czyta jedną linię)."
+        fi
+    else
+        [ -t 0 ] || die "Brak terminala do pytania o hasło. W skryptach użyj --password-stdin."
+        IFS= read -r -s -p "Hasło dla $1: " PASSWORD || true
+        printf '\n' >&2
+        IFS= read -r -s -p "Powtórz hasło: " again || true
+        printf '\n' >&2
+        if [ "$PASSWORD" != "$again" ]; then
+            again=''
+            PASSWORD=''
+            die "Hasła się różnią. Nic nie zmieniono."
+        fi
+        again=''
+    fi
+    PASSWORD=${PASSWORD%$'\r'}
+    if [ "${#PASSWORD}" -lt "$MIN_PASSWORD_LENGTH" ]; then
+        PASSWORD=''
+        die "Hasło jest za krótkie (co najmniej $MIN_PASSWORD_LENGTH znaków). Nic nie zmieniono."
+    fi
+    if [ "${#PASSWORD}" -gt 72 ]; then
+        PASSWORD=''
+        die "Hasło jest za długie (najwyżej 72 bajty - ograniczenie bcrypt). Nic nie zmieniono."
+    fi
+}
+
+set_password_in() {
+    # $1 = plik, $2 = login. Hasło idzie do htpasswd przez stdin (-i), nie przez argumenty.
+    local tmp out
+    make_temp "$ETC_DIR" htpasswd
+    tmp=$TMP
+    cat -- "$1" > "$tmp"
+    if ! out=$(printf '%s\n' "$PASSWORD" | htpasswd -i -B -C "$BCRYPT_COST" "$tmp" "$2" 2>&1); then
+        PASSWORD=''
+        printf '%s\n' "$out" >&2
+        die "htpasswd nie zapisał hasła. Nic nie zmieniono."
+    fi
+    install_password_file "$tmp" "$1"
+}
+
+role_name() {
+    case $1 in
+        tech) printf 'technik' ;;
+        admin) printf 'administrator' ;;
+    esac
+}
+
+role_file() {
+    case $1 in
+        tech) printf '%s' "$TECH_FILE" ;;
+        admin) printf '%s' "$ADMIN_FILE" ;;
+    esac
+}
+
+cmd_add() {
+    # $1 = tech | admin, dalej: <login> [--password-stdin]
+    local role=$1 login='' from_stdin=0 file other other_role existed=0 moved=0
+    shift
+    while [ "$#" -gt 0 ]; do
+        case $1 in
+            --password-stdin) from_stdin=1 ;;
+            --password|--password=*) usage_error "Hasła nie podaje się w wierszu poleceń. Użyj --password-stdin albo odpowiedz na pytanie." ;;
+            -*) usage_error "Nieznana opcja: $1" ;;
+            *)
+                [ -z "$login" ] || usage_error "Podaj jeden login."
+                login=$1
+                ;;
+        esac
+        shift
+    done
+    [ -n "$login" ] || usage_error "Podaj login, np. std-server add-$role jan.kowalski"
+    valid_login "$login" || usage_error "Nieprawidłowy login '$login'. Dozwolone: litery, cyfry oraz . _ @ - (do 64 znaków, bez dwukropka i spacji)."
+    require_root
+    require_installed
+    acquire_lock
+
+    if [ "$role" = tech ]; then other_role='admin'; else other_role='tech'; fi
+    file=$(role_file "$role")
+    other=$(role_file "$other_role")
+    has_login "$file" "$login" && existed=1
+    has_login "$other" "$login" && moved=1
+
+    read_password "$login" "$from_stdin"
+    set_password_in "$file" "$login"
+    PASSWORD=''
+    if [ "$moved" = 1 ]; then
+        remove_login_from "$other" "$login"
+    fi
+    rebuild_readers
+
+    if [ "$moved" = 1 ]; then
+        info "Zmieniono rolę konta $login: $(role_name "$other_role") -> $(role_name "$role") (z nowym hasłem)."
+    elif [ "$existed" = 1 ]; then
+        info "Zmieniono hasło konta $login ($(role_name "$role"))."
+    else
+        info "Dodano konto $login ($(role_name "$role"))."
+    fi
+    reload_nginx || true
+}
+
+cmd_remove() {
+    local login=${1-} removed=0
+    [ "$#" -le 1 ] || usage_error "Podaj jeden login."
+    [ -n "$login" ] || usage_error "Podaj login, np. std-server remove jan.kowalski"
+    valid_login "$login" || usage_error "Nieprawidłowy login '$login'."
+    require_root
+    require_installed
+    acquire_lock
+    if has_login "$TECH_FILE" "$login"; then
+        remove_login_from "$TECH_FILE" "$login"
+        removed=1
+    fi
+    if has_login "$ADMIN_FILE" "$login"; then
+        remove_login_from "$ADMIN_FILE" "$login"
+        removed=1
+    fi
+    [ "$removed" = 1 ] || die "Nie ma konta $login."
+    rebuild_readers
+    info "Usunięto konto $login."
+    if [ "$(count_accounts "$ADMIN_FILE")" -eq 0 ]; then
+        warn "Nie ma już żadnego administratora - publikacja konfiguracji nie będzie możliwa. Dodaj: std-server add-admin <login>"
+    fi
+    reload_nginx || true
+}
+
+cmd_list() {
+    [ "$#" -eq 0 ] || usage_error "Polecenie list nie ma parametrów."
+    require_root
+    require_installed
+    local login
+    if [ "$(count_accounts "$ADMIN_FILE")" -eq 0 ] && [ "$(count_accounts "$TECH_FILE")" -eq 0 ]; then
+        info "Brak kont. Dodaj: std-server add-admin <login> oraz std-server add-tech <login>"
+        return 0
+    fi
+    printf '%-40s %s\n' 'LOGIN' 'ROLA'
+    while IFS= read -r login; do
+        printf '%-40s %s\n' "$login" 'administrator'
+    done < <(list_logins "$ADMIN_FILE" | sort)
+    while IFS= read -r login; do
+        printf '%-40s %s\n' "$login" 'technik'
+    done < <(list_logins "$TECH_FILE" | sort)
+}
+
+fix_data_permissions() {
+    local root=$DATA_DIR/std
+    [ -d "$root" ] || { warn "Brak katalogu danych $root. Uruchom instalkę ponownie."; return 1; }
+    find -H "$root" \( -type d -o -type f \) ! \( -user "$NGINX_USER" -group "$NGINX_GROUP" \) -exec chown -h "$NGINX_USER:$NGINX_GROUP" {} +
+    find -H "$root" -type d ! -perm 750 -exec chmod 750 {} +
+    find -H "$root" -type f ! -perm 640 -exec chmod 640 {} +
+}
+
+cmd_rebuild() {
+    [ "$#" -eq 0 ] || usage_error "Polecenie rebuild nie ma parametrów."
+    require_root
+    require_installed
+    acquire_lock
+    chown "root:$NGINX_GROUP" -- "$TECH_FILE" "$ADMIN_FILE"
+    chmod 640 -- "$TECH_FILE" "$ADMIN_FILE"
+    rebuild_readers
+    info "Odbudowano $READERS_FILE (technicy: $(count_accounts "$TECH_FILE"), administratorzy: $(count_accounts "$ADMIN_FILE"))."
+    if fix_data_permissions; then
+        info "Uprawnienia danych w $DATA_DIR/std: właściciel $NGINX_USER, katalogi 750, pliki 640."
+    fi
+    if reload_nginx; then
+        info "Przeładowano nginx."
+    else
+        return 1
+    fi
+}
+
+server_url() {
+    if [ "$PORT" = 443 ]; then
+        printf 'https://%s/std/' "$DOMAIN"
+    else
+        printf 'https://%s:%s/std/' "$DOMAIN" "$PORT"
+    fi
+}
+
+admin_url() {
+    if [ "$PORT" = 443 ]; then
+        printf 'https://%s/std-admin/' "$DOMAIN"
+    else
+        printf 'https://%s:%s/std-admin/' "$DOMAIN" "$PORT"
+    fi
+}
+
+cmd_status() {
+    [ "$#" -eq 0 ] || usage_error "Polecenie status nie ma parametrów."
+    require_root
+    require_installed
+    local problems=0 cert key enddate size tls_mode nginx_state test_state
+    cert=$(setting CERT_FILE)
+    key=$(setting KEY_FILE)
+    tls_mode=$(setting TLS_MODE)
+
+    if nginx_running; then
+        nginx_state='działa'
+    else
+        nginx_state='NIE DZIAŁA'
+        problems=1
+    fi
+    if nginx -t >/dev/null 2>&1; then
+        test_state='OK'
+    else
+        test_state='BŁĄD (uruchom: nginx -t)'
+        problems=1
+    fi
+    if [ ! -f "$NGINX_CONF" ]; then
+        test_state="$test_state; brak $NGINX_CONF"
+        problems=1
+    fi
+    enddate='?'
+    if [ -n "$cert" ] && [ -r "$cert" ]; then
+        enddate=$(openssl x509 -in "$cert" -noout -enddate 2>/dev/null | sed 's/^notAfter=//' || true)
+        if ! openssl x509 -in "$cert" -noout -checkend 0 >/dev/null 2>&1; then
+            enddate="$enddate - WYGASŁ"
+            problems=1
+        elif ! openssl x509 -in "$cert" -noout -checkend 1209600 >/dev/null 2>&1; then
+            enddate="$enddate - wygasa w ciągu 14 dni"
+        fi
+    else
+        enddate='brak pliku certyfikatu'
+        problems=1
+    fi
+    size=$(du -sh -- "$DATA_DIR/std" 2>/dev/null | cut -f 1 || true)
+
+    printf 'STD - Smart Tool for Deployment: serwer plików (Linux + nginx)\n'
+    printf '  Wersja instalki:   %s (instalacja %s, ostatnie uruchomienie %s)\n' \
+        "$(setting INSTALLED_VERSION)" "$(setting INSTALLED_AT)" "$(setting UPDATED_AT)"
+    printf '  Adres (technicy):  %s\n' "$(server_url)"
+    printf '  Publikacja:        %s\n' "$(admin_url)"
+    printf '  Katalog danych:    %s/std (%s)\n' "$DATA_DIR" "${size:-?}"
+    if [ "$tls_mode" = self-signed ]; then
+        printf '  Certyfikat:        %s (samopodpisany - tylko do testów)\n' "$cert"
+    else
+        printf '  Certyfikat:        %s\n' "$cert"
+        printf '  Klucz:             %s\n' "$key"
+    fi
+    printf '  Ważny do:          %s\n' "$enddate"
+    printf '  nginx:             %s\n' "$nginx_state"
+    printf '  Test konfiguracji: %s\n' "$test_state"
+    printf '  Konta:             technicy: %s, administratorzy: %s\n' "$(count_accounts "$TECH_FILE")" "$(count_accounts "$ADMIN_FILE")"
+    printf '\nRole:\n'
+    printf '  technik         odczyt %s oraz zapis raportów do %sdrop/ (bez odczytu i listowania)\n' "$(server_url)" "$(server_url)"
+    printf '  administrator   to samo co technik oraz %s (publikacja: GET, PUT, DELETE, MKCOL)\n' "$(admin_url)"
+    printf '\nbootstrap.json na pendrive (obok Start-STD.cmd), kopia w %s/bootstrap.json:\n' "$ETC_DIR"
+    printf '{\n  "server": "%s",\n  "mirrors": [],\n  "auth": { "mode": "basic" },\n  "proxy": null\n}\n' "$(server_url)"
+    return "$problems"
+}
+
+main() {
+    local cmd=${1-help}
+    COMMAND_LINE="$*"
+    [ "$#" -gt 0 ] && shift
+    case $cmd in
+        add-tech) cmd_add tech "$@" ;;
+        add-admin) cmd_add admin "$@" ;;
+        remove) cmd_remove "$@" ;;
+        list) cmd_list "$@" ;;
+        status) cmd_status "$@" ;;
+        rebuild) cmd_rebuild "$@" ;;
+        help|-h|--help) usage ;;
+        *) usage_error "Nieznane polecenie: $cmd" ;;
+    esac
+}
+
+main "$@"

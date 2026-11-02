@@ -243,6 +243,98 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
 
             Should -Invoke Write-Log -ParameterFilter { $Text -match "Mało wolnego miejsca na dysku C:" } -Times 1
         }
+
+        It "Program z samym WingetId nie wymaga pliku przy źródle network, a brak winget daje ostrzeżenie" {
+            Mock Get-CimInstance {}
+            Mock Test-Path { return $true }
+            Mock Get-Content { return '{ "DefaultInstallSource": "network", "InstallSourcePaths": { "network": "\\\\srv\\share\\" }, "Programs": { "Google Chrome": { "Enabled": true, "FileName": "", "WingetId": "Google.Chrome" } } }' }
+            Mock Get-WingetPath { return $null }
+            Mock Show-ThemedMessageBox { return [System.Windows.MessageBoxResult]::OK }
+            Mock Write-Log {}
+
+            Test-BeforeRun -SelectedApps @{ "Google Chrome" = $true } -CheckboxControls @{ 'InstallApplications' = [PSCustomObject]@{ IsChecked = $true } } | Out-Null
+
+            Should -Invoke Write-Log -ParameterFilter { $Text -match "Brak 'FileName'" } -Times 0
+            Should -Invoke Write-Log -ParameterFilter { $Text -match "Nie znaleziono programu winget" -and $Text -match "Google Chrome" } -Times 1
+        }
+    }
+
+    Context "Katalog programów winget i źródło instalacji programu" {
+        It "Katalog: unikalne nazwy, aliasy i Winget ID, poprawny format, każda pozycja ma kategorię" {
+            $script:WingetCatalog.Count | Should -BeGreaterThan 30
+            $allNames = @($script:WingetCatalog | ForEach-Object { @($_.Name) + @($_.Aliases) } | ForEach-Object { ([string]$_).ToLowerInvariant() })
+            @($allNames | Select-Object -Unique).Count | Should -Be $allNames.Count
+            $ids = @($script:WingetCatalog | ForEach-Object { $_.WingetId.ToLowerInvariant() })
+            @($ids | Select-Object -Unique).Count | Should -Be $ids.Count
+            foreach ($item in $script:WingetCatalog) {
+                $item.WingetId | Should -Match '^[A-Za-z0-9][\w+-]*(\.[\w+-]+)+$'
+                $item.Category | Should -Not -BeNullOrEmpty
+                $item.Args | Should -BeIn @('', '--scope machine', '--installer-type wix --scope machine')
+            }
+        }
+
+        It "Źródło: <Case>" -TestCases @(
+            @{ Case = 'własny URL ma pierwszeństwo'; App = @{ FileName = 'a.exe'; WingetId = 'A.B'; DownloadUrl = 'https://x/a.exe' }; Default = 'winget'; Source = 'url'; Id = ''; ArgsText = '' }
+            @{ Case = 'winget globalnie: WingetId i WingetArgs'; App = @{ FileName = 'a.exe'; SilentArgs = '/S'; WingetId = 'A.B'; WingetArgs = '--scope machine' }; Default = 'winget'; Source = 'winget'; Id = 'A.B'; ArgsText = '--scope machine' }
+            @{ Case = 'winget globalnie: dawny zapis ID w FileName'; App = @{ FileName = 'Old.Id'; SilentArgs = '--force' }; Default = 'winget'; Source = 'winget'; Id = 'Old.Id'; ArgsText = '--force' }
+            @{ Case = 'dawny zapis ID w FileName + WingetArgs z edytora'; App = @{ FileName = 'Old.Id'; SilentArgs = ''; WingetArgs = '--scope machine' }; Default = 'winget'; Source = 'winget'; Id = 'Old.Id'; ArgsText = '--scope machine' }
+            @{ Case = 'network: plik ma pierwszeństwo przed WingetId'; App = @{ FileName = 'a.exe'; WingetId = 'A.B' }; Default = 'network'; Source = 'network'; Id = ''; ArgsText = '' }
+            @{ Case = 'web bez pliku, z WingetId: winget'; App = @{ FileName = ''; WingetId = 'A.B'; WingetArgs = '--scope machine' }; Default = 'web'; Source = 'winget'; Id = 'A.B'; ArgsText = '--scope machine' }
+            @{ Case = 'brak pliku i WingetId: none'; App = @{ FileName = ''; SilentArgs = '/S' }; Default = 'network'; Source = 'none'; Id = ''; ArgsText = '' }
+            @{ Case = 'winget globalnie bez niczego: none'; App = @{ FileName = '' }; Default = 'winget'; Source = 'none'; Id = ''; ArgsText = '' }
+        ) {
+            param($Case, $App, $Default, $Source, $Id, $ArgsText)
+            $r = Resolve-AppInstallSource -App ([PSCustomObject]$App) -DefaultSource $Default
+            $r.Source | Should -Be $Source
+            $r.WingetId | Should -Be $Id
+            $r.WingetArgs | Should -Be $ArgsText
+        }
+
+        It "PowerShell 7 z katalogu wymusza instalator MSI (WiX) dla wszystkich użytkowników, nie MSIX" {
+            $pwsh = $script:WingetCatalog | Where-Object { $_.WingetId -eq 'Microsoft.PowerShell' }
+            $pwsh.Args | Should -Match '--installer-type wix'
+            $pwsh.Args | Should -Match '--scope machine'
+        }
+
+        It "Wpis z katalogu ma WingetId bez pliku, a WingetArgs tylko gdy pozycja ich wymaga" {
+            $git = $script:WingetCatalog | Where-Object { $_.Name -eq 'Git' }
+            $chrome = $script:WingetCatalog | Where-Object { $_.Name -eq 'Google Chrome' }
+            $e = New-CatalogProgramEntry -Item $git -Enabled $true
+            $e.Enabled | Should -Be $true
+            $e.FileName | Should -Be ''
+            $e.WingetId | Should -Be 'Git.Git'
+            $e.WingetArgs | Should -Be '--scope machine'
+            (New-CatalogProgramEntry -Item $chrome).Contains('WingetArgs') | Should -Be $false
+            # Taki wpis instaluje się przez winget także przy źródle network (bez pliku na udziale).
+            (Resolve-AppInstallSource -App $e -DefaultSource 'network').Source | Should -Be 'winget'
+        }
+
+        It "Katalog rozpoznaje program już obecny w konfiguracji (nazwa, alias, Winget ID)" {
+            $chrome = $script:WingetCatalog | Where-Object { $_.Name -eq 'Google Chrome' }
+            $sevenZip = $script:WingetCatalog | Where-Object { $_.Name -eq '7-Zip' }
+            $vlc = $script:WingetCatalog | Where-Object { $_.Name -eq 'VLC media player' }
+            $programs = [PSCustomObject]@{
+                'chrome'   = [PSCustomObject]@{ FileName = 'ChromeSetup.exe' }
+                'Archiwum' = [PSCustomObject]@{ FileName = ''; WingetId = '7zip.7zip' }
+                'Odtwarzacz' = [PSCustomObject]@{ FileName = 'VideoLAN.VLC' }
+            }
+            Find-CatalogMatch -Item $chrome -Programs $programs | Should -Be 'chrome'
+            Find-CatalogMatch -Item $sevenZip -Programs $programs | Should -Be 'Archiwum'
+            Find-CatalogMatch -Item $vlc -Programs $programs | Should -Be 'Odtwarzacz'
+            Find-CatalogMatch -Item ($script:WingetCatalog | Where-Object { $_.Name -eq 'Git' }) -Programs $programs | Should -BeNullOrEmpty
+        }
+
+        It "config.example.json: profile wskazują istniejące programy, Winget ID są z katalogu" {
+            $example = Get-Content "$PSScriptRoot\config.example.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+            $names = @($example.Programs.PSObject.Properties.Name)
+            foreach ($prof in $example.Profiles.PSObject.Properties) {
+                foreach ($appName in @($prof.Value)) { $names | Should -Contain $appName }
+            }
+            $catalogIds = @($script:WingetCatalog | ForEach-Object { $_.WingetId })
+            foreach ($prog in $example.Programs.PSObject.Properties) {
+                if ($prog.Value.WingetId) { $catalogIds | Should -Contain $prog.Value.WingetId }
+            }
+        }
     }
 
     Context "Wstrzymywanie hibernacji (Suspend-Hibernation)" {
@@ -629,6 +721,67 @@ Describe "SmartToolforDeployment - Testy Jednostkowe" {
             Update-WindowTheme $w
             $w.Background.Color.ToString() | Should -Be ('#FF' + (Get-ThemeColor 'ThemeBackground').TrimStart('#'))
             $w.Background.Color.ToString() | Should -Be ('#FF' + $script:ThemePalettes.Light.ThemeBackground.TrimStart('#'))
+        }
+
+        It "Tekst na stronie zakładki ma kolor ThemeText, nie systemowy czarny (motyw <Theme>)" -TestCases @(
+            @{ Theme = 'Dark'; Dark = $true },
+            @{ Theme = 'Light'; Dark = $false }
+        ) {
+            param($Theme, $Dark)
+            # Informacje o systemie: wartości (system, BIOS, procesor...) bez własnego Foreground dziedziczą
+            # kolor z TabControl / TabItem. Bez settera w stylu był to czarny z domyślnego stylu Windows.
+            $script:isDarkTheme = $Dark
+            [xml]$xaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+  <StackPanel>
+    <TabControl><TabItem Header="A"><TextBlock Name="plain" Text="Wartość"/></TabItem></TabControl>
+    <TabControl Style="{DynamicResource NavTabControl}">
+      <TabItem Header="B" Style="{DynamicResource NavTabItem}"><TextBlock Name="nav" Text="Wartość"/></TabItem>
+    </TabControl>
+  </StackPanel>
+</Window>
+'@
+            $w = New-ThemedWindow -Xaml $xaml -NoOwner
+            $w.Content.Measure((New-Object System.Windows.Size 600, 400))
+            $w.Content.Arrange((New-Object System.Windows.Rect 0, 0, 600, 400))
+            $expected = '#FF' + (Get-ThemeColor 'ThemeText').TrimStart('#')
+            foreach ($name in 'plain', 'nav') {
+                $w.FindName($name).Foreground.Color.ToString() | Should -Be $expected
+            }
+        }
+
+        It "Ikona narzędzia: poprawny plik .ico ze wszystkimi rozmiarami (<Variant>)" -TestCases @(
+            @{ Variant = 'znak z czcionki'; Drawn = $false },
+            @{ Variant = 'paczka rysowana'; Drawn = $true }
+        ) {
+            param($Variant, $Drawn)
+            $bytes = if ($Drawn) { New-AppIconBytes -DrawnMark } else { New-AppIconBytes }
+            # ICONDIR: zarezerwowane 0, typ 1 (ikona), liczba obrazów.
+            [BitConverter]::ToUInt16($bytes, 0) | Should -Be 0
+            [BitConverter]::ToUInt16($bytes, 2) | Should -Be 1
+            [BitConverter]::ToUInt16($bytes, 4) | Should -Be 8
+            $decoder = New-Object System.Windows.Media.Imaging.IconBitmapDecoder -ArgumentList (New-Object System.IO.MemoryStream (, $bytes)), ([System.Windows.Media.Imaging.BitmapCreateOptions]::None), ([System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
+            # Dekoder WIC podaje klatki we własnej kolejności (np. 48, 40, 32...), więc porównujemy zbiór rozmiarów.
+            @($decoder.Frames | ForEach-Object { $_.PixelWidth } | Sort-Object) | Should -Be @(16, 20, 24, 32, 40, 48, 64, 256)
+            # 16 px: róg poza zaokrąglonym kafelkiem przezroczysty, środek kafelka kryjący.
+            $frame16 = @($decoder.Frames | Where-Object { $_.PixelWidth -eq 16 })[0]
+            $small = New-Object System.Windows.Media.Imaging.FormatConvertedBitmap -ArgumentList $frame16, ([System.Windows.Media.PixelFormats]::Bgra32), $null, 0
+            $px = New-Object byte[] (16 * 16 * 4)
+            $small.CopyPixels($px, 64, 0)
+            $px[3] | Should -Be 0
+            $px[(8 * 64) + (8 * 4) + 3] | Should -Be 255
+        }
+
+        It "Ikona narzędzia trafia do okien i daje się wczytać jako ikona zasobnika" {
+            $script:AppIcon | Should -Not -BeNullOrEmpty
+            $script:AppIcon.Decoder.Frames.Count | Should -Be 8
+            [xml]$xaml = '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><Grid/></Window>'
+            (New-ThemedWindow -Xaml $xaml -NoOwner).Icon | Should -Be $script:AppIcon
+            foreach ($size in 16, 32) {
+                $icon = New-Object System.Drawing.Icon -ArgumentList (New-Object System.IO.MemoryStream (, $script:AppIconBytes)), $size, $size
+                $icon.Width | Should -Be $size
+                $icon.Dispose()
+            }
         }
     }
 

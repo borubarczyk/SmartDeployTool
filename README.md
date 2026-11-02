@@ -5,12 +5,13 @@
 ## Główne funkcjonalności
 
 - **Zabezpieczenie logowaniem:** Dostęp do uruchomienia narzędzia oraz zmian w oknie `Ustawień` chroniony jest kodem PIN (domyślnie: `2137`).
-- **Nowoczesny interfejs GUI (WPF):** Ten sam system wyglądu co w narzędziach ServerReview i AD Manager Diamond: grafitowo-granatowe tło, niebieski akcent, karty, kontrolki o wysokości 30 px, tabele z co drugim wierszem wyróżnionym, zaokrąglone menu i podpowiedzi, ikony z systemowej czcionki Segoe Fluent Icons / Segoe MDL2 Assets zamiast emoji, pasek tytułu okna w kolorach motywu oraz krótkie powiadomienia (toast) w rogu okna zamiast zbędnych okienek. Motyw ciemny (domyślny, kolory 1:1 z narzędzi referencyjnych) i jasny przełącza przycisk z ikoną słońca/księżyca w pasku nagłówka - zmiana działa od razu we wszystkich otwartych oknach i jest zapamiętywana w `config.json`. Wszystkie okna (logowanie, powitanie, komunikaty z kolorowym kafelkiem ikony, okna dialogowe, Logi, Informacje o systemie, Deinstalator, Ustawienia) korzystają z jednego wspólnego zestawu stylów.
+- **Nowoczesny interfejs GUI (WPF):** Ten sam system wyglądu co w narzędziach ServerReview i AD Manager Diamond: grafitowo-granatowe tło, niebieski akcent, karty, kontrolki o wysokości 30 px, tabele z co drugim wierszem wyróżnionym, zaokrąglone menu i podpowiedzi, ikony z systemowej czcionki Segoe Fluent Icons / Segoe MDL2 Assets zamiast emoji, pasek tytułu okna w kolorach motywu oraz krótkie powiadomienia (toast) w rogu okna zamiast zbędnych okienek. Motyw ciemny (domyślny, kolory 1:1 z narzędzi referencyjnych) i jasny przełącza przycisk z ikoną słońca/księżyca w pasku nagłówka - zmiana działa od razu we wszystkich otwartych oknach i jest zapamiętywana w `config.json`. Wszystkie okna (logowanie, powitanie, komunikaty z kolorowym kafelkiem ikony, okna dialogowe, Logi, Informacje o systemie, Deinstalator, Ustawienia) korzystają z jednego wspólnego zestawu stylów. Ikona narzędzia (pasek tytułu, pasek zadań, zasobnik systemowy) jest rysowana w kodzie - ten sam kafelek z paczką co logo w nagłówku - więc nie wymaga pliku `.ico` obok skryptu.
 - **Czytelna Przeglądarka Logów (widok tabelaryczny):** Każdy wpis loguje pełną datę i godzinę, poziom (`INFO`/`ERROR`) oraz kontekst (`System`/`Automat`/`Użytkownik`). Przeglądarka logów prezentuje to w tabeli z sortowalnymi (kliknięcie nagłówka) i filtrowalnymi kolumnami **Rodzaj | Data zdarzenia | Kontekst | Informacja** - z kolorowymi pastylkami i kolorem wiersza wg rodzaju zdarzenia (błąd, sukces, ostrzeżenie, Dry-Run), wyszukiwarką na żywo oraz eksportem czytelnego **raportu HTML** (do wysłania klientowi/dołączenia do zgłoszenia).
 - **Prosty układ okna głównego (jak w ServerReview / AD Manager Diamond):** u góry pasek nagłówka z logo, nazwą i wersją narzędzia, loginem operatora, pastylką stanu sieci oraz przyciskami z ikonami *Logi*, *Narzędzia* (menu), *Ustawienia* (koło zębate) i przełącznikiem motywu; pod nim profil wdrożenia, przycisk *Wybierz aplikacje*, licznik zaznaczonych zadań i *Wszystkie* / *Żadne*; pośrodku trzy karty z zadaniami pogrupowanymi w sekcje (Przygotowanie, Czyszczenie systemu, Oprogramowanie, Konta i domena, System i bezpieczeństwo, Zakończenie - pełny opis zadania w podpowiedzi); na dole pasek wdrożenia z kropką stanu (gotowe / w trakcie / pauza / błąd), postępem, stoperem i jedynym głównym przyciskiem *Rozpocznij konfigurację* (Pauza/Przerwij pojawiają się w trakcie wdrożenia). Okno mieści się w całości na ekranie 1024×768.
 - **Monitorowanie połączenia (Dynamiczny Status Sieci):** Kropka wizualnie informująca o poprawności adresu IP oraz o dostępności repozytorium WWW (żądanie HTTP HEAD wykonywane w osobnym wątku, więc nawet niedostępny serwer nie spowalnia interfejsu).
 - **Zarządzanie Oprogramowaniem:**
   - Automatyczna, cicha instalacja wybranych aplikacji z różnych źródeł (ścieżki sieciowe UNC, zasoby Web/HTTP(S), oraz pakiety **Winget**).
+  - **Katalog programów winget** (Ustawienia → Programy → *Dodaj z katalogu winget...*): ok. 40 sprawdzonych programów (przeglądarki, biuro i PDF, chmura, narzędzia, administracja, środowiska uruchomieniowe) do zaznaczenia jednym kliknięciem. Program z katalogu ma tylko `WingetId`, więc instaluje się przez winget przy każdym źródle globalnym - bez instalatora na udziale. Programy, które już są w konfiguracji (ta sama nazwa, alias albo Winget ID), są wyszarzone.
   - Zintegrowane uwierzytelnianie (WebAuth) do pobierania zastrzeżonych instalatorów HTTP.
   - Bieżący wgląd w działanie deinstalacji/instalacji za sprawą dynamicznych komunikatów nad paskiem postępu wdrożenia.
   - **Pełna kontrola:** Możliwość **wstrzymania (Pauza)**, **wznowienia** lub **przerwania** wdrożenia w każdym momencie jego trwania.
@@ -71,8 +72,8 @@ Plik generuje się i jest zarządzany automatycznie przez aplikację, lecz możn
         "SkryptDrukarki.ps1"
     ],
     "Profiles": {
-        "Standard": ["7-Zip", "Google Chrome", "PowerToys"],
-        "Księgowość": ["7-Zip", "Google Chrome", "Szafir_KIR"]
+        "Standard": ["7-Zip", "Google Chrome"],
+        "Programiści": ["7-Zip", "Google Chrome", "Git"]
     },
     "Programs": {
         "7-Zip": {
@@ -82,8 +83,16 @@ Plik generuje się i jest zarządzany automatycznie przez aplikację, lecz możn
         },
         "Google Chrome": {
             "Enabled": true,
-            "FileName": "Google.Chrome",
-            "SilentArgs": ""
+            "FileName": "ChromeSetup.exe",
+            "SilentArgs": "/silent /install",
+            "WingetId": "Google.Chrome"
+        },
+        "Git": {
+            "Enabled": false,
+            "FileName": "",
+            "SilentArgs": "",
+            "WingetId": "Git.Git",
+            "WingetArgs": "--scope machine"
         }
     },
     "SystemSettings": {
@@ -117,6 +126,16 @@ Plik generuje się i jest zarządzany automatycznie przez aplikację, lecz możn
     "DarkTheme": true
 }
 ```
+
+### Skąd instaluje się program
+
+| Wpis programu | Źródło globalne `network` / `web` | Źródło globalne `winget` |
+| --- | --- | --- |
+| `DownloadUrl` (własny adres URL) | zawsze ten adres | zawsze ten adres |
+| `FileName` (+ ewentualnie `WingetId`) | plik z udziału / spod adresu web, argumenty `SilentArgs` | winget z `WingetId`, a bez niego `FileName` jako Winget ID (dawny zapis) |
+| tylko `WingetId` (np. z katalogu) | winget | winget |
+
+`WingetArgs` to dodatkowe argumenty winget (np. `--scope machine` - instalacja dla wszystkich użytkowników, gdy pakiet ma też wariant tylko dla bieżącego). Brak programu winget na komputerze zgłasza walidacja przed startem (ostrzeżenie z listą pozycji, których dotyczy). Nowy, domyślny `config.json` zawiera na start kilka programów z katalogu, więc profile *Standard* i *Księgowość* od razu mają co zaznaczyć.
 
 ## Licencja
 

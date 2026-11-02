@@ -1,0 +1,553 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:std:schema:std-release:v4",
+  "title": "STD 4 - konfiguracja klienta (std.release, schemaVersion 4)",
+  "description": "Opis pliku konfiguracji klienta STD (Smart Tool for Deployment) 4 - payload release.sdt, SPEC 2.6-2.8. Schemat jest pomocą dla edytorów i dokumentacją. O poprawności konfiguracji decyduje Test-StdRelease (Modules\\Std.Config.ps1), który sprawdza też reguły, których schemat nie wyrazi: odwołania sourceOrder i apps, unikalne sites[].id, istnienie sekretów z {{secret:nazwa}} i keyRef oraz zakaz jawnych haseł i tokenów w całym dokumencie. Test-StdRelease nie rozróżnia wielkości liter w wartościach z list (np. HKLM), schemat wymaga pisowni jak w liście. Loginu i hasła do domeny ani hasła lokalnego administratora nie ma w konfiguracji - wpisuje się je ręcznie przy wdrożeniu.",
+  "type": "object",
+  "required": ["schemaVersion", "kind", "client", "sources", "catalog", "sites"],
+  "properties": {
+    "$schema": {
+      "description": "Odnośnik do tego schematu dla edytora (opcjonalny).",
+      "type": "string"
+    },
+    "schemaVersion": {
+      "description": "Wersja formatu. STD 4 czyta tylko 4.",
+      "const": 4
+    },
+    "kind": {
+      "description": "Rodzaj dokumentu.",
+      "const": "std.release"
+    },
+    "client": {
+      "description": "Klient (firma), dla której jest konfiguracja.",
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": {
+          "description": "Identyfikator klienta: małe litery, cyfry i '-', 2-40 znaków. 'clients' jest zarezerwowany dla listy klientów.",
+          "$ref": "#/$defs/id",
+          "not": { "const": "clients" }
+        },
+        "name": {
+          "description": "Nazwa klienta wyświetlana technikowi.",
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      },
+      "additionalProperties": false
+    },
+    "revision": {
+      "description": "Numer rewizji. Ustawia go Publish-StdRelease; STD odrzuca rewizję starszą niż widziana na komputerze.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "publishedAt": {
+      "description": "Data publikacji (ISO 8601, UTC). Ustawia Publish-StdRelease.",
+      "$ref": "#/$defs/isoDate"
+    },
+    "publishedBy": {
+      "description": "Login osoby, która opublikowała konfigurację. Ustawia Publish-StdRelease.",
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "changeNote": {
+      "description": "Opis zmian w tej rewizji.",
+      "type": "string"
+    },
+    "expiresAt": {
+      "description": "Koniec ważności (ISO 8601, UTC). Domyślnie publikacja + 90 dni. STD przyjmuje konfigurację do 5 minut po tym terminie.",
+      "$ref": "#/$defs/isoDate"
+    },
+    "minClientVersion": {
+      "description": "Najniższa wersja STD, która może użyć tej konfiguracji, np. 4.0.0.",
+      "$ref": "#/$defs/version"
+    },
+    "allowOffline": {
+      "description": "Czy wolno użyć kopii z cache komputera albo z pendrive'a, gdy serwer i kopie lustrzane są niedostępne.",
+      "type": "boolean",
+      "default": false
+    },
+    "requireSha256": {
+      "description": "Czy każda pozycja katalogu z file albo url musi mieć sha256.",
+      "type": "boolean",
+      "default": false
+    },
+    "tool": {
+      "description": "Wydanie narzędzia STD (etap 4).",
+      "type": "object",
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "url": { "$ref": "#/$defs/httpsUrl" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "sources": {
+      "description": "Źródła instalatorów (nazwa -> źródło). Co najmniej jedno.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "minLength": 1 },
+      "additionalProperties": { "$ref": "#/$defs/source" }
+    },
+    "catalog": {
+      "description": "Katalog programów (klucz -> pozycja). Co najmniej jedna pozycja.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/catalogKey" },
+      "additionalProperties": { "$ref": "#/$defs/catalogItem" }
+    },
+    "defaults": {
+      "description": "Ustawienia domyślne dla wszystkich lokalizacji i profili.",
+      "type": "object",
+      "$ref": "#/$defs/inheritable",
+      "unevaluatedProperties": false
+    },
+    "sites": {
+      "description": "Lokalizacje klienta. Co najmniej jedna; id unikalne.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/site" }
+    },
+    "secrets": {
+      "$ref": "#/$defs/secrets"
+    },
+    "escrow": {
+      "description": "Depozyt kluczy odzyskiwania BitLocker na serwerze (etap 4).",
+      "type": "object",
+      "properties": {
+        "drop": {
+          "description": "Katalog na serwerze tylko do zapisu, np. drop/.",
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "recipientCert": {
+          "description": "Certyfikat odbiorcy (base64 DER), którym szyfrowany jest klucz.",
+          "$ref": "#/$defs/base64"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "description": "requireSha256: true - każda pozycja katalogu z file albo url musi mieć sha256.",
+      "if": {
+        "required": ["requireSha256"],
+        "properties": { "requireSha256": { "const": true } }
+      },
+      "then": {
+        "properties": {
+          "catalog": {
+            "additionalProperties": {
+              "if": { "anyOf": [ { "required": ["file"] }, { "required": ["url"] } ] },
+              "then": { "required": ["sha256"] }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,39}$"
+    },
+    "catalogKey": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"
+    },
+    "secretName": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "isoDate": {
+      "description": "Data ISO 8601 ze strefą czasu, np. 2026-11-01T20:00:00Z.",
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,7})?)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "version": {
+      "description": "Numer wersji: 1-4 liczby rozdzielone kropkami, np. 4.0.0 albo 24.08.",
+      "type": "string",
+      "pattern": "^\\d{1,9}(\\.\\d{1,9}){0,3}$"
+    },
+    "httpsUrl": {
+      "description": "Pełny adres https:// bez loginu i hasła w adresie. Może zawierać {{secret:nazwa}}.",
+      "type": "string",
+      "pattern": "^https://[^/?#@\\s]+([/?#].*)?$"
+    },
+    "sha256": {
+      "description": "Suma SHA-256: 64 znaki HEX.",
+      "type": "string",
+      "pattern": "^[0-9A-Fa-f]{64}$"
+    },
+    "base64": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+    },
+    "taskId": {
+      "description": "Identyfikator zadania (SPEC 2.8).",
+      "enum": [
+        "WaitForNetwork", "SuspendSleep", "ConnectWiFi", "RemoveBloatware", "UninstallPreinstalled", "UninstallM365",
+        "UninstallOneDrive", "InstallApps", "CreateLocalAdmin", "RenameComputer", "JoinDomain", "SystemSettings",
+        "RunScripts", "HardwareAudit", "EnableBitLocker", "RebootAtEnd"
+      ]
+    },
+    "nameList": {
+      "description": "Lista nazw (np. źródeł z sources).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/nonEmptyString" }
+    },
+    "source": {
+      "description": "Źródło instalatorów: https (url) albo udział sieciowy unc (path). auth: session = konto technika, none = bez logowania.",
+      "type": "object",
+      "required": ["type", "auth"],
+      "properties": {
+        "type": { "enum": ["https", "unc"] },
+        "url": { "$ref": "#/$defs/httpsUrl" },
+        "path": {
+          "description": "Ścieżka udziału, np. \\\\srv-files\\STD$\\std\\files\\lizard\\.",
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "auth": { "enum": ["session", "none"] }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "https" } } }, "then": { "required": ["url"] } },
+        { "if": { "properties": { "type": { "const": "unc" } } }, "then": { "required": ["path"] } }
+      ]
+    },
+    "catalogItem": {
+      "description": "Pozycja katalogu. Musi mieć co najmniej jedno z: file, url, winget. Przy file i winget instalator bierze plik ze źródeł, a winget jest zapasem.",
+      "type": "object",
+      "required": ["name"],
+      "anyOf": [ { "required": ["file"] }, { "required": ["url"] }, { "required": ["winget"] } ],
+      "properties": {
+        "name": {
+          "description": "Nazwa wyświetlana.",
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "file": {
+          "description": "Nazwa pliku w źródle, szukana w kolejnych źródłach z sourceOrder.",
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "url": {
+          "description": "Pełny adres https:// instalatora (zamiast file).",
+          "$ref": "#/$defs/httpsUrl"
+        },
+        "winget": {
+          "description": "Identyfikator pakietu winget, np. Google.Chrome.",
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "wingetArgs": {
+          "description": "Dodatkowe argumenty winget, np. --scope machine.",
+          "type": "string"
+        },
+        "args": {
+          "description": "Argumenty cichej instalacji (file / url); mogą zawierać {{secret:nazwa}}.",
+          "type": "string"
+        },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "detect": {
+          "description": "Wykrywanie, czy program już jest: uninstallName (+ minVersion) albo path.",
+          "type": "object",
+          "anyOf": [ { "required": ["uninstallName"] }, { "required": ["path"] } ],
+          "properties": {
+            "uninstallName": { "$ref": "#/$defs/nonEmptyString" },
+            "minVersion": { "$ref": "#/$defs/version" },
+            "path": { "$ref": "#/$defs/nonEmptyString" }
+          },
+          "additionalProperties": false
+        },
+        "timeoutMin": {
+          "description": "Limit czasu instalacji w minutach.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 240,
+          "default": 30
+        },
+        "successCodes": {
+          "description": "Kody wyjścia oznaczające sukces.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "integer" },
+          "default": [0, 1641, 3010]
+        },
+        "whenDetected": {
+          "description": "Co zrobić, gdy program już jest.",
+          "enum": ["skip", "reinstall"],
+          "default": "skip"
+        },
+        "sourceOrder": {
+          "description": "Własna kolejność źródeł dla tej pozycji (nazwy z sources). Domyślnie sourceOrder lokalizacji.",
+          "$ref": "#/$defs/nameList"
+        }
+      },
+      "additionalProperties": false
+    },
+    "tasks": {
+      "description": "Zadania włączone (true) albo wyłączone (false).",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/taskId" },
+      "additionalProperties": { "type": "boolean" }
+    },
+    "registryItem": {
+      "type": "object",
+      "required": ["hive", "path", "name", "type"],
+      "properties": {
+        "hive": { "enum": ["HKLM", "HKCU", "DefaultUser"] },
+        "path": {
+          "description": "Ścieżka klucza bez gałęzi, np. Software\\Firma.",
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "name": {
+          "description": "Nazwa wartości; pusty tekst = wartość domyślna klucza.",
+          "type": "string"
+        },
+        "type": { "enum": ["String", "ExpandString", "DWord", "QWord", "MultiString", "Binary"] },
+        "value": {
+          "description": "Wartość (liczba, tekst albo tablica - zależnie od type)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "systemSettings": {
+      "description": "Flagi ustawień systemu (true/false), np. DisableFastStartup, oraz lista registry.",
+      "type": "object",
+      "properties": {
+        "registry": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/registryItem" }
+        }
+      },
+      "additionalProperties": { "type": "boolean" }
+    },
+    "uninstallItem": {
+      "description": "Preinstalowany program do usunięcia w kroku Deinstalator.",
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "description": "Nazwa albo wzorzec nazwy programu, np. McAfee*.",
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "args": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "scriptItem": {
+      "description": "Skrypt poinstalacyjny ze źródeł.",
+      "type": "object",
+      "required": ["file"],
+      "properties": {
+        "file": { "$ref": "#/$defs/nonEmptyString" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "args": {
+          "description": "Argumenty skryptu; mogą zawierać {{secret:nazwa}}.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "inheritable": {
+      "description": "Ustawienia dziedziczone defaults -> lokalizacja -> profil: obiekty łączone głęboko, tablice zastępowane, null = dziedzicz; scripts są doklejane.",
+      "properties": {
+        "tasks": { "$ref": "#/$defs/tasks" },
+        "bloatware": {
+          "description": "Wzorce nazw aplikacji Sklepu do usunięcia, np. *TikTok*.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "uninstall": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/uninstallItem" }
+        },
+        "systemSettings": { "$ref": "#/$defs/systemSettings" },
+        "scripts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/scriptItem" }
+        }
+      }
+    },
+    "wifiItem": {
+      "description": "Sieć Wi-Fi: ssid + auth + keyRef (klucz sieci w secrets) albo dawny profil XML (file).",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["ssid", "auth"],
+          "properties": {
+            "ssid": { "$ref": "#/$defs/nonEmptyString" },
+            "auth": { "enum": ["WPA2PSK", "WPA3SAE", "open"] },
+            "keyRef": {
+              "description": "Nazwa sekretu z kluczem sieci (secrets.items).",
+              "$ref": "#/$defs/secretName"
+            }
+          },
+          "additionalProperties": false,
+          "if": { "properties": { "auth": { "const": "open" } } },
+          "else": { "required": ["keyRef"] }
+        },
+        {
+          "type": "object",
+          "required": ["file"],
+          "properties": {
+            "file": { "$ref": "#/$defs/nonEmptyString" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "profile": {
+      "description": "Profil lokalizacji: programy, zadania, skrypty i ustawienia, których technik nie może zmienić (locked).",
+      "type": "object",
+      "$ref": "#/$defs/inheritable",
+      "properties": {
+        "apps": {
+          "description": "Klucze z catalog.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/catalogKey" }
+        },
+        "locked": {
+          "description": "Czego technik nie może zmienić: identyfikatory zadań, computerName, apps.",
+          "type": "array",
+          "items": {
+            "anyOf": [
+              { "$ref": "#/$defs/taskId" },
+              { "enum": ["computerName", "apps"] }
+            ]
+          }
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "site": {
+      "description": "Lokalizacja klienta.",
+      "type": "object",
+      "required": ["id", "name", "profiles"],
+      "$ref": "#/$defs/inheritable",
+      "properties": {
+        "id": {
+          "description": "Identyfikator lokalizacji (jak client.id), unikalny.",
+          "$ref": "#/$defs/id"
+        },
+        "name": { "$ref": "#/$defs/nonEmptyString" },
+        "sourceOrder": {
+          "description": "Kolejność źródeł instalatorów (nazwy z sources), np. [\"lan\", \"web\"].",
+          "$ref": "#/$defs/nameList"
+        },
+        "wifi": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/wifiItem" }
+        },
+        "computerName": {
+          "description": "Wzorzec nazwy komputera. Dozwolone wstawki: {serial}, {site}, {random}.",
+          "type": "object",
+          "required": ["pattern"],
+          "properties": {
+            "pattern": {
+              "type": "string",
+              "pattern": "^([^{}]|\\{(serial|site|random)\\})+$"
+            },
+            "maxLength": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 15,
+              "default": 15
+            },
+            "editable": {
+              "description": "Czy technik może zmienić nazwę przed wdrożeniem.",
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "domainJoin": {
+          "description": "Dołączenie do domeny: tylko nazwa domeny i OU. Login i hasło konta wpisuje się ręcznie przy wdrożeniu i nigdzie się ich nie zapisuje.",
+          "type": "object",
+          "required": ["domain"],
+          "properties": {
+            "domain": { "$ref": "#/$defs/nonEmptyString" },
+            "ou": {
+              "description": "Jednostka organizacyjna, np. OU=Komputery,DC=firma,DC=local.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "localAdmin": {
+          "description": "Konto lokalnego administratora: tylko nazwa konta. Hasło wpisuje się ręcznie przy wdrożeniu i nigdzie się go nie zapisuje.",
+          "type": "object",
+          "required": ["username"],
+          "properties": {
+            "username": { "$ref": "#/$defs/nonEmptyString" }
+          },
+          "additionalProperties": false
+        },
+        "bitLocker": {
+          "type": "object",
+          "properties": {
+            "escrow": {
+              "description": "Gdzie trafia klucz odzyskiwania: ad (Active Directory), server (zaszyfrowany na serwer STD).",
+              "type": "array",
+              "items": { "enum": ["ad", "server"] },
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "profiles": {
+          "description": "Profile lokalizacji (nazwa -> profil). Co najmniej jeden.",
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "minLength": 1, "pattern": "\\S" },
+          "additionalProperties": { "$ref": "#/$defs/profile" }
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "secrets": {
+      "description": "Zaszyfrowane sekrety klienta (tryb sealed, SPEC 2.7): PBKDF2-SHA256 z hasła wdrożeniowego, AES-256-CBC + HMAC-SHA256. Nie ma tu loginu ani hasła do domeny ani hasła lokalnego administratora.",
+      "type": "object",
+      "required": ["mode", "kdf", "check"],
+      "properties": {
+        "mode": { "const": "sealed" },
+        "kdf": {
+          "type": "object",
+          "required": ["alg", "iter", "salt"],
+          "properties": {
+            "alg": { "const": "pbkdf2-sha256" },
+            "iter": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 100000000
+            },
+            "salt": { "$ref": "#/$defs/base64" }
+          },
+          "additionalProperties": false
+        },
+        "check": {
+          "description": "HMAC-SHA256(macKey, 'std-check') - sprawdzenie hasła wdrożeniowego.",
+          "$ref": "#/$defs/base64"
+        },
+        "items": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/secretName" },
+          "additionalProperties": {
+            "type": "object",
+            "required": ["iv", "ct", "mac"],
+            "properties": {
+              "iv": { "$ref": "#/$defs/base64" },
+              "ct": { "$ref": "#/$defs/base64" },
+              "mac": { "$ref": "#/$defs/base64" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

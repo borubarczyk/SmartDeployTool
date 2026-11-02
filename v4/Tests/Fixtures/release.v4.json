@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 4,
+  "kind": "std.release",
+  "client": { "id": "lizard", "name": "Lizard-Tech" },
+  "revision": 42,
+  "publishedAt": "2026-11-01T20:00:00Z",
+  "publishedBy": "bkaleta",
+  "changeNote": "Przykładowa konfiguracja do testów",
+  "expiresAt": "2099-01-31T00:00:00Z",
+  "minClientVersion": "4.0.0",
+  "allowOffline": true,
+  "requireSha256": false,
+  "sources": {
+    "lan": { "type": "unc", "path": "\\\\srv-files\\STD$\\std\\files\\lizard\\", "auth": "session" },
+    "web": { "type": "https", "url": "https://pobieranie.example.com/std/files/lizard/", "auth": "session" }
+  },
+  "catalog": {
+    "7zip": {
+      "name": "7-Zip",
+      "file": "7z2408-x64.exe",
+      "args": "/S",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "detect": { "uninstallName": "7-Zip*", "minVersion": "24.08" },
+      "timeoutMin": 10
+    },
+    "Chrome": {
+      "name": "Google Chrome",
+      "winget": "Google.Chrome",
+      "detect": { "uninstallName": "Google Chrome" }
+    },
+    "Git": {
+      "name": "Git",
+      "winget": "Git.Git",
+      "wingetArgs": "--scope machine"
+    },
+    "TeamViewer": {
+      "name": "TeamViewer Host",
+      "file": "TeamViewer_Host.msi",
+      "args": "/qn CUSTOMCONFIGID={{secret:teamviewer-customconfigid}} APITOKEN={{secret:teamviewer-apitoken}}",
+      "detect": { "uninstallName": "TeamViewer*" },
+      "whenDetected": "skip"
+    },
+    "AV": {
+      "name": "Antywirus",
+      "file": "eset.msi",
+      "args": "/qn",
+      "sourceOrder": [ "web" ],
+      "successCodes": [ 0, 3010 ]
+    }
+  },
+  "defaults": {
+    "tasks": {
+      "WaitForNetwork": true,
+      "SuspendSleep": true,
+      "RemoveBloatware": true,
+      "UninstallPreinstalled": true,
+      "InstallApps": true,
+      "CreateLocalAdmin": true,
+      "RenameComputer": true,
+      "JoinDomain": true,
+      "SystemSettings": true,
+      "EnableBitLocker": false,
+      "RebootAtEnd": false
+    },
+    "bloatware": [ "*TikTok*", "*Xbox*", "*CandyCrush*" ],
+    "uninstall": [ { "name": "McAfee*", "args": "" }, { "name": "Norton*" } ],
+    "systemSettings": {
+      "DisableFastStartup": true,
+      "DisableTelemetry": true,
+      "registry": [
+        { "hive": "HKLM", "path": "SOFTWARE\\MojaFirma", "name": "WdrozenieZakonczone", "type": "DWord", "value": 1 },
+        { "hive": "DefaultUser", "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Feeds", "name": "ShellFeedsTaskbarViewMode", "type": "DWord", "value": 2 }
+      ]
+    },
+    "scripts": [ { "file": "Drukarki.ps1" } ]
+  },
+  "sites": [
+    {
+      "id": "krakow",
+      "name": "Kraków - biuro",
+      "sourceOrder": [ "lan", "web" ],
+      "wifi": [ { "ssid": "Firma", "auth": "WPA2PSK", "keyRef": "wifi-firma" } ],
+      "computerName": { "pattern": "KRK-{serial}", "maxLength": 15, "editable": true },
+      "domainJoin": { "domain": "firma.local", "ou": "OU=Komputery,OU=Krakow,DC=firma,DC=local" },
+      "localAdmin": { "username": "LokalnyIT" },
+      "bitLocker": { "escrow": [ "ad", "server" ] },
+      "profiles": {
+        "Standard": { "apps": [ "TeamViewer", "AV", "Chrome", "7zip" ], "locked": [ "JoinDomain" ] },
+        "Księgowość": {
+          "apps": [ "TeamViewer", "AV", "Chrome", "7zip" ],
+          "tasks": { "EnableBitLocker": true },
+          "scripts": [ { "file": "Ksiegowosc.ps1", "args": "-Tryb pelny" } ]
+        }
+      }
+    },
+    {
+      "id": "warszawa",
+      "name": "Warszawa",
+      "sourceOrder": [ "web" ],
+      "computerName": { "pattern": "WAW-{serial}", "maxLength": 15, "editable": false },
+      "domainJoin": { "domain": "firma.local" },
+      "localAdmin": { "username": "LokalnyIT" },
+      "profiles": {
+        "Standard": { "apps": [ "Chrome", "7zip", "Git" ] }
+      }
+    }
+  ],
+  "secrets": {
+    "mode": "sealed",
+    "kdf": { "alg": "pbkdf2-sha256", "iter": 600000, "salt": "AAAAAAAAAAAAAAAAAAAAAA==" },
+    "check": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "items": {
+      "teamviewer-customconfigid": { "iv": "AAAAAAAAAAAAAAAAAAAAAA==", "ct": "AAAAAAAAAAAAAAAAAAAAAA==", "mac": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" },
+      "teamviewer-apitoken": { "iv": "AAAAAAAAAAAAAAAAAAAAAA==", "ct": "AAAAAAAAAAAAAAAAAAAAAA==", "mac": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" },
+      "wifi-firma": { "iv": "AAAAAAAAAAAAAAAAAAAAAA==", "ct": "AAAAAAAAAAAAAAAAAAAAAA==", "mac": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }
+    }
+  }
+}
