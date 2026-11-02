@@ -58,13 +58,16 @@ Inne zasady:
 
 Katalog główny: `Get-StdDataRoot`. Jest to `$env:STD_DATA_ROOT`, jeśli ustawiona (testy); w przeciwnym razie
 `$env:ProgramData\STD`. Gdy `ProgramData` nie ma (Linux), używamy `[IO.Path]::GetTempPath()` + `STD`.
+W Windows proces administratora zabezpiecza katalog domyślny (bez `STD_DATA_ROOT`) przez `Protect-StdDataFolder`: właściciel
+Administratorzy, bez dziedziczenia z `ProgramData`, pełna kontrola tylko dla SYSTEM i Administratorów (kod z `App\` działa jako
+administrator). Dowiązanie (junction / symlink) w miejscu katalogu jest usuwane (samo dowiązanie) i powstaje zwykły folder.
 
 | `Get-StdPath -Kind` | Ścieżka | Zawartość |
 | --- | --- | --- |
 | `Root` | `<root>` | |
 | `App` | `<root>\App` | kopie narzędzia (`App\<wersja>\`), etap 2 |
 | `Cache` | `<root>\Cache` | `clients.sdt`, `<klient>\release.sdt` (podpisane koperty, sprawdzane przy każdym odczycie) |
-| `Logs` | `<root>\Logs` | `<deploymentId>\deploy.log`, `events.jsonl`, etap 2 |
+| `Logs` | `<root>\Logs` | `<deploymentId>\deploy.log`, `events.jsonl`, `ui-<yyyyMMdd>.log` (dziennik okien), etap 2 |
 | `Outbox` | `<root>\Outbox` | raporty czekające na wysłanie, etap 4 |
 | `State` | `<root>\state.json` | stan bieżącego wdrożenia (bez haseł), etap 2 |
 | `Revisions` | `<root>\revisions.json` | najwyższa widziana rewizja: `{ "clients": 7, "lizard": 42 }` |
@@ -229,6 +232,7 @@ Parametry w nawiasach kwadratowych są opcjonalne. Wszystkie funkcje mają `[Cmd
 | --- | --- |
 | `Get-StdVersion` | `[version]` modułu |
 | `Get-StdDataRoot` | jak w sekcji 1; tworzy katalog, jeśli go nie ma |
+| `Protect-StdDataFolder -Path <string>` | uprawnienia z sekcji 1 (tylko Windows, wymaga administratora; folder z takimi uprawnieniami zostaje bez zmian); dowiązanie albo brak folderu → `[STD-IO]` |
 | `Get-StdPath -Kind <Root\|App\|Cache\|Logs\|Outbox\|State\|Revisions\|Prefs\|Bootstrap>` | pełna ścieżka; katalogi tworzy, plików nie |
 | `ConvertTo-StdHashtable -InputObject <obj>` | głęboko: `PSCustomObject` / `IDictionary` → `[ordered]@{}`, tablice → `object[]` (także jednoelementowe i puste), reszta bez zmian |
 | `ConvertFrom-StdJson -Json <string>` | `ConvertFrom-Json` + `ConvertTo-StdHashtable`; błąd → `[STD-JSON] ...` |
@@ -242,7 +246,7 @@ Parametry w nawiasach kwadratowych są opcjonalne. Wszystkie funkcje mają `[Cmd
 | `Clear-StdLogMasks` | |
 | `Protect-StdLogText -Text <string>` | podmienia każdą zarejestrowaną wartość (najdłuższe najpierw, bez względu na wielkość liter) na `***` |
 | `Test-StdIsAdmin` | `[bool]`; na Linuksie: `id -u` = 0 |
-| `Start-StdElevated -ScriptPath <string> [-Arguments <string[]>] [-WorkingDirectory <string>]` | uruchamia `powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File "<ScriptPath>" <args>` z `-Verb RunAs`; zwraca `$true`, gdy proces wystartował, `$false` gdy użytkownik odmówił UAC (błąd 1223). Argumenty z cudzysłowami są poprawnie cytowane. |
+| `Start-StdElevated -ScriptPath <string> [-Arguments <string[]>] [-WorkingDirectory <string>] [-PassThru]` | uruchamia `powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File "<ScriptPath>" <args>` z `-Verb RunAs`; zwraca `$true`, gdy proces wystartował, `$false` gdy użytkownik odmówił UAC (błąd 1223). `-PassThru`: zamiast `$true` obiekt procesu (wywołujący go zamyka). Argumenty z cudzysłowami są poprawnie cytowane. |
 
 ### 3.2 `Modules\Std.Http.ps1`
 
@@ -461,7 +465,8 @@ Register-StdStep -Id 'Network.WaitForNetwork' -Title 'Czekanie na sieć' -Phase 
 - `TaskId` (lista 2.8): krok jest włączony, gdy `Context.Config.Tasks[TaskId]` = `$true`. Bez `TaskId` krok jest zawsze włączony.
 - `Detect` niczego nie zmienia; wynik `Blocked` oznacza „nie da się wykonać” (z `Detail` - dlaczego).
 - `Run` zwraca wynik albo rzuca wyjątek (= `Error` z komunikatem wyjątku). `Reboot = $true`: krok wymaga restartu.
-- `-Critical`: błąd tego kroku przerywa resztę fazy (pozostałe kroki dostają `Skipped` z opisem). Bez `-Critical` silnik idzie dalej.
+- `-Critical`: błąd tego kroku przerywa resztę fazy (pozostałe kroki dostają `Cancelled` z opisem: nie zostały wykonane, więc „Ponów nieudane”
+  i `-Resume` uruchomią je ponownie; wdrożenie nie dostaje przez to stanu `Cancelled`). Bez `-Critical` silnik idzie dalej.
 - `Get-StdStep [-Id]`, `Clear-StdSteps` (testy).
 
 `Context` (tworzony przez silnik): `@{ Config` (wynik `Resolve-StdEffectiveConfig` plus `Answers`) `; State` (stan wdrożenia, 6.3) `;
@@ -554,7 +559,8 @@ Zakaz `Do-WpfEvents`, `PushFrame`, `Start-Sleep` w kodzie okien.
    (`<OriginRoot>\wifi\*.xml`), „Odśwież”, „Pomiń”. Wynik: `Connected` / `Skipped`.
 2. **Logowanie** (`Show-StdLoginWindow`) - adres serwera (z `bootstrap.json`; pole do wpisania, gdy go nie ma - zapis przez
    `Save-StdBootstrapLocal`), login, hasło, „Zaloguj” (w tle: `New-StdSession` + `Get-StdClientIndex`), błąd pod polami, „Pracuj offline”
-   (gdy jest kopia listy klientów w cache / na pendrive'ie). Wynik: `@{ Session; Index; Source }` albo `$null`.
+   (gdy jest kopia listy klientów w cache / na pendrive'ie). Wynik: `@{ Session; Index; Source; Bootstrap }` albo `$null`
+   (`Bootstrap`: plik startowy użyty do logowania, także z adresem wpisanym w oknie; program przekazuje go oknu głównemu).
 3. **Okno główne** (`Show-StdMainWindow`):
    - nagłówek: logo, „Smart Tool for Deployment 4.0.0”, pastylka źródła (`serwer` / `kopia lustrzana` / `cache` / `pendrive`), klient · lokalizacja · rev,
      przełącznik motywu;
@@ -579,24 +585,34 @@ osobno w try/catch (brak danych = `$null`, nie błąd).
 - `v4\Start-STD.cmd`: `powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0SmartToolforDeployment.ps1" %*`.
 - `v4\SmartToolforDeployment.ps1 [-Server <url>] [-OriginRoot <dir>] [-NoCopy] [-PreviewMode]`:
   1. Brak uprawnień administratora (`Test-StdIsAdmin`) → `Start-StdElevated` z tymi samymi parametrami i wyjście; odmowa UAC →
-     komunikat „STD wymaga uprawnień administratora” i wyjście.
-  2. Wątek nie STA → ponowne uruchomienie z `-STA`.
+     komunikat „STD wymaga uprawnień administratora” i wyjście. Start z dysku sieciowego (`Get-StdNetworkPath`): proces administratora
+     dostaje ścieżki UNC (`-OriginRoot`) i folder roboczy `%SystemRoot%`; gdy udziału nie da się ustalić albo proces kończy się od razu
+     z błędem - komunikat, żeby skopiować STD na pendrive / dysk lokalny.
+  2. Wątek nie STA → ponowne uruchomienie z `-STA`. Potem `Protect-StdDataFolder` dla `Get-StdDataRoot` i blokada jednej instancji
+     (`Enter-StdAppInstance`, mutex `Global\STD4-SmartToolForDeployment`): gdy STD już działa - komunikat i wyjście.
   3. Program uruchomiony spoza `Get-StdPath App\<wersja>` i bez `-NoCopy` → kopia `STD.psd1`, `STD.psm1`, `Modules`, `GUI`, `Steps`
      do `App\<wersja>` (pomijana, gdy pliki są identyczne - porównanie SHA-256) i ponowne uruchomienie stamtąd z `-OriginRoot <folder startowy>`.
      `OriginRoot` to pendrive: tam szukamy `bootstrap.json`, `offline\` i `wifi\`. Nowa wersja = nowy folder `App\<wersja>`; reszta `ProgramData\STD`
-     (ustawienia, cache) zostaje. Stare wersje w `App\` (poza dwiema najnowszymi) są usuwane.
-  4. Import modułu i okien, `Initialize-StdNetwork`, motyw z `prefs.json`, ekrany z 7.3.
+     (ustawienia, cache) zostaje. Stare wersje w `App\` (poza dwiema najnowszymi) są usuwane (nie, gdy działa inny proces STD).
+     `App\` i `App\<wersja>` dostają uprawnienia z `Protect-StdDataFolder`; kopia, która jest dowiązaniem, ma dowiązanie w środku,
+     nie należy do Administratorów / SYSTEM albo nie ma tych uprawnień, jest usuwana i kopiowana od nowa (dowiązań nie przeglądamy).
+  4. Import modułu i okien, `Initialize-StdNetwork`, motyw z `prefs.json`, dziennik okien `Logs\ui-<yyyyMMdd>.log`
+     (`Register-StdFileLogSink`; okno z błędem podaje tę ścieżkę), ekrany z 7.3.
   5. `-PreviewMode`: bez podnoszenia uprawnień, kopiowania i pokazywania okien (testy i podgląd UI).
 - Logika kroków 1-3 jest w `Modules\Std.App.ps1` (bez WPF, testowalna): `Get-StdAppFolder -Version`, `Test-StdAppCopyCurrent -Source -Target`,
   `Sync-StdAppFolder -Source <v4> [-Version] [-Keep 2]` (kopia z porównaniem SHA-256, usuwanie starszych wersji, zwraca folder docelowy),
-  `Get-StdRelaunchArgument -BoundParameters <hashtable> [-Add <hashtable>]` (poprawnie cytowane argumenty dla `Start-StdElevated`).
+  `Get-StdRelaunchArgument -BoundParameters <hashtable> [-Add <hashtable>]` (poprawnie cytowane argumenty dla `Start-StdElevated`),
+  `Get-StdNetworkPath -Path` (`@{ IsNetwork; UncPath }`), `Enter-StdAppInstance [-WaitSec]` / `Exit-StdAppInstance`.
 
 ## 9. Kroki etapu 2, podgląd UI i testy
 
 - `Steps\Network.ps1`: `Network.WaitForNetwork` (`TaskId WaitForNetwork`, Detect: jest adres IPv4 spoza 169.254/127 i serwer (albo
-  pierwsze źródło `https`) odpowiada na port 443 → `Done`; Run: sprawdzanie co 3 s do `TimeoutMin`, z przerwaniem).
+  pierwsze źródło `https`) odpowiada na port 443 → `Done`; Run: sprawdzanie co 3 s do `TimeoutMin`, z przerwaniem). Praca offline
+  (`Config.Offline = $true`, okno główne bez sesji; wtedy bez `Config.Server`, a w `Config.Bootstrap` tylko `mirrors`): serwera STD
+  nie sprawdza, wystarcza adres IPv4 (źródła bez sesji - `https` z `auth: none`, UNC - są tylko sprawdzane informacyjnie).
 - `Steps\Power.ps1`: `Power.SuspendSleep` (`TaskId SuspendSleep`, Run: `SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED|ES_DISPLAY_REQUIRED)`
-  w wątku silnika; silnik przywraca stan przy końcu wdrożenia).
+  w wątku silnika; silnik przywraca stan przy końcu wdrożenia; przy włączonym `SuspendSleep` silnik wstrzymuje usypianie także sam
+  na starcie każdego wdrożenia, również przy `-OnlySteps` i `-Resume`).
 - Pozostałe kroki (aplikacje, konto, domena, ustawienia, BitLocker, Deinstalator, ...) i ekran pytań: etap 3.
 - `v4\Tests\Std.Engine.Tests.ps1`: silnik z fałszywymi krokami w `TestDrive` (plan, kolejność, pauza, przerwanie, błąd i `-Critical`,
   `RebootRequired`, `state.json` bez haseł, `-Resume`, `-OnlySteps`, maski w logu silnika, `Invoke-StdProcess`: kod wyjścia, limit czasu, przerwanie).

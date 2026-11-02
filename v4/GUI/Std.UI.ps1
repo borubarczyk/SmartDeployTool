@@ -49,6 +49,11 @@ if (-not (Get-Command -Name 'Write-StdLog' -ErrorAction SilentlyContinue)) {
 if (-not (Get-Variable -Name 'StdUiTaskCounter' -Scope Script -ErrorAction SilentlyContinue)) {
     $script:StdUiTaskCounter = 0
 }
+# Plik dziennika okien (ustawia go program, gdy rejestruje odbiornik logu do pliku). Pusty = okna z błędem
+# mówią tylko o dzienniku STD, bez ścieżki.
+if (-not (Get-Variable -Name 'StdUiLogPath' -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:StdUiLogPath = $null
+}
 
 # ---------------------------------------------------------------------------------------------
 # Błędy w oknach
@@ -93,7 +98,8 @@ function Show-StdUiError {
     <#
     .SYNOPSIS
     Zapisuje błąd w logu (poziom Error, ze śladem stosu skryptu) i pokazuje go w oknie komunikatu.
-    Gdy okna nie da się pokazać, zostaje sam wpis w logu.
+    Gdy okna nie da się pokazać, zostaje sam wpis w logu. Okno podaje plik dziennika ($script:StdUiLogPath),
+    gdy program go ustawił.
     #>
     [CmdletBinding()]
     param(
@@ -113,7 +119,11 @@ function Show-StdUiError {
         $private:stdErrLog = '{0} | {1}' -f $private:stdErrLog, (($ErrorObject.ScriptStackTrace -replace '\r?\n', ' <- ').Trim())
     }
     try { Write-StdLog -Level Error -Source $Source -Message $private:stdErrLog } catch { }
-    $private:stdErrMessage = "{0}`n`n{1}`n`nSzczegóły są w dzienniku STD." -f $Context, $private:stdErrText
+    $private:stdErrWhere = 'Szczegóły są w dzienniku STD.'
+    if (-not [string]::IsNullOrWhiteSpace([string]$script:StdUiLogPath)) {
+        $private:stdErrWhere = "Szczegóły są w dzienniku STD:`n{0}" -f [string]$script:StdUiLogPath
+    }
+    $private:stdErrMessage = "{0}`n`n{1}`n`n{2}" -f $Context, $private:stdErrText, $private:stdErrWhere
     $private:stdErrTitle = $Title
     $private:stdErrOwner = $Owner
     Remove-Variable -Name ErrorObject, Context, Source, Owner, Title -Scope Local -ErrorAction SilentlyContinue

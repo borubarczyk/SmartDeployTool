@@ -738,6 +738,20 @@ function Test-StdUiOfflineIndex {
     return $false
 }
 
+function Get-StdUiOfflineBootstrap {
+    <#
+    .SYNOPSIS
+    Plik startowy dla pracy offline (bez sesji): tylko kopie lustrzane, bez adresu serwera STD, który nie
+    odpowiadał. Zwraca @{ mirrors } albo $null, gdy kopii nie ma (bez WPF).
+    #>
+    [CmdletBinding()]
+    param([AllowNull()]$Bootstrap)
+    if ($null -eq $Bootstrap) { return $null }
+    $mirrors = @(@(Get-StdUiValue $Bootstrap 'mirrors') | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    if ($mirrors.Count -eq 0) { return $null }
+    return @{ mirrors = $mirrors }
+}
+
 # ---------------------------------------------------------------------------------------------
 # Błędy (bez WPF)
 # ---------------------------------------------------------------------------------------------

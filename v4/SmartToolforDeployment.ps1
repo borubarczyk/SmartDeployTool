@@ -18,14 +18,19 @@
 #
 # Kolejność startu:
 # 1. Brak uprawnień administratora -> ponowne uruchomienie jako administrator (okno UAC) i wyjście.
-#    Odmowa w oknie UAC -> komunikat „STD wymaga uprawnień administratora” i wyjście.
+#    Odmowa w oknie UAC -> komunikat „STD wymaga uprawnień administratora” i wyjście. Start z dysku
+#    sieciowego: proces administratora dostaje ścieżki UNC (nie widzi liter dysków zmapowanych przez
+#    zwykłego użytkownika); gdy ich nie da się ustalić albo proces od razu się kończy - komunikat, co zrobić.
 # 2. Wątek nie STA (okna WPF tego wymagają) -> ponowne uruchomienie z -STA.
+#    Potem: folder %ProgramData%\STD tylko dla Administratorów i SYSTEM (Protect-StdDataFolder) i blokada
+#    jednej instancji (Enter-StdAppInstance) - gdy STD już działa, komunikat i wyjście.
 # 3. Uruchomienie spoza %ProgramData%\STD\App (np. z pendrive'a) i bez -NoCopy -> kopia narzędzia do
 #    App\<wersja> (pomijana, gdy pliki są identyczne) i ponowne uruchomienie stamtąd z -OriginRoot.
 #    Dzięki temu pendrive można wyjąć w trakcie wdrożenia, a po restarcie STD działa z dysku.
 #    Gdy kopia się nie uda, STD działa dalej z bieżącego folderu.
-# 4. Moduł STD i okna, protokoły TLS, motyw z prefs.json, potem ekrany: „Połącz z siecią” (tylko gdy
-#    komputer nie ma sieci) -> „Logowanie” -> okno główne.
+# 4. Moduł STD i okna, protokoły TLS, motyw z prefs.json, dziennik okien (Logs\ui-<data>.log), potem ekrany:
+#    „Połącz z siecią” (tylko gdy komputer nie ma sieci) -> „Logowanie” -> okno główne (z plikiem startowym,
+#    którego użyło logowanie).
 #
 # Każdy nieobsłużony błąd trafia do %TEMP%\STD-crash.log i do prostego okna komunikatu (trap na dole
 # pliku działa dla całego skryptu). Dane logowania do domeny i hasło lokalnego administratora są
@@ -152,13 +157,15 @@ function Get-StartupMarker {
 function Invoke-StartupRelaunch {
     # Ponowne uruchomienie programu (Start-StdElevated: powershell.exe -STA, jako administrator) z tymi samymi
     # parametrami, dopisanym etapem w -StdRelaunch i parametrami z -Add. Zwraca $true, gdy proces wystartował.
+    # -PassThru: wynik Start-StdElevated -PassThru (obiekt procesu albo $true; $false przy odmowie UAC).
     param(
         [Parameter(Mandatory = $true)][string]$ScriptPath,
         [Parameter(Mandatory = $true)][string]$Stage,
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$BoundParameters,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Done,
         [System.Collections.IDictionary]$Add,
-        [string]$WorkingDirectory
+        [string]$WorkingDirectory,
+        [switch]$PassThru
     )
     $stages = New-Object 'System.Collections.Generic.List[string]'
     foreach ($item in $Done) { if (-not $stages.Contains($item)) { $stages.Add($item) } }
@@ -169,7 +176,21 @@ function Invoke-StartupRelaunch {
     Write-StdLog -Level Info -Source 'SmartToolforDeployment' -Message ("Ponowne uruchomienie STD (etap: {0}): {1}" -f $Stage, $ScriptPath)
     $startParams = @{ ScriptPath = $ScriptPath; Arguments = $arguments }
     if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) { $startParams.WorkingDirectory = $WorkingDirectory }
+    if ($PassThru) { return (Start-StdElevated @startParams -PassThru) }
     return [bool](Start-StdElevated @startParams)
+}
+
+function Get-StartupEarlyExitCode {
+    # Kod wyjścia procesu, który zakończył się w ciągu -Milliseconds; $null, gdy nadal działa albo kodu nie da się
+    # odczytać. Zamyka obiekt procesu (sam proces działa dalej).
+    param([Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process, [int]$Milliseconds = 5000)
+    try {
+        if ($Process.WaitForExit($Milliseconds)) { return [int]$Process.ExitCode }
+    } catch {
+    } finally {
+        $Process.Dispose()
+    }
+    return $null
 }
 
 function Select-StartupResult {
@@ -184,25 +205,35 @@ function Select-StartupResult {
 
 function Get-StartupBootstrap {
     # Plik startowy (adres serwera): -Server, <OriginRoot>\bootstrap.json, zapisany adres. Błędny adres
-    # nie zatrzymuje programu: komunikat, a technik wpisze adres w oknie logowania.
+    # nie zatrzymuje programu: jeden komunikat i kolejne źródła - bootstrap.json (gdy błędny był -Server)
+    # i adres zapisany na tym komputerze (Get-StdPath Bootstrap); bez nich technik wpisze adres w oknie logowania.
     param([AllowNull()][string]$ServerUrl, [Parameter(Mandatory = $true)][string]$Root)
     try {
         return (Get-StdBootstrap -Server $ServerUrl -ScriptRoot $Root)
     } catch {
         $text = Protect-StartupText -Text $_.Exception.Message -MaxLength 600
-        Write-StdLog -Level Warn -Source 'SmartToolforDeployment' -Message $text
-        $message = "Nie udało się odczytać adresu serwera STD:`n`n$text`n`nPodaj adres serwera w oknie logowania."
-        try {
-            [void](Show-StdMessage -Message $message -Title 'STD' -Image Warning)
-        } catch {
-            Show-StartupMessage -Message $message -Icon Warning
-        }
     }
+    Write-StdLog -Level Warn -Source 'SmartToolforDeployment' -Message $text
+    $fallback = $null
     if (-not [string]::IsNullOrWhiteSpace($ServerUrl)) {
         # Zły adres w -Server: próbujemy jeszcze bootstrap.json i zapisanego adresu.
-        try { return (Get-StdBootstrap -ScriptRoot $Root) } catch { }
+        try { $fallback = Get-StdBootstrap -ScriptRoot $Root } catch { }
     }
-    return $null
+    if ($null -eq $fallback) {
+        # Błędny bootstrap.json na pendrive'ie: adres zapisany wcześniej na tym komputerze (bez pliku z pendrive'a).
+        try { $fallback = Get-StdBootstrap } catch { }
+    }
+    if ($null -ne $fallback) {
+        $message = "Nie udało się odczytać adresu serwera STD:`n`n$text`n`nSTD użyje adresu $($fallback.server)."
+    } else {
+        $message = "Nie udało się odczytać adresu serwera STD:`n`n$text`n`nPodaj adres serwera w oknie logowania."
+    }
+    try {
+        [void](Show-StdMessage -Message $message -Title 'STD' -Image Warning)
+    } catch {
+        Show-StartupMessage -Message $message -Icon Warning
+    }
+    return $fallback
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -237,11 +268,53 @@ if (-not $PreviewMode -and -not (Test-StdIsAdmin)) {
             'zaloguj się na konto administratora albo uruchom Start-STD.cmd poleceniem „Uruchom jako administrator”.')
         exit 1
     }
-    $stdAppStarted = Invoke-StartupRelaunch -ScriptPath $stdAppScriptPath -Stage 'admin' -BoundParameters $stdAppBound -Done $stdAppDone -WorkingDirectory $stdAppScriptRoot
+    # Start z dysku sieciowego: proces administratora nie widzi liter dysków zmapowanych przez zwykłego użytkownika
+    # (osobna sesja logowania). Dostaje więc ścieżki UNC i folder roboczy na dysku lokalnym.
+    $stdAppRelaunchPath = $stdAppScriptPath
+    $stdAppRelaunchDir = $stdAppScriptRoot
+    $stdAppRelaunchAdd = $null
+    $stdAppNetworkHelp = ('Skopiuj folder STD na pendrive albo na dysk lokalny tego komputera i uruchom Start-STD.cmd stamtąd. ' +
+        'Możesz też uruchomić Start-STD.cmd z wiersza poleceń otwartego jako administrator.')
+    $stdAppNetworkScript = @{ IsNetwork = $false; UncPath = $null }
+    $stdAppNetworkOrigin = @{ IsNetwork = $false; UncPath = $null }
+    if ($stdAppIsWindows) {
+        $stdAppNetworkScript = Get-StdNetworkPath -Path $stdAppScriptPath
+        $stdAppNetworkOrigin = Get-StdNetworkPath -Path $stdAppOrigin
+    }
+    $stdAppNetwork = ($stdAppNetworkScript.IsNetwork -or $stdAppNetworkOrigin.IsNetwork)
+    if ($stdAppNetwork) {
+        $stdAppNetworkUnknown = $null
+        if ($stdAppNetworkScript.IsNetwork -and $null -eq $stdAppNetworkScript.UncPath) { $stdAppNetworkUnknown = $stdAppScriptRoot }
+        elseif ($stdAppNetworkOrigin.IsNetwork -and $null -eq $stdAppNetworkOrigin.UncPath) { $stdAppNetworkUnknown = $stdAppOrigin }
+        if ($null -ne $stdAppNetworkUnknown) {
+            Show-StartupMessage -Icon Error -Message ((('STD uruchomiono z dysku sieciowego ({0}), którego proces administratora nie zobaczy, ' +
+                'a nie udało się ustalić, na jaki udział sieciowy wskazuje ten dysk.') -f $stdAppNetworkUnknown) + "`n`n" + $stdAppNetworkHelp)
+            exit 1
+        }
+        if ($stdAppNetworkScript.IsNetwork) { $stdAppRelaunchPath = [string]$stdAppNetworkScript.UncPath }
+        $stdAppRelaunchOrigin = $stdAppOrigin
+        if ($stdAppNetworkOrigin.IsNetwork) { $stdAppRelaunchOrigin = [string]$stdAppNetworkOrigin.UncPath }
+        $stdAppRelaunchAdd = @{ OriginRoot = $stdAppRelaunchOrigin }
+        $stdAppRelaunchDir = $env:SystemRoot
+    }
+    $stdAppStarted = Invoke-StartupRelaunch -ScriptPath $stdAppRelaunchPath -Stage 'admin' -BoundParameters $stdAppBound -Done $stdAppDone `
+        -Add $stdAppRelaunchAdd -WorkingDirectory $stdAppRelaunchDir -PassThru
     if (-not $stdAppStarted) {
         Show-StartupMessage -Icon Warning -Message ('STD wymaga uprawnień administratora. Uruchom STD ponownie i wybierz „Tak” w oknie ' +
             'Kontrola konta użytkownika.')
         exit 1
+    }
+    if ($stdAppStarted -is [System.Diagnostics.Process]) {
+        $stdAppExitCode = $null
+        # Z udziału sieciowego proces administratora może nie mieć dostępu do pliku (inne konto, hasło do udziału
+        # wpisane tylko w tej sesji) - wtedy kończy się od razu i bez komunikatu. Czekamy chwilę na taki koniec.
+        if ($stdAppNetwork) { $stdAppExitCode = Get-StartupEarlyExitCode -Process $stdAppStarted -Milliseconds 5000 } else { $stdAppStarted.Dispose() }
+        if ($null -ne $stdAppExitCode -and $stdAppExitCode -ne 0) {
+            Write-StdLog -Level Warn -Source 'SmartToolforDeployment' -Message ("STD jako administrator zakończył się od razu (kod {0}) - start z udziału sieciowego {1}." -f $stdAppExitCode, $stdAppRelaunchPath)
+            Show-StartupMessage -Icon Error -Message ((('STD nie uruchomił się jako administrator z udziału sieciowego {0} (kod wyjścia {1}). ' +
+                'Konto administratora prawdopodobnie nie ma dostępu do tego udziału.') -f $stdAppRelaunchPath, $stdAppExitCode) + "`n`n" + $stdAppNetworkHelp)
+            exit 1
+        }
     }
     exit 0
 }
@@ -258,6 +331,28 @@ if (-not $PreviewMode -and $stdAppIsWindows -and [System.Threading.Thread]::Curr
         exit 1
     }
     exit 0
+}
+
+# Folder danych STD (%ProgramData%\STD) tylko dla Administratorów i SYSTEM: kod z App\ działa jako
+# administrator, więc zwykły użytkownik nie może tam niczego dopisać ani podmienić.
+if (-not $PreviewMode -and $stdAppIsWindows) {
+    try {
+        Protect-StdDataFolder -Path (Get-StdDataRoot)
+    } catch {
+        Write-StdLog -Level Warn -Source 'SmartToolforDeployment' -Message (Protect-StartupText -Text $_.Exception.Message -MaxLength 600)
+    }
+}
+
+# Jedna instancja STD na komputerze (przed kopią do App\: druga kopia naraz zepsułaby pierwszą). Blokadę trzyma
+# proces, który pokazuje okna, do końca pracy. Proces z kopii w App\<wersja> czeka chwilę, bo proces
+# z pendrive'a oddaje blokadę dopiero po jego uruchomieniu.
+if (-not $PreviewMode) {
+    $stdAppInstanceWait = 0
+    if ($stdAppDone -contains 'copy') { $stdAppInstanceWait = 15 }
+    if (-not (Enter-StdAppInstance -WaitSec $stdAppInstanceWait)) {
+        Show-StartupMessage -Icon Information -Message "STD już działa na tym komputerze.`n`nPrzełącz się do otwartego okna STD (pasek zadań)."
+        exit 0
+    }
 }
 
 # 3. Kopia do %ProgramData%\STD\App\<wersja> i ponowne uruchomienie stamtąd.
@@ -289,7 +384,11 @@ if (-not $PreviewMode -and -not $NoCopy) {
             } catch {
                 $stdAppCopyProblem = 'Nie udało się uruchomić STD z kopii na dysku komputera: ' + $_.Exception.Message
             }
-            if ($stdAppStarted) { exit 0 }
+            if ($stdAppStarted) {
+                # Blokadę jednej instancji przejmuje proces z kopii w App\<wersja>.
+                Exit-StdAppInstance
+                exit 0
+            }
         }
         if ($null -ne $stdAppCopyProblem) {
             $stdAppCopyProblem = Protect-StartupText -Text $stdAppCopyProblem -MaxLength 600
@@ -309,6 +408,17 @@ Initialize-StdNetwork
 if ($PreviewMode) {
     $script:StdPreview = $true
     return
+}
+
+# Dziennik okien: błędy okien (Show-StdUiError pokazuje tę ścieżkę) i komunikaty programu trafiają do
+# Logs\ui-<data>.log. Bez niego wpisy z okien logowania i sieci nie trafiałyby do żadnego pliku.
+$script:StdUiLogPath = $null
+try {
+    $stdAppUiLog = Join-Path (Get-StdPath -Kind Logs) ('ui-{0}.log' -f (Get-Date).ToString('yyyyMMdd', [System.Globalization.CultureInfo]::InvariantCulture))
+    Register-StdFileLogSink -Name 'StdUi' -Path $stdAppUiLog
+    $script:StdUiLogPath = $stdAppUiLog
+} catch {
+    Write-StdLog -Level Warn -Source 'SmartToolforDeployment' -Message ('Nie udało się otworzyć dziennika okien: ' + $_.Exception.Message)
 }
 
 foreach ($stdAppScreen in @('Show-StdConnectWindow', 'Show-StdLoginWindow', 'Show-StdMainWindow')) {
@@ -335,9 +445,17 @@ if ($null -eq $stdAppLogin) {
     return
 }
 
-if ($null -eq $stdAppBootstrap) {
-    # Adres wpisany w oknie logowania jest już zapisany (Save-StdBootstrapLocal) - wczytujemy go.
-    $stdAppBootstrap = Get-StartupBootstrap -ServerUrl $Server -Root $stdAppOrigin
+# Plik startowy dla okna głównego: ten, którego użyło logowanie (także adres wpisany w oknie). Bez ponownego
+# czytania bootstrap.json - błędny plik na pendrive'ie zasłoniłby adres wpisany przy logowaniu.
+if ($stdAppLogin -is [System.Collections.IDictionary] -and $stdAppLogin.Contains('Bootstrap') -and $null -ne $stdAppLogin['Bootstrap']) {
+    $stdAppBootstrap = $stdAppLogin['Bootstrap']
+} elseif ($null -eq $stdAppBootstrap) {
+    # Adres wpisany w oknie logowania jest już zapisany (Save-StdBootstrapLocal) - tylko ten plik, bez pendrive'a.
+    try {
+        $stdAppBootstrap = Get-StdBootstrap
+    } catch {
+        Write-StdLog -Level Warn -Source 'SmartToolforDeployment' -Message (Protect-StartupText -Text $_.Exception.Message -MaxLength 600)
+    }
 }
 
 $null = Show-StdMainWindow -Session $stdAppLogin.Session -Index $stdAppLogin.Index -IndexSource $stdAppLogin.Source `

@@ -4,6 +4,8 @@
 # każde okno New-Std*Window w obu motywach (zbudowane i rozmieszczone przez Measure/Arrange, bez pokazywania),
 # okno główne w każdym stanie podglądu, okno komunikatu (Show-StdMessage z kliknięciem przycisku), powiadomienie
 # (Show-StdToast) i zadania w tle (Start-StdUiTask: OnComplete, OnError, log zadania, porzucenie po zamknięciu okna).
+# Okno główne bez pokazywania: konfiguracja silnika offline, tik timera odporny na błąd jednej części, zamykanie
+# okna po zatrzymaniu timera; wynik logowania z plikiem startowym; okno z błędem z plikiem dziennika.
 # Pester 5, Windows PowerShell 5.1 w wątku STA. Bez administratora i bez sieci; dane lokalne w TestDrive
 # ($env:STD_DATA_ROOT). Kody błędów sprawdzamy przez -ExpectedMessage '*`[STD-...`]*' - nawiasy kwadratowe trzeba
 # poprzedzić znakiem ` (w -like oznaczają zbiór znaków).
@@ -266,6 +268,14 @@ Describe 'Std.UI' {
             $failure.OfflineSource | Should -Be 'cache'
         }
 
+        It 'praca offline: plik startowy tylko z kopiami lustrzanymi, bez adresu serwera' {
+            $null -eq (Get-StdUiOfflineBootstrap -Bootstrap $null) | Should -BeTrue
+            $null -eq (Get-StdUiOfflineBootstrap -Bootstrap ([ordered]@{ server = 'https://std.example.com/std/'; mirrors = @() })) | Should -BeTrue
+            $offline = Get-StdUiOfflineBootstrap -Bootstrap ([ordered]@{ server = 'https://std.example.com/std/'; mirrors = @('\\nas\std\', ' ', 'D:\kopia\std\'); auth = @{ mode = 'basic' } })
+            (@($offline.Keys) -join ',') | Should -Be 'mirrors'
+            (@($offline['mirrors']) -join '|') | Should -Be '\\nas\std\|D:\kopia\std\'
+        }
+
         It 'podsumowanie wdrożenia: wynik, kroki, bez sekretów' {
             Register-StdLogMask -Value 'SekretX12345'
             $steps = @((New-StdUiStepItem -Id 'a.a' -Title 'Krok A' -State Ok), (New-StdUiStepItem -Id 'a.b' -Title 'Krok B' -State Error -Detail 'SekretX12345'))
@@ -502,6 +512,42 @@ Describe 'Std.UI' {
             } finally { $preview.Close() }
         }
 
+        It 'Logowanie: wynik ma plik startowy użyty do logowania (adres wpisany w oknie jest zapisany)' {
+            $bootstrapPath = Get-StdPath -Kind Bootstrap
+            $win = New-StdLoginWindow -Bootstrap $null -OriginRoot $TestDrive
+            try {
+                $ui = $win.Tag
+                $ui.C.txtServer.Text = 'std.example.com/std'
+                # Jak w Start-StdLoginAttempt: plik startowy z wpisanego adresu, potem wynik zadania logowania.
+                $ui.LoginBootstrap = Get-StdLoginBootstrap -Ui $ui
+                Complete-StdLoginAttempt -Ui $ui -Result @{ Session = [pscustomobject]@{ UserName = 'technik' }; Index = @{ Source = 'server'; Revision = 3; Index = $script:Sample.Index } }
+                $ui.Result.Source | Should -Be 'server'
+                $ui.Result.Session.UserName | Should -Be 'technik'
+                $null -ne $ui.Result.Index | Should -BeTrue
+                $ui.Result.Bootstrap['server'] | Should -Be 'https://std.example.com/std/'
+                (Get-StdUiValue (Read-StdJsonFile -Path $bootstrapPath) 'server') | Should -Be 'https://std.example.com/std/'
+            } finally {
+                # Okno zamyka już Complete-StdLoginAttempt; tu tylko na wypadek błędu wcześniej.
+                try { $win.Close() } catch { }
+                Remove-Item -LiteralPath $bootstrapPath -Force -ErrorAction SilentlyContinue
+            }
+            $given = [ordered]@{ server = 'https://std.example.com/std/'; mirrors = @('\\nas\std\') }
+            $offlineWin = New-StdLoginWindow -Bootstrap $given -OriginRoot $TestDrive
+            try {
+                $ui = $offlineWin.Tag
+                $ui.LoginBootstrap = $given
+                $index = @{ Source = 'cache'; Index = $script:Sample.Index; Attempts = @(@{ Source = 'server'; Error = '[STD-HTTP-NET] GET https://std.example.com/std/clients.sdt - serwer nie odpowiada' }, @{ Source = 'cache'; Error = $null }) }
+                Complete-StdLoginAttempt -Ui $ui -Result @{ Session = $null; Index = $index }
+                $null -eq $ui.Result | Should -BeTrue
+                Start-StdLoginOffline -Ui $ui
+                $ui.Result.Source | Should -Be 'cache'
+                $null -eq $ui.Result.Session | Should -BeTrue
+                $ui.Result.Bootstrap['server'] | Should -Be 'https://std.example.com/std/'
+                (@($ui.Result.Bootstrap['mirrors']) -join '|') | Should -Be '\\nas\std\'
+            } finally { try { $offlineWin.Close() } catch { } }
+            Test-Path -LiteralPath $bootstrapPath | Should -BeFalse
+        }
+
         It 'okno główne: lista klientów bez sieci i bez silnika' {
             $win = New-StdMainWindow -Session $null -Index $script:Sample.Index -IndexSource 'cache' -Bootstrap $null -OriginRoot $TestDrive
             try {
@@ -542,6 +588,164 @@ Describe 'Std.UI' {
                 (Get-StdUiState -EventSource $win.Tag.C.btnCheck).Kind | Should -Be 'Main'
                 (Get-StdUiState -EventSource $win).Kind | Should -Be 'Main'
             } finally { $win.Close() }
+        }
+    }
+
+    # ---------------------------------------------------------------------------------------------
+    # Okno główne bez pokazywania: konfiguracja silnika, tik timera, zamykanie; okno z błędem
+    # ---------------------------------------------------------------------------------------------
+
+    Context 'Okno główne - silnik, timer i błędy' -Skip:$script:StdUiNoWpf {
+        BeforeAll {
+            function New-StdTestTickUi {
+                # Stan okna głównego tylko z polami, których używa tik timera. Kolejka logu okna rzuca wyjątek przy
+                # odczycie (awaria jednej części tiku); zakończony silnik czeka na zwolnienie.
+                param([Parameter(Mandatory = $true)]$Window)
+                $queue = [pscustomobject]@{ IsEmpty = $false }
+                $queue | Add-Member -MemberType ScriptMethod -Name TryDequeue -Value { throw '[STD-TEST] awaria kolejki logu okna' }
+                $retired = New-Object 'System.Collections.Generic.List[object]'
+                $retired.Add(@{ Id = 'stary'; AsyncResult = $null })
+                return @{
+                    Kind = 'Main'; Window = $Window; UiLogQueue = $queue; Engine = $null; EngineDone = $false; Retired = $retired
+                    InTick = $false; TickErrorShown = $false; TickErrors = @{}
+                    CloseRequested = $true; CloseRequestedAt = (Get-Date).AddSeconds(-1); ForceClose = $false
+                }
+            }
+        }
+
+        It 'konfiguracja silnika offline: Offline = $true, bez serwera, w Bootstrap tylko kopie lustrzane' {
+            $eff = Resolve-StdEffectiveConfig -Release $script:Sample.Release -SiteId $script:Sample.SiteId -ProfileName $script:Sample.ProfileName
+            $bootstrap = [ordered]@{ server = 'https://std.example.com/std/'; mirrors = @('\\nas\std\', ''); auth = @{ mode = 'basic' } }
+
+            $offline = New-StdMainEngineConfig -Ui @{ Effective = $eff; Session = $null; Bootstrap = $bootstrap; OriginRoot = [string]$TestDrive }
+            $offline['Offline'] | Should -BeOfType ([bool])
+            $offline['Offline'] | Should -Be $true
+            $offline.ContainsKey('Server') | Should -BeFalse
+            (@($offline['Bootstrap'].Keys) -join ',') | Should -Be 'mirrors'
+            (@($offline['Bootstrap']['mirrors']) -join '|') | Should -Be '\\nas\std\'
+            $offline['ClientId'] | Should -Be $eff['ClientId']
+            $offline['OriginRoot'] | Should -Be ([string]$TestDrive)
+            $null -ne $offline['Answers'] | Should -BeTrue
+
+            $noMirrors = New-StdMainEngineConfig -Ui @{ Effective = $eff; Session = $null; Bootstrap = [ordered]@{ server = 'https://std.example.com/std/'; mirrors = @() } }
+            $noMirrors['Offline'] | Should -Be $true
+            $noMirrors.ContainsKey('Server') | Should -BeFalse
+            $noMirrors.ContainsKey('Bootstrap') | Should -BeFalse
+
+            $online = New-StdMainEngineConfig -Ui @{ Effective = $eff; Session = [pscustomobject]@{ UserName = 'technik' }; Bootstrap = $bootstrap }
+            $online.ContainsKey('Offline') | Should -BeFalse
+            $online['Server'] | Should -Be 'https://std.example.com/std/'
+            $online['Bootstrap']['server'] | Should -Be 'https://std.example.com/std/'
+        }
+
+        It 'tik okna głównego: błąd jednej części nie zatrzymuje pozostałych ani zamykania okna' {
+            Mock Show-StdUiError { }
+            Mock Close-StdEngine { }
+            $win = New-StdWindow -Xaml $script:StdUiTestXaml
+            try {
+                $ui = New-StdTestTickUi -Window $win
+                { Invoke-StdMainTick -Ui $ui } | Should -Not -Throw
+                Should -Invoke Show-StdUiError -Times 1 -Exactly -ParameterFilter { $Context -like '*dziennik okna*' }
+                $ui.TickErrorShown | Should -BeTrue
+                $ui.InTick | Should -BeFalse
+                # Części po błędzie zadziałały: zakończony silnik zwolniony, okno zamknięte (bez błędu zamykania).
+                $ui.Retired.Count | Should -Be 0
+                Should -Invoke Close-StdEngine -Times 1 -Exactly
+                $ui.ForceClose | Should -BeTrue
+                @($ui.TickErrors.Keys | Where-Object { $_ -like 'zamykanie okna|*' }).Count | Should -Be 0
+
+                # Ten sam błąd w kolejnym tiku: tylko log (jeden wpis na błąd), bez drugiego okna z błędem.
+                { Invoke-StdMainTick -Ui $ui } | Should -Not -Throw
+                { Invoke-StdMainTick -Ui $ui } | Should -Not -Throw
+                Should -Invoke Show-StdUiError -Times 1 -Exactly
+                $ui.TickErrors.Count | Should -Be 1
+            } finally { try { $win.Close() } catch { } }
+        }
+
+        It 'timer okna głównego działa dalej po błędzie w tiku' {
+            Mock Close-StdEngine { }
+            $win = New-StdWindow -Xaml $script:StdUiTestXaml
+            try {
+                $ui = New-StdTestTickUi -Window $win
+                # Okno z błędem już było (bez okien modalnych w teście) - zostaje sam wpis w logu.
+                $ui.TickErrorShown = $true
+                $ui.CloseRequested = $false
+                $ui.Ticks = 0
+                $ui.Timer = New-StdUiTimer -Ui $ui -IntervalMs 50 -OnTick { param($Ui, $Timer) $Ui.Ticks++; Invoke-StdMainTick -Ui $Ui }
+                $ui.Timer.Start()
+                Wait-StdTestDispatcher -Until { $ui.Ticks -ge 3 } -TimeoutSec 30
+                $ui.Ticks | Should -BeGreaterOrEqual 3
+                $ui.Timer.IsEnabled | Should -BeTrue
+            } finally {
+                if ($null -ne $ui -and $null -ne $ui.Timer) { $ui.Timer.Stop() }
+                $win.Close()
+            }
+        }
+
+        It '„Wdróż” bez planu: potwierdzenie po „Sprawdź” idzie z kolejki okna (poza tikiem), błąd jak po kliknięciu' {
+            Mock Show-StdUiError { }
+            Mock Confirm-StdMainDeploy { $Ui.DeployCalls++ }
+            $win = New-StdWindow -Xaml $script:StdUiTestXaml
+            try {
+                $ui = @{ Window = $win; Closed = $false; CloseRequested = $false; DeployCalls = 0 }
+                Request-StdMainDeployLater -Ui $ui
+                # Nie od razu (w tiku timera), tylko z kolejki okna.
+                $ui.DeployCalls | Should -Be 0
+                Wait-StdTestDispatcher -Until { $ui.DeployCalls -ge 1 } -TimeoutSec 30
+                $ui.DeployCalls | Should -Be 1
+                Should -Invoke Show-StdUiError -Times 0 -Exactly
+
+                # Błąd startu wdrożenia (np. brak plików STD po wyjęciu pendrive'a): okno z błędem, jak po kliknięciu „Wdróż”.
+                Mock Confirm-StdMainDeploy { $Ui.DeployCalls++; throw '[STD-ENGINE-START] Brak pliku modułu STD.psd1' }
+                Request-StdMainDeployLater -Ui $ui
+                Wait-StdTestDispatcher -Until { $ui.DeployCalls -ge 2 } -TimeoutSec 30
+                $ui.DeployCalls | Should -Be 2
+                Should -Invoke Show-StdUiError -Times 1 -Exactly -ParameterFilter { $Context -eq 'Nie udało się uruchomić wdrożenia.' }
+
+                # Okno zamknięte, zanim kolejka doszła do potwierdzenia: bez potwierdzenia i bez błędu.
+                $ui.Closed = $true
+                Request-StdMainDeployLater -Ui $ui
+                Wait-StdTestDispatcher -Until { $true } -TimeoutSec 30
+                $ui.DeployCalls | Should -Be 2
+                Should -Invoke Show-StdUiError -Times 1 -Exactly
+            } finally { $win.Close() }
+        }
+
+        It 'zamknięcie w trakcie wdrożenia: okno czeka na timer, a gdy timer nie działa - zamyka się od razu' {
+            Mock Show-StdToast { }
+            $timer = New-Object System.Windows.Threading.DispatcherTimer
+            $win = New-StdWindow -Xaml $script:StdUiTestXaml
+            $ui = @{
+                Window = $win; Preview = $false; ForceClose = $false; Engine = @{ Id = 'wdrozenie' }; EngineDone = $false; EngineMode = 'Run'
+                CloseRequested = $true; CloseRequestedAt = Get-Date; Timer = $timer
+            }
+            try {
+                $timer.Start()
+                Confirm-StdMainClosing -Ui $ui | Should -BeFalse
+                $ui.ForceClose | Should -BeFalse
+                Should -Invoke Show-StdToast -Times 1 -Exactly
+                $timer.Stop()
+                Confirm-StdMainClosing -Ui $ui | Should -BeTrue
+                $ui.ForceClose | Should -BeTrue
+            } finally {
+                $timer.Stop()
+                $win.Close()
+            }
+        }
+
+        It 'okno z błędem podaje plik dziennika, gdy program go ustawił' {
+            Mock Show-StdMessage { }
+            $oldLogPath = $script:StdUiLogPath
+            try {
+                $script:StdUiLogPath = $null
+                Show-StdUiError -ErrorObject '[STD-TEST] błąd testowy' -Context 'Test.'
+                Should -Invoke Show-StdMessage -Times 1 -Exactly -ParameterFilter { $Message.StartsWith('Test.') -and $Message.Contains('błąd testowy') -and $Message.EndsWith("`n`nSzczegóły są w dzienniku STD.") }
+                $script:StdUiLogPath = 'C:\ProgramData\STD\Logs\ui-20261102.log'
+                Show-StdUiError -ErrorObject '[STD-TEST] błąd testowy' -Context 'Test.'
+                Should -Invoke Show-StdMessage -Times 1 -Exactly -ParameterFilter { $Message.EndsWith("`n`nSzczegóły są w dzienniku STD:`nC:\ProgramData\STD\Logs\ui-20261102.log") }
+            } finally {
+                $script:StdUiLogPath = $oldLogPath
+            }
         }
     }
 

@@ -96,6 +96,138 @@ Describe 'Std.Core' {
         }
     }
 
+    Context 'Protect-StdDataFolder i zabezpieczenie katalogu danych' {
+        BeforeAll {
+            $script:SidType = [System.Security.Principal.SecurityIdentifier]
+
+            function New-TestLink {
+                # Junction w Windows (mklink /J - bez uprawnień administratora), symlink w Linuksie. $false = nie udało się.
+                param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$Target)
+                try {
+                    if ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) {
+                        $null = & cmd.exe /c mklink /J "$Path" "$Target" 2>&1
+                    } else {
+                        $null = New-Item -ItemType SymbolicLink -Path $Path -Target $Target -ErrorAction Stop
+                    }
+                } catch {
+                    return $false
+                }
+                if (-not (Test-Path -LiteralPath $Path)) { return $false }
+                return (([System.IO.File]::GetAttributes($Path) -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)
+            }
+
+            function Use-TestDefaultDataRoot {
+                # Uruchamia blok z domyślnym katalogiem danych (bez STD_DATA_ROOT) w <ProgramData> = folder w TestDrive.
+                param([Parameter(Mandatory = $true)][string]$ProgramData, [Parameter(Mandatory = $true)][scriptblock]$Script)
+                $oldProgramData = $env:ProgramData
+                $oldDataRoot = $env:STD_DATA_ROOT
+                try {
+                    Remove-Item Env:\STD_DATA_ROOT -ErrorAction SilentlyContinue
+                    $env:ProgramData = $ProgramData
+                    & $Script
+                } finally {
+                    $env:ProgramData = $oldProgramData
+                    $env:STD_DATA_ROOT = $oldDataRoot
+                }
+            }
+        }
+
+        It 'zostawia dostęp tylko dla SYSTEM i Administratorów, bez dziedziczenia, także w podfolderach (Windows, administrator)' -Skip:(-not (([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) -and (New-Object System.Security.Principal.WindowsPrincipal([System.Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator))) {
+            $folder = Join-Path $TestDrive 'chroniony'
+            [void][System.IO.Directory]::CreateDirectory((Join-Path $folder 'App\4.0.0'))
+            [System.IO.File]::WriteAllText((Join-Path $folder 'App\4.0.0\plik.ps1'), '# plik')
+            Protect-StdDataFolder -Path $folder
+
+            $acl = Get-Acl -LiteralPath $folder
+            $acl.AreAccessRulesProtected | Should -BeTrue
+            $acl.GetOwner($script:SidType).Value | Should -Be 'S-1-5-32-544'
+            $rules = @($acl.GetAccessRules($true, $true, $script:SidType))
+            (@($rules | ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique) -join ',') | Should -Be 'S-1-5-18,S-1-5-32-544'
+            foreach ($rule in $rules) {
+                $rule.FileSystemRights | Should -Be ([System.Security.AccessControl.FileSystemRights]::FullControl)
+                $rule.AccessControlType | Should -Be ([System.Security.AccessControl.AccessControlType]::Allow)
+                $rule.InheritanceFlags | Should -Be ([System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit')
+            }
+            foreach ($child in @((Join-Path $folder 'App\4.0.0'), (Join-Path $folder 'App\4.0.0\plik.ps1'))) {
+                $childSids = @((Get-Acl -LiteralPath $child).GetAccessRules($true, $true, $script:SidType) | ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique)
+                ($childSids -join ',') | Should -Be 'S-1-5-18,S-1-5-32-544'
+            }
+            # Drugie wywołanie (uprawnienia już są) niczego nie psuje.
+            { Protect-StdDataFolder -Path $folder } | Should -Not -Throw
+            (Get-Acl -LiteralPath $folder).AreAccessRulesProtected | Should -BeTrue
+        }
+
+        It 'odrzuca dowiązanie (junction) błędem [STD-IO] i nie zmienia uprawnień folderu, na który wskazuje (Windows)' -Skip:([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
+            $target = Join-Path $TestDrive 'cel-dowiazania'
+            [void][System.IO.Directory]::CreateDirectory($target)
+            $link = Join-Path $TestDrive 'dowiazanie'
+            if (-not (New-TestLink -Path $link -Target $target)) { Set-ItResult -Skipped -Because 'nie udało się utworzyć dowiązania'; return }
+            try {
+                { Protect-StdDataFolder -Path $link } | Should -Throw -ExpectedMessage '*`[STD-IO`]*'
+                (Get-Acl -LiteralPath $target).AreAccessRulesProtected | Should -BeFalse
+            } finally {
+                [System.IO.Directory]::Delete($link, $false)
+            }
+        }
+
+        It 'brak folderu to błąd [STD-IO] (Windows)' -Skip:([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
+            { Protect-StdDataFolder -Path (Join-Path $TestDrive 'nie-ma-takiego') } | Should -Throw -ExpectedMessage '*`[STD-IO`]*'
+        }
+
+        It 'poza Windows nic nie robi' -Skip:([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) {
+            { Protect-StdDataFolder -Path (Join-Path $TestDrive 'nie-ma-takiego') } | Should -Not -Throw
+        }
+
+        It 'Get-StdDataRoot nie zmienia uprawnień katalogu z STD_DATA_ROOT (testy)' {
+            Mock -ModuleName STD -CommandName Protect-StdDataFolder -MockWith { }
+            Mock -ModuleName STD -CommandName Test-CoreDataProtectionNeeded -MockWith { $true }
+            [void](Get-StdDataRoot)
+            [void](Get-StdPath -Kind App)
+            Should -Invoke -ModuleName STD -CommandName Protect-StdDataFolder -Times 0 -Exactly
+        }
+
+        It 'Get-StdDataRoot zabezpiecza domyślny katalog (administrator w Windows) raz, a nie przy każdym wywołaniu' {
+            Mock -ModuleName STD -CommandName Protect-StdDataFolder -MockWith { }
+            Mock -ModuleName STD -CommandName Test-CoreDataProtectionNeeded -MockWith { $true }
+            $programData = Join-Path $TestDrive 'pd-raz'
+            [void][System.IO.Directory]::CreateDirectory($programData)
+            $expected = Join-Path $programData 'STD'
+            Use-TestDefaultDataRoot -ProgramData $programData -Script {
+                Get-StdDataRoot | Should -Be $expected
+                [void](Get-StdPath -Kind Cache)
+                [void](Get-StdDataRoot)
+            }
+            Should -Invoke -ModuleName STD -CommandName Protect-StdDataFolder -Times 1 -Exactly -ParameterFilter { $Path -eq $expected }
+        }
+
+        It 'Get-StdDataRoot bez uprawnień administratora nie zmienia uprawnień domyślnego katalogu' {
+            Mock -ModuleName STD -CommandName Protect-StdDataFolder -MockWith { }
+            Mock -ModuleName STD -CommandName Test-CoreDataProtectionNeeded -MockWith { $false }
+            $programData = Join-Path $TestDrive 'pd-zwykly'
+            [void][System.IO.Directory]::CreateDirectory($programData)
+            Use-TestDefaultDataRoot -ProgramData $programData -Script { [void](Get-StdDataRoot) }
+            Should -Invoke -ModuleName STD -CommandName Protect-StdDataFolder -Times 0 -Exactly
+        }
+
+        It 'Get-StdDataRoot zastępuje domyślny katalog będący dowiązaniem zwykłym folderem, bez ruszania celu' {
+            Mock -ModuleName STD -CommandName Protect-StdDataFolder -MockWith { }
+            Mock -ModuleName STD -CommandName Test-CoreDataProtectionNeeded -MockWith { $true }
+            $programData = Join-Path $TestDrive 'pd-link'
+            $elsewhere = Join-Path $TestDrive 'gdzie-indziej'
+            [void][System.IO.Directory]::CreateDirectory($programData)
+            [void][System.IO.Directory]::CreateDirectory($elsewhere)
+            [System.IO.File]::WriteAllText((Join-Path $elsewhere 'cenny.txt'), 'nie usuwać')
+            $root = Join-Path $programData 'STD'
+            if (-not (New-TestLink -Path $root -Target $elsewhere)) { Set-ItResult -Skipped -Because 'nie udało się utworzyć dowiązania'; return }
+            Use-TestDefaultDataRoot -ProgramData $programData -Script {
+                Get-StdDataRoot | Should -Be $root
+            }
+            ([System.IO.File]::GetAttributes($root) -band [System.IO.FileAttributes]::ReparsePoint) | Should -Be 0
+            Test-Path -LiteralPath (Join-Path $elsewhere 'cenny.txt') | Should -BeTrue
+            Should -Invoke -ModuleName STD -CommandName Protect-StdDataFolder -Times 1 -Exactly -ParameterFilter { $Path -eq $root }
+        }
+    }
+
     Context 'ConvertTo-StdHashtable' {
         It 'zamienia PSCustomObject głęboko na [ordered] i zachowuje kolejność' {
             $obj = [pscustomobject]@{ z = 1; y = [pscustomobject]@{ x = 'a' }; w = @{ v = 2 } }

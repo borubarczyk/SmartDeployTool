@@ -52,10 +52,17 @@ $script:StdEngineFileSink = 'StdEngine.Deploy'
 # z plików kroków są widoczne dla bloków Detect / Run przez cały czas działania silnika.
 $script:StdEngineBootstrap = @'
 $stdStart = $StdEngineStart
+function Clear-EngineBootstrapSecrets {
+    # Awaria poza pętlą silnika: Complete-EngineRun się nie wykonał, więc Secrets czyścimy tutaj (SPEC 6.3).
+    # Loop.Secrets to [hashtable] wywołującego (Synchronized działa na tym samym obiekcie).
+    try { if ($null -ne $stdStart.Loop.Secrets) { $stdStart.Loop.Secrets.Clear() } } catch { }
+    try { if ($null -ne $stdStart.Loop.ExtraSecrets) { $stdStart.Loop.ExtraSecrets.Clear() } } catch { }
+}
 function Send-EngineBootstrapFailure {
-    # Awaria poza pętlą silnika (moduł się nie wczytał albo pętla rzuciła wyjątek): stan Failed i zdarzenie
-    # Finished, żeby okno nie czekało w nieskończoność.
+    # Awaria poza pętlą silnika (moduł się nie wczytał albo pętla rzuciła wyjątek): czyszczenie Secrets,
+    # stan Failed i zdarzenie Finished, żeby okno nie czekało w nieskończoność.
     param([string]$Message)
+    Clear-EngineBootstrapSecrets
     $shared = $stdStart.Shared
     $now = Get-Date
     $counts = @{ Ok = 0; Skipped = 0; Error = 0; Cancelled = 0 }
@@ -82,6 +89,7 @@ $stdLoop = $stdStart.Loop
 try {
     Invoke-StdEngineLoop @stdLoop -StepLoadErrors $stdLoadErrors.ToArray()
 } catch {
+    Clear-EngineBootstrapSecrets
     $stdStatus = [string]$stdStart.Shared.Status
     if ($stdStatus -eq 'Running' -or $stdStatus -eq 'Paused') {
         Send-EngineBootstrapFailure -Message ('[STD-ENGINE-FAILED] Silnik zakończył się błędem: ' + (Protect-StdLogText -Text $_.Exception.Message))
@@ -717,6 +725,21 @@ function Invoke-EnginePlanMode {
     }
 }
 
+function Enable-EngineKeepAwake {
+    # Zadanie SuspendSleep włączone: wstrzymanie usypiania w wątku silnika na starcie każdego wdrożenia, także
+    # przy „Ponów nieudane” (-OnlySteps) i -Resume, w których krok Power.SuspendSleep nie jest uruchamiany
+    # ponownie (SetThreadExecutionState działa tylko w wątku, który ją wywołał). Przywraca Complete-EngineRun.
+    param([Parameter(Mandatory = $true)]$Run)
+    $tasks = Get-CryptoMember $Run.Config 'Tasks'
+    $value = Get-CryptoMember $tasks 'SuspendSleep'
+    if (-not ($value -is [bool] -and $value)) { return }
+    try {
+        if (Set-StdKeepAwake -Enabled $true) {
+            Write-StdLog -Source 'Std.Engine' -Message 'Wstrzymano usypianie komputera do końca wdrożenia (zadanie SuspendSleep).'
+        }
+    } catch { }
+}
+
 function Invoke-EngineRunMode {
     # „Wdróż”: włączone kroki w kolejności faza / Order; pauza i przerwanie przed każdym krokiem,
     # -Critical, restart po fazie 1, -Resume.
@@ -740,6 +763,7 @@ function Invoke-EngineRunMode {
             At              = $null
             Resumed         = $false
             RebootRequested = $false
+            CriticalBlocked = $false
         }
         if ($Resume) {
             $previous = Get-CryptoMember $Run.PreviousSteps ([string]$step.Id)
@@ -758,6 +782,7 @@ function Invoke-EngineRunMode {
     if ($Resume) {
         Write-StdLog -Source 'Std.Engine' -Message 'Wznowienie: kroki zakończone wcześniej (OK / Pominięto) nie będą uruchamiane ponownie.'
     }
+    Enable-EngineKeepAwake -Run $Run
     Save-EngineState -Run $Run
     foreach ($record in $Run.Records) { Send-EngineStepState -Run $Run -Record $record }
     Send-EngineEvent -Type 'Progress' -Fields ([ordered]@{ Percent = 0; Text = 'Start wdrożenia' })
@@ -782,11 +807,14 @@ function Invoke-EngineRunMode {
             continue
         }
         if ($criticalByPhase.ContainsKey($record.Phase)) {
-            $record.State = 'Skipped'
+            # Krok się nie wykonał: Cancelled (nie Skipped), żeby „Ponów nieudane” (Error / Cancelled) i -Resume
+            # (pomija tylko Ok / Skipped) uruchomiły go ponownie. Stanu wdrożenia nie zmienia na Cancelled.
+            $record.State = 'Cancelled'
+            $record.CriticalBlocked = $true
             $record.Detail = 'Pominięto, bo krok krytyczny „{0}” zakończył się błędem.' -f $criticalByPhase[$record.Phase]
             $record.FinishedAt = Get-Date
             Send-EngineStepState -Run $Run -Record $record
-            Write-StdLog -Level Warn -Source $record.Id -Message ('Wynik kroku {0}: Skipped - {1}' -f $record.Title, $record.Detail)
+            Write-StdLog -Level Warn -Source $record.Id -Message ('Wynik kroku {0}: Cancelled - {1}' -f $record.Title, $record.Detail)
             Save-EngineState -Run $Run
             continue
         }
@@ -829,7 +857,8 @@ function Complete-EngineRun {
         $status = 'Cancelled'
     } else {
         foreach ($record in $Run.Records) {
-            if ($record.State -eq 'Cancelled') { $status = 'Cancelled'; break }
+            # Kroki niewykonane z powodu błędu kroku krytycznego nie oznaczają przerwania wdrożenia.
+            if ($record.State -eq 'Cancelled' -and -not $record.CriticalBlocked) { $status = 'Cancelled'; break }
         }
     }
     foreach ($record in $Run.Records) {

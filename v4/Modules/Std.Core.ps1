@@ -25,6 +25,10 @@ if (-not (Get-Variable -Name 'StdLogMasks' -Scope Script -ErrorAction SilentlyCo
 if (-not (Get-Variable -Name 'StdVersionCache' -Scope Script -ErrorAction SilentlyContinue)) {
     $script:StdVersionCache = $null
 }
+# Katalog danych, który ta kopia modułu już sprawdziła i zabezpieczyła (Get-StdDataRoot robi to raz).
+if (-not (Get-Variable -Name 'StdDataRootChecked' -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:StdDataRootChecked = $null
+}
 $script:StdCoreFile = $PSCommandPath
 
 # Nagłówki Authorization maskujemy zawsze, także gdy wartość nie została zarejestrowana.
@@ -298,10 +302,12 @@ function Start-CoreElevatedProcess {
     # Start procesu z czasownikiem RunAs (okno UAC). Osobna funkcja, żeby testy mogły ją podmienić (Mock).
     # Process.Start zamiast Start-Process: Start-Process w 5.1 gubi kod błędu 1223 (odmowa UAC)
     # i zostawia tylko przetłumaczony komunikat.
+    # -PassThru: zwraca obiekt procesu (wywołujący czeka na niego i zamyka go sam).
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$ArgumentLine,
-        [string]$WorkingDirectory
+        [string]$WorkingDirectory,
+        [switch]$PassThru
     )
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $FilePath
@@ -310,7 +316,13 @@ function Start-CoreElevatedProcess {
     $psi.UseShellExecute = $true
     if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) { $psi.WorkingDirectory = $WorkingDirectory }
     $process = [System.Diagnostics.Process]::Start($psi)
-    if ($null -ne $process) { $process.Dispose() }
+    if ($null -eq $process) { return }
+    if ($PassThru) {
+        # Odczyt Handle zaraz po starcie: bez tego Windows PowerShell 5.1 nie poda później kodu wyjścia.
+        try { $null = $process.Handle } catch { }
+        return $process
+    }
+    $process.Dispose()
 }
 
 function Test-CoreIsUacCancel {
@@ -323,6 +335,69 @@ function Test-CoreIsUacCancel {
         $ex = $ex.InnerException
     }
     return $false
+}
+
+function Test-CoreIsLink {
+    # Czy element to dowiązanie (junction, symlink - atrybut ReparsePoint). Atrybuty dowiązania, nie celu,
+    # więc działa też dla dowiązania do nieistniejącego folderu. Brak elementu -> $false.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    try {
+        return (([System.IO.File]::GetAttributes($Path) -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)
+    } catch {
+        return $false
+    }
+}
+
+function Remove-CoreLink {
+    # Usuwa samo dowiązanie (junction / symlink), nigdy zawartość folderu, na który wskazuje
+    # (RemoveDirectory na junction usuwa tylko junction).
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (([System.IO.File]::GetAttributes($Path) -band [System.IO.FileAttributes]::Directory) -ne 0) {
+        [System.IO.Directory]::Delete($Path, $false)
+    } else {
+        [System.IO.File]::Delete($Path)
+    }
+}
+
+function Test-CoreDataProtectionNeeded {
+    # Uprawnienia folderów danych (Protect-StdDataFolder, właściciel App\<wersja>) zmieniamy tylko w Windows,
+    # w procesie administratora i w domyślnym folderze danych. Testy ($env:STD_DATA_ROOT) i Linux: $false.
+    if (-not (Test-CoreIsWindows)) { return $false }
+    if (-not [string]::IsNullOrWhiteSpace($env:STD_DATA_ROOT)) { return $false }
+    return [bool](Test-StdIsAdmin)
+}
+
+function Get-CoreDirectorySecurity {
+    # Właściciel i lista uprawnień folderu. Directory.GetAccessControl jest tylko w .NET Framework (5.1);
+    # w PowerShell 7 to metoda rozszerzająca FileSystemAclExtensions.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $sections = [System.Security.AccessControl.AccessControlSections]::Owner -bor [System.Security.AccessControl.AccessControlSections]::Access
+    if ($PSVersionTable.PSEdition -eq 'Core') {
+        return [System.IO.FileSystemAclExtensions]::GetAccessControl((New-Object System.IO.DirectoryInfo($Path)), $sections)
+    }
+    return [System.IO.Directory]::GetAccessControl($Path, $sections)
+}
+
+function Test-CoreDataFolderProtected {
+    # Czy folder ma już uprawnienia z Protect-StdDataFolder: właściciel Administratorzy, bez dziedziczenia,
+    # tylko SYSTEM i Administratorzy z pełną kontrolą dla folderu, podfolderów i plików.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $security = Get-CoreDirectorySecurity -Path $Path
+    $sidType = [System.Security.Principal.SecurityIdentifier]
+    $owner = $security.GetOwner($sidType)
+    if ($null -eq $owner -or $owner.Value -ne 'S-1-5-32-544') { return $false }
+    if (-not $security.AreAccessRulesProtected) { return $false }
+    $inherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+    $found = @{}
+    foreach ($rule in $security.GetAccessRules($true, $true, $sidType)) {
+        $sid = $rule.IdentityReference.Value
+        if ($sid -ne 'S-1-5-18' -and $sid -ne 'S-1-5-32-544') { return $false }
+        if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { return $false }
+        if ($rule.FileSystemRights -ne [System.Security.AccessControl.FileSystemRights]::FullControl) { return $false }
+        if ($rule.InheritanceFlags -ne $inherit -or $rule.PropagationFlags -ne [System.Security.AccessControl.PropagationFlags]::None) { return $false }
+        $found[$sid] = $true
+    }
+    return ($found.Count -eq 2)
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -355,12 +430,15 @@ function Get-StdDataRoot {
     <#
     .SYNOPSIS
     Katalog lokalnych danych STD: $env:STD_DATA_ROOT, inaczej $env:ProgramData\STD, inaczej katalog tymczasowy\STD.
-    Tworzy katalog, jeśli go nie ma.
+    Tworzy katalog, jeśli go nie ma. Katalog domyślny (bez $env:STD_DATA_ROOT) w procesie administratora w Windows
+    jest przy pierwszym użyciu zabezpieczany przez Protect-StdDataFolder; gdy jest dowiązaniem (junction / symlink),
+    usuwane jest samo dowiązanie i powstaje zwykły folder.
     #>
     [CmdletBinding()]
     [OutputType([string])]
     param()
-    if (-not [string]::IsNullOrWhiteSpace($env:STD_DATA_ROOT)) {
+    $isDefault = [string]::IsNullOrWhiteSpace($env:STD_DATA_ROOT)
+    if (-not $isDefault) {
         $root = $env:STD_DATA_ROOT
     } elseif (-not [string]::IsNullOrWhiteSpace($env:ProgramData)) {
         $root = Join-Path $env:ProgramData 'STD'
@@ -368,6 +446,17 @@ function Get-StdDataRoot {
         $root = Join-Path ([System.IO.Path]::GetTempPath()) 'STD'
     }
     $root = Resolve-CoreFullPath -Path $root
+    $protect = ($isDefault -and $script:StdDataRootChecked -ne $root -and (Test-CoreDataProtectionNeeded))
+    if ($protect -and (Test-CoreIsLink -Path $root)) {
+        # Zwykły użytkownik może założyć %ProgramData%\STD jako junction do dowolnego folderu: STD (administrator)
+        # pisałby wtedy tam i tam zmieniał uprawnienia. Usuwamy samo dowiązanie, nie folder, na który wskazuje.
+        try {
+            Remove-CoreLink -Path $root
+        } catch {
+            throw "[STD-IO] Katalog danych STD $root jest dowiązaniem (junction / symlink), którego nie udało się usunąć - $(Format-CoreErrorText $_)"
+        }
+        Write-StdLog -Level Warn -Source 'Get-StdDataRoot' -Message "Katalog danych STD $root był dowiązaniem (junction / symlink) - usunięto samo dowiązanie."
+    }
     if (-not [System.IO.Directory]::Exists($root)) {
         try {
             [void][System.IO.Directory]::CreateDirectory($root)
@@ -375,7 +464,66 @@ function Get-StdDataRoot {
             throw "[STD-IO] Nie udało się utworzyć katalogu danych STD $root - $(Format-CoreErrorText $_)"
         }
     }
+    if ($protect) {
+        try {
+            Protect-StdDataFolder -Path $root
+        } catch {
+            Write-StdLog -Level Warn -Source 'Get-StdDataRoot' -Message (Format-CoreErrorText $_ 600)
+        }
+    }
+    if ($isDefault) { $script:StdDataRootChecked = $root }
     return $root
+}
+
+function Protect-StdDataFolder {
+    <#
+    .SYNOPSIS
+    Zabezpiecza folder danych STD (tylko Windows; w innych systemach nic nie robi): właściciel Administratorzy,
+    lista uprawnień bez dziedziczenia z folderu nadrzędnego (%ProgramData% daje zwykłym użytkownikom prawo
+    zapisu), pełna kontrola tylko dla SYSTEM i Administratorów - także dla podfolderów i plików. Zwykli
+    użytkownicy nie mają żadnego dostępu: kod z App\ działa jako administrator. Folder, który już ma takie
+    uprawnienia, zostaje bez zmian; inaczej uprawnienia są ustawiane od nowa (także dla istniejącego folderu).
+    Wymaga uprawnień administratora. Folder musi istnieć i nie może być dowiązaniem (junction / symlink -
+    zmiana trafiłaby w folder, na który wskazuje). Błąd: [STD-IO].
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Path
+    )
+    if (-not (Test-CoreIsWindows)) { return }
+    $full = Resolve-CoreFullPath -Path $Path
+    if (Test-CoreIsLink -Path $full) {
+        throw "[STD-IO] Folder $full jest dowiązaniem (junction / symlink) - STD nie zmienia uprawnień folderu, na który wskazuje."
+    }
+    if (-not [System.IO.Directory]::Exists($full)) {
+        throw "[STD-IO] Nie ma folderu $full - nie da się ustawić jego uprawnień."
+    }
+    try {
+        if (Test-CoreDataFolderProtected -Path $full) { return }
+        # Znane identyfikatory SID zamiast nazw grup: działają w każdej wersji językowej Windows.
+        $system = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
+        $admins = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')
+        $inherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+        $security = New-Object System.Security.AccessControl.DirectorySecurity
+        $security.SetOwner($admins)
+        $security.SetAccessRuleProtection($true, $false)
+        foreach ($sid in @($system, $admins)) {
+            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($sid, [System.Security.AccessControl.FileSystemRights]::FullControl,
+                $inherit, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)
+            $security.AddAccessRule($rule)
+        }
+        # Zapisuje tylko zmienione części (właściciel i lista uprawnień); podfoldery i pliki dziedziczą nowe uprawnienia.
+        if ($PSVersionTable.PSEdition -eq 'Core') {
+            [System.IO.FileSystemAclExtensions]::SetAccessControl((New-Object System.IO.DirectoryInfo($full)), $security)
+        } else {
+            [System.IO.Directory]::SetAccessControl($full, $security)
+        }
+    } catch {
+        throw "[STD-IO] Nie udało się ustawić uprawnień folderu $full - $(Format-CoreErrorText $_)"
+    }
+    Write-StdLog -Level Info -Source 'Protect-StdDataFolder' -Message "Ustawiono uprawnienia folderu ${full}: dostęp tylko dla Administratorów i SYSTEM."
 }
 
 function Get-StdPath {
@@ -793,9 +941,11 @@ function Start-StdElevated {
     Uruchamia skrypt ponownie jako administrator:
     powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File "<ScriptPath>" <argumenty> (z -Verb RunAs).
     Zwraca $true, gdy proces wystartował, $false, gdy użytkownik odmówił w oknie UAC.
+    -PassThru: zamiast $true zwraca obiekt procesu (System.Diagnostics.Process), np. żeby sprawdzić, czy proces
+    nie zakończył się od razu z błędem; wywołujący zamyka go (Dispose). Bez obiektu procesu nadal $true.
     #>
     [CmdletBinding()]
-    [OutputType([bool])]
+    [OutputType([bool], [System.Diagnostics.Process])]
     param(
         [Parameter(Mandatory = $true, Position = 0)]
         [ValidateNotNullOrEmpty()]
@@ -803,7 +953,8 @@ function Start-StdElevated {
         [Parameter(Position = 1)]
         [AllowEmptyCollection()]
         [string[]]$Arguments = @(),
-        [string]$WorkingDirectory
+        [string]$WorkingDirectory,
+        [switch]$PassThru
     )
     $argumentLine = Get-CoreElevationArgumentLine -ScriptPath $ScriptPath -Arguments $Arguments
     $startParams = @{
@@ -811,8 +962,10 @@ function Start-StdElevated {
         ArgumentLine = $argumentLine
     }
     if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) { $startParams.WorkingDirectory = $WorkingDirectory }
+    if ($PassThru) { $startParams.PassThru = $true }
+    $process = $null
     try {
-        Start-CoreElevatedProcess @startParams
+        $process = Start-CoreElevatedProcess @startParams
     } catch {
         $err = $_
         if ((Test-CoreIsUacCancel -Exception $err.Exception)) {
@@ -822,5 +975,6 @@ function Start-StdElevated {
         throw "[STD-ELEVATE] Nie udało się uruchomić STD jako administrator: $(Format-CoreErrorText $err)"
     }
     Write-StdLog -Level Info -Source 'Start-StdElevated' -Message 'Uruchomiono STD ponownie z uprawnieniami administratora.'
+    if ($PassThru -and $process -is [System.Diagnostics.Process]) { return $process }
     return $true
 }

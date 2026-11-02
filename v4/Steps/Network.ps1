@@ -9,18 +9,62 @@
 # źródło https z konfiguracji) odpowiada na porcie 443 (albo porcie z adresu). Gdy konfiguracja nie podaje
 # żadnego serwera, wystarcza adres IPv4. Adres serwera: Config.Server, Config.Bootstrap.server, a potem
 # pierwsze źródło typu https w kolejności Site.sourceOrder.
+#
+# Praca offline (Config.Offline = $true - technik wybrał „Pracuj offline”, bo serwer STD nie odpowiadał):
+# serwera STD (Config.Server, Config.Bootstrap.server) nie sprawdzamy, bo to on zawiódł. Sprawdzamy źródła,
+# które działają bez sesji STD: https z auth 'none' (host:port) oraz udziały UNC ze źródeł i kopii lustrzanych
+# (host:445). Gdy żadnego nie ma albo żadne nie odpowiada, wystarcza adres IPv4 - nie czekamy na serwer.
 
-function global:Get-NetworkStepTarget {
-    # Serwer do sprawdzenia: @{ Host; Port; Label } albo $null.
+function global:Test-NetworkStepOffline {
+    # $true, gdy wdrożenie działa offline (Config.Offline = $true).
     param([AllowNull()]$Context)
+    if (-not ($Context -is [System.Collections.IDictionary])) { return $false }
+    $config = $Context['Config']
+    if (-not ($config -is [System.Collections.IDictionary])) { return $false }
+    $offline = $config['Offline']
+    return ($offline -is [bool] -and $offline)
+}
+
+function global:Get-NetworkStepHttpsTarget {
+    # Adres https -> @{ Host; Port; Label } albo $null.
+    param([AllowNull()]$Url)
+    if (-not ($Url -is [string])) { return $null }
+    $uri = $null
+    if (-not [System.Uri]::TryCreate($Url, [System.UriKind]::Absolute, [ref]$uri)) { return $null }
+    if ($uri.Scheme -ne 'https' -or [string]::IsNullOrEmpty($uri.Host)) { return $null }
+    return @{ Host = $uri.Host; Port = $uri.Port; Label = ('{0}:{1}' -f $uri.Host, $uri.Port) }
+}
+
+function global:Get-NetworkStepUncTarget {
+    # Ścieżka UNC (\\serwer\udział\...) -> @{ Host; Port = 445; Label } albo $null (ścieżka lokalna, np. pendrive).
+    param([AllowNull()]$Path)
+    if (-not ($Path -is [string])) { return $null }
+    $text = $Path.Trim()
+    if (-not ($text.StartsWith('\\') -or $text.StartsWith('//'))) { return $null }
+    $rest = $text.Substring(2)
+    $end = $rest.IndexOfAny([char[]]@('\', '/'))
+    if ($end -ge 0) { $rest = $rest.Substring(0, $end) }
+    # Bez \\?\ i \\.\ (ścieżki urządzeń) i bez nazw z @ (WebDAV, np. serwer@SSL).
+    if ($rest -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { return $null }
+    return @{ Host = $rest; Port = 445; Label = ('{0}:445' -f $rest) }
+}
+
+function global:Get-NetworkStepTargets {
+    # Serwery do sprawdzenia: tablica @{ Host; Port; Label } (może być pusta).
+    # Zwykle jeden: serwer STD albo pierwsze źródło https. Offline: źródła działające bez sesji STD.
+    param([AllowNull()]$Context)
+    $targets = New-Object 'System.Collections.Generic.List[object]'
     $config = $null
     if ($Context -is [System.Collections.IDictionary]) { $config = $Context['Config'] }
-    if (-not ($config -is [System.Collections.IDictionary])) { return $null }
+    if (-not ($config -is [System.Collections.IDictionary])) { return , $targets.ToArray() }
+    $offline = Test-NetworkStepOffline -Context $Context
 
     $urls = New-Object 'System.Collections.Generic.List[string]'
-    if ($config['Server'] -is [string]) { $urls.Add($config['Server']) }
     $bootstrap = $config['Bootstrap']
-    if ($bootstrap -is [System.Collections.IDictionary] -and $bootstrap['server'] -is [string]) { $urls.Add($bootstrap['server']) }
+    if (-not $offline) {
+        if ($config['Server'] -is [string]) { $urls.Add($config['Server']) }
+        if ($bootstrap -is [System.Collections.IDictionary] -and $bootstrap['server'] -is [string]) { $urls.Add($bootstrap['server']) }
+    }
 
     $sources = $config['Sources']
     if ($sources -is [System.Collections.IDictionary]) {
@@ -32,18 +76,53 @@ function global:Get-NetworkStepTarget {
         foreach ($name in @($sources.Keys)) { if (-not $names.Contains([string]$name)) { $names.Add([string]$name) } }
         foreach ($name in $names) {
             $source = $sources[$name]
-            if ($source -is [System.Collections.IDictionary] -and [string]$source['type'] -eq 'https' -and $source['url'] -is [string]) {
-                $urls.Add($source['url'])
+            if (-not ($source -is [System.Collections.IDictionary])) { continue }
+            $type = [string]$source['type']
+            if (-not $offline) {
+                if ($type -eq 'https' -and $source['url'] -is [string]) { $urls.Add($source['url']) }
+                continue
             }
+            # Offline: https tylko bez sesji (auth 'none' - źródło z sesją to zwykle ten sam serwer STD), UNC zawsze.
+            $target = $null
+            if ($type -eq 'https' -and [string]$source['auth'] -eq 'none') { $target = Get-NetworkStepHttpsTarget -Url $source['url'] }
+            elseif ($type -eq 'unc') { $target = Get-NetworkStepUncTarget -Path $source['path'] }
+            if ($null -ne $target) { $targets.Add($target) }
         }
     }
 
-    foreach ($url in $urls) {
-        $uri = $null
-        if (-not [System.Uri]::TryCreate($url, [System.UriKind]::Absolute, [ref]$uri)) { continue }
-        if ($uri.Scheme -ne 'https' -or [string]::IsNullOrEmpty($uri.Host)) { continue }
-        return @{ Host = $uri.Host; Port = $uri.Port; Label = ('{0}:{1}' -f $uri.Host, $uri.Port) }
+    if (-not $offline) {
+        foreach ($url in $urls) {
+            $target = Get-NetworkStepHttpsTarget -Url $url
+            if ($null -ne $target) { $targets.Add($target); break }
+        }
+        return , $targets.ToArray()
     }
+
+    # Offline: także kopie lustrzane z pliku startowego (udziały UNC; ścieżki lokalne pomijamy).
+    if ($bootstrap -is [System.Collections.IDictionary] -and $null -ne $bootstrap['mirrors']) {
+        foreach ($mirror in @($bootstrap['mirrors'])) {
+            $target = Get-NetworkStepUncTarget -Path $mirror
+            if ($null -ne $target) { $targets.Add($target) }
+        }
+    }
+    # Bez powtórzeń i najwyżej 3 (każde niedostępne źródło to do 3 s czekania).
+    $unique = New-Object 'System.Collections.Generic.List[object]'
+    $labels = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($target in $targets) {
+        if ($unique.Count -ge 3) { break }
+        $key = $target.Label.ToLowerInvariant()
+        if ($labels.Contains($key)) { continue }
+        $labels.Add($key)
+        $unique.Add($target)
+    }
+    return , $unique.ToArray()
+}
+
+function global:Get-NetworkStepTarget {
+    # Pierwszy serwer do sprawdzenia: @{ Host; Port; Label } albo $null (offline bez serwera STD).
+    param([AllowNull()]$Context)
+    $targets = Get-NetworkStepTargets -Context $Context
+    if ($targets.Count -gt 0) { return $targets[0] }
     return $null
 }
 
@@ -78,6 +157,22 @@ function global:Get-NetworkStepStatus {
         return @{ Ok = $false; Detail = 'Brak adresu IPv4 - podłącz kabel sieciowy albo połącz się z Wi-Fi.' }
     }
     $shown = @($addresses | Select-Object -First 3) -join ', '
+    if (Test-NetworkStepOffline -Context $Context) {
+        # Offline: odpowiedź źródła tylko potwierdza sieć; bez niej wystarcza adres IPv4 (serwera STD nie czekamy).
+        $targets = Get-NetworkStepTargets -Context $Context
+        if ($targets.Count -eq 0) {
+            return @{ Ok = $true; Detail = ('Adres IPv4: {0} (praca offline - bez sprawdzania serwera STD).' -f $shown) }
+        }
+        foreach ($candidate in $targets) {
+            if (Test-StdTcpPort -HostName $candidate.Host -Port $candidate.Port -TimeoutMs 3000) {
+                return @{ Ok = $true; Detail = ('Adres IPv4: {0}, praca offline: źródło {1} odpowiada.' -f $shown, $candidate.Label) }
+            }
+        }
+        $labels = @($targets | ForEach-Object { $_.Label }) -join ', '
+        $silent = 'źródła {0} nie odpowiadają' -f $labels
+        if ($targets.Count -eq 1) { $silent = 'źródło {0} nie odpowiada' -f $labels }
+        return @{ Ok = $true; Detail = ('Adres IPv4: {0} (praca offline: {1}, wystarcza adres IPv4).' -f $shown, $silent) }
+    }
     $target = Get-NetworkStepTarget -Context $Context
     if ($null -eq $target) {
         return @{ Ok = $true; Detail = ('Adres IPv4: {0} (konfiguracja nie podaje serwera do sprawdzenia).' -f $shown) }

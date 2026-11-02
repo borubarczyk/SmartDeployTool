@@ -121,6 +121,99 @@ Describe 'Std.App' {
             param([string]$Server, [string]$OriginRoot, [switch]$NoCopy, [switch]$PreviewMode, [string]$StdRelaunch)
             return $PSBoundParameters
         }
+
+        function New-TestLink {
+            # Dowiązanie do folderu: junction w Windows (mklink /J - bez uprawnień administratora), symlink w Linuksie.
+            # $false, gdy nie udało się go utworzyć (test jest wtedy pomijany).
+            param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$Target)
+            try {
+                if ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) {
+                    $null = & cmd.exe /c mklink /J "$Path" "$Target" 2>&1
+                } else {
+                    $null = New-Item -ItemType SymbolicLink -Path $Path -Target $Target -ErrorAction Stop
+                }
+            } catch {
+                return $false
+            }
+            if (-not (Test-Path -LiteralPath $Path)) { return $false }
+            return (([System.IO.File]::GetAttributes($Path) -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)
+        }
+
+        function Remove-TestLink {
+            # Usuwa samo dowiązanie, gdy test je zostawił (bez wchodzenia do folderu docelowego).
+            param([Parameter(Mandatory = $true)][string]$Path)
+            try {
+                if (([System.IO.File]::GetAttributes($Path) -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { [System.IO.Directory]::Delete($Path, $false) }
+            } catch { }
+        }
+
+        function New-TestOutside {
+            # Folder poza App\ z plikiem, który nie może zniknąć.
+            $outside = New-TestFolder 'poza'
+            Set-TestFile -Path (Join-Path $outside 'cenny.txt') -Text 'nie usuwać'
+            Set-TestFile -Path (Join-Path $outside 'Sub\drugi.txt') -Text 'też nie'
+            return $outside
+        }
+
+        function Import-TestStartupFunction {
+            # Funkcje pomocnicze programu (SmartToolforDeployment.ps1) bez uruchamiania go: definicje z drzewa składni.
+            param([Parameter(Mandatory = $true)][string[]]$Name)
+            $path = Join-Path $script:V4Root 'SmartToolforDeployment.ps1'
+            $tokens = $null
+            $errors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+            $found = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false) | Where-Object { $Name -contains $_.Name })
+            if ($found.Count -ne $Name.Count) { throw "Nie znaleziono wszystkich funkcji: $($Name -join ', ')" }
+            return [scriptblock]::Create((($found | ForEach-Object { $_.Extent.Text }) -join [System.Environment]::NewLine))
+        }
+
+        function Start-TestMutexHolder {
+            # Inny wątek (osobny runspace) trzyma mutex o podanej nazwie - jak drugi, działający proces STD.
+            param([Parameter(Mandatory = $true)][string]$Name)
+            $ready = New-Object System.Threading.ManualResetEventSlim($false)
+            $stop = New-Object System.Threading.ManualResetEventSlim($false)
+            $ps = [powershell]::Create()
+            [void]$ps.AddScript({
+                    param($MutexName, $Ready, $Stop)
+                    $mutex = New-Object System.Threading.Mutex($false, $MutexName)
+                    [void]$mutex.WaitOne()
+                    $Ready.Set()
+                    [void]$Stop.Wait(60000)
+                    $mutex.ReleaseMutex()
+                    $mutex.Dispose()
+                }).AddArgument($Name).AddArgument($ready).AddArgument($stop)
+            $handle = $ps.BeginInvoke()
+            if (-not $ready.Wait(30000)) { throw 'Wątek testowy nie przejął mutexu.' }
+            return @{ PowerShell = $ps; Handle = $handle; Stop = $stop }
+        }
+
+        function Stop-TestMutexHolder {
+            param([Parameter(Mandatory = $true)]$Holder)
+            $Holder.Stop.Set()
+            [void]$Holder.PowerShell.EndInvoke($Holder.Handle)
+            $Holder.PowerShell.Dispose()
+        }
+
+        function Test-TestMutexFree {
+            # Czy inny wątek może teraz przejąć mutex (czyli nikt go nie trzyma).
+            param([Parameter(Mandatory = $true)][string]$Name)
+            $ps = [powershell]::Create()
+            [void]$ps.AddScript({
+                    param($MutexName)
+                    $mutex = New-Object System.Threading.Mutex($false, $MutexName)
+                    try {
+                        $free = $mutex.WaitOne(0)
+                    } catch [System.Threading.AbandonedMutexException] {
+                        $free = $true
+                    }
+                    if ($free) { $mutex.ReleaseMutex() }
+                    $mutex.Dispose()
+                    $free
+                }).AddArgument($Name)
+            $result = @($ps.Invoke())
+            $ps.Dispose()
+            return [bool]$result[-1]
+        }
     }
 
     BeforeEach {
@@ -285,6 +378,350 @@ Describe 'Std.App' {
         It '-Keep 3 zostawia trzy najnowsze' {
             [void](Sync-StdAppFolder -Source (New-TestSource -Version '4.1.0') -Keep 3)
             (Get-TestAppVersions) -join '|' | Should -Be '4.0.10|4.0.9|4.1.0|Notatki'
+        }
+    }
+
+    Context 'Sync-StdAppFolder: dowiązania (junction / symlink) i właściciel kopii' {
+        It 'Test-StdAppCopyCurrent odrzuca dowiązanie w kopii błędem [STD-APP-COPY] i niczego nie usuwa' {
+            $source = New-TestSource
+            $target = Sync-StdAppFolder -Source $source
+            $outside = New-TestOutside
+            $link = Join-Path $target 'Modules\Obcy'
+            if (-not (New-TestLink -Path $link -Target $outside)) { Set-ItResult -Skipped -Because 'nie udało się utworzyć dowiązania'; return }
+            try {
+                { Test-StdAppCopyCurrent -Source $source -Target $target } | Should -Throw -ExpectedMessage '*`[STD-APP-COPY`]*'
+                Test-Path -LiteralPath (Join-Path $outside 'cenny.txt') | Should -BeTrue
+            } finally {
+                Remove-TestLink -Path $link
+            }
+        }
+
+        It 'kopia z dowiązaniem w środku jest kopiowana od nowa, a pliki, na które wskazywało, zostają' {
+            $source = New-TestSource
+            $target = Sync-StdAppFolder -Source $source
+            $outside = New-TestOutside
+            $link = Join-Path $target 'Modules\Obcy'
+            if (-not (New-TestLink -Path $link -Target $outside)) { Set-ItResult -Skipped -Because 'nie udało się utworzyć dowiązania'; return }
+            try {
+                Sync-StdAppFolder -Source $source | Should -Be $target
+                Test-Path -LiteralPath $link | Should -BeFalse
+                Test-Path -LiteralPath (Join-Path $outside 'cenny.txt') | Should -BeTrue
+                Test-Path -LiteralPath (Join-Path $outside 'Sub\drugi.txt') | Should -BeTrue
+                Test-StdAppCopyCurrent -Source $source -Target $target | Should -BeTrue
+            } finally {
+                Remove-TestLink -Path $link
+            }
+        }
+
+        It 'kopia, która sama jest dowiązaniem, jest zastępowana zwykłym folderem' {
+            $source = New-TestSource -Version '4.0.2'
+            $outside = New-TestOutside
+            $target = Join-Path (Get-StdPath -Kind App) '4.0.2'
+            if (-not (New-TestLink -Path $target -Target $outside)) { Set-ItResult -Skipped -Because 'nie udało się utworzyć dowiązania'; return }
+            try {
+                Sync-StdAppFolder -Source $source | Should -Be $target
+                ([System.IO.File]::GetAttributes($target) -band [System.IO.FileAttributes]::ReparsePoint) | Should -Be 0
+                Test-StdAppCopyCurrent -Source $source -Target $target | Should -BeTrue
+                @(Get-ChildItem -LiteralPath $outside -Recurse -File).Count | Should -Be 2
+            } finally {
+                Remove-TestLink -Path $target
+            }
+        }
+
+        It 'stara wersja będąca dowiązaniem albo z dowiązaniem w środku znika bez plików, na które wskazuje' {
+            $app = Get-StdPath -Kind App
+            $outside = New-TestOutside
+            Set-TestFile -Path (Join-Path $app '3.0.0\plik.txt') -Text 'stara'
+            $inner = Join-Path $app '3.0.0\Modules'
+            $whole = Join-Path $app '3.1.0'
+            if (-not (New-TestLink -Path $inner -Target $outside) -or -not (New-TestLink -Path $whole -Target $outside)) {
+                Remove-TestLink -Path $inner
+                Set-ItResult -Skipped -Because 'nie udało się utworzyć dowiązania'
+                return
+            }
+            try {
+                [void](Sync-StdAppFolder -Source (New-TestSource -Version '4.1.0') -Keep 1)
+                Test-Path -LiteralPath (Join-Path $app '3.0.0') | Should -BeFalse
+                Test-Path -LiteralPath $whole | Should -BeFalse
+                Test-Path -LiteralPath (Join-Path $outside 'cenny.txt') | Should -BeTrue
+                Test-Path -LiteralPath (Join-Path $outside 'Sub\drugi.txt') | Should -BeTrue
+            } finally {
+                Remove-TestLink -Path $inner
+                Remove-TestLink -Path $whole
+            }
+        }
+
+        It 'folder App\ będący dowiązaniem jest zastępowany zwykłym folderem przed kopią' {
+            $outside = New-TestOutside
+            $app = Join-Path $env:STD_DATA_ROOT 'App'
+            [void][System.IO.Directory]::CreateDirectory($env:STD_DATA_ROOT)
+            if (-not (New-TestLink -Path $app -Target $outside)) { Set-ItResult -Skipped -Because 'nie udało się utworzyć dowiązania'; return }
+            try {
+                $target = Sync-StdAppFolder -Source (New-TestSource -Version '4.0.2')
+                $target | Should -Be (Join-Path $app '4.0.2')
+                ([System.IO.File]::GetAttributes($app) -band [System.IO.FileAttributes]::ReparsePoint) | Should -Be 0
+                Test-Path -LiteralPath (Join-Path $outside '4.0.2') | Should -BeFalse
+                @(Get-ChildItem -LiteralPath $outside -Recurse -File).Count | Should -Be 2
+            } finally {
+                Remove-TestLink -Path $app
+            }
+        }
+
+        It 'kopia, której właścicielem nie są Administratorzy ani SYSTEM, jest kopiowana od nowa (administrator w Windows)' {
+            Mock -ModuleName STD -CommandName Test-CoreDataProtectionNeeded -MockWith { $true }
+            Mock -ModuleName STD -CommandName Protect-StdDataFolder -MockWith { }
+            Mock -ModuleName STD -CommandName Test-AppTrustedOwner -MockWith { $false }
+            $source = New-TestSource
+            $target = Sync-StdAppFolder -Source $source
+            # Plik spoza plików narzędzia - zwykła kopia lustrzana by go nie usunęła.
+            Set-TestFile -Path (Join-Path $target 'podrzucony.txt') -Text 'obcy'
+            [void](Sync-StdAppFolder -Source $source)
+            Test-Path -LiteralPath (Join-Path $target 'podrzucony.txt') | Should -BeFalse
+            Test-StdAppCopyCurrent -Source $source -Target $target | Should -BeTrue
+            Should -Invoke -ModuleName STD -CommandName Protect-StdDataFolder -ParameterFilter { $Path -eq (Get-StdPath -Kind App) }
+            # Kopia dostaje właściciela Administratorzy (także bez UAC), więc następny start jej nie odrzuci.
+            Should -Invoke -ModuleName STD -CommandName Protect-StdDataFolder -ParameterFilter { $Path -eq $target }
+        }
+
+        It 'kopia Administratorów z uprawnieniami tylko dla Administratorów i SYSTEM zostaje (bez kopiowania od nowa)' {
+            Mock -ModuleName STD -CommandName Test-CoreDataProtectionNeeded -MockWith { $true }
+            Mock -ModuleName STD -CommandName Protect-StdDataFolder -MockWith { }
+            Mock -ModuleName STD -CommandName Test-AppTrustedOwner -MockWith { $true }
+            Mock -ModuleName STD -CommandName Test-CoreDataFolderProtected -MockWith { $true }
+            $source = New-TestSource
+            $target = Sync-StdAppFolder -Source $source
+            Set-TestFile -Path (Join-Path $target 'podrzucony.txt') -Text 'obcy'
+            [void](Sync-StdAppFolder -Source $source)
+            Test-Path -LiteralPath (Join-Path $target 'podrzucony.txt') | Should -BeTrue
+        }
+
+        It 'kopia sprzed zabezpieczenia uprawnień (dziedziczonych z ProgramData) jest kopiowana od nowa' {
+            Mock -ModuleName STD -CommandName Test-CoreDataProtectionNeeded -MockWith { $true }
+            Mock -ModuleName STD -CommandName Protect-StdDataFolder -MockWith { }
+            Mock -ModuleName STD -CommandName Test-AppTrustedOwner -MockWith { $true }
+            Mock -ModuleName STD -CommandName Test-CoreDataFolderProtected -MockWith { $false }
+            $source = New-TestSource
+            $target = Sync-StdAppFolder -Source $source
+            Set-TestFile -Path (Join-Path $target 'podrzucony.txt') -Text 'obcy'
+            [void](Sync-StdAppFolder -Source $source)
+            Test-Path -LiteralPath (Join-Path $target 'podrzucony.txt') | Should -BeFalse
+            Test-StdAppCopyCurrent -Source $source -Target $target | Should -BeTrue
+        }
+
+        It 'bez uprawnień administratora (testy, STD_DATA_ROOT) właściciel i uprawnienia nie są sprawdzane' {
+            Mock -ModuleName STD -CommandName Protect-StdDataFolder -MockWith { }
+            Mock -ModuleName STD -CommandName Test-AppTrustedOwner -MockWith { $false }
+            Mock -ModuleName STD -CommandName Test-CoreDataFolderProtected -MockWith { $false }
+            $source = New-TestSource
+            $target = Sync-StdAppFolder -Source $source
+            Set-TestFile -Path (Join-Path $target 'podrzucony.txt') -Text 'obcy'
+            [void](Sync-StdAppFolder -Source $source)
+            Test-Path -LiteralPath (Join-Path $target 'podrzucony.txt') | Should -BeTrue
+            Should -Invoke -ModuleName STD -CommandName Protect-StdDataFolder -Times 0 -Exactly
+            Should -Invoke -ModuleName STD -CommandName Test-AppTrustedOwner -Times 0 -Exactly
+            Should -Invoke -ModuleName STD -CommandName Test-CoreDataFolderProtected -Times 0 -Exactly
+        }
+    }
+
+    Context 'Enter-StdAppInstance: jedna instancja STD' {
+        BeforeAll {
+            # Własna nazwa mutexu: test nie może trafić w prawdziwy, działający STD.
+            $script:TestMutexName = 'Global\STD4-Test-' + [guid]::NewGuid().ToString('N')
+            $script:RealMutexName = & (Get-Module STD) { $script:StdAppMutexName }
+            & (Get-Module STD) { param($Name) $script:StdAppMutexName = $Name } $script:TestMutexName
+        }
+
+        AfterAll {
+            Exit-StdAppInstance
+            & (Get-Module STD) { param($Name) $script:StdAppMutexName = $Name } $script:RealMutexName
+        }
+
+        AfterEach {
+            Exit-StdAppInstance
+        }
+
+        It 'daje blokadę; drugie wejście w tym samym procesie też; Exit-StdAppInstance ją zwalnia' {
+            Enter-StdAppInstance | Should -BeTrue
+            Enter-StdAppInstance | Should -BeTrue
+            Test-TestMutexFree -Name $script:TestMutexName | Should -BeFalse
+            Exit-StdAppInstance
+            Test-TestMutexFree -Name $script:TestMutexName | Should -BeTrue
+            { Exit-StdAppInstance } | Should -Not -Throw
+        }
+
+        It 'gdy blokadę trzyma inny proces STD: $false (także po czekaniu -WaitSec)' {
+            $holder = Start-TestMutexHolder -Name $script:TestMutexName
+            try {
+                Enter-StdAppInstance | Should -BeFalse
+                Enter-StdAppInstance -WaitSec 1 | Should -BeFalse
+            } finally {
+                Stop-TestMutexHolder -Holder $holder
+            }
+            Enter-StdAppInstance | Should -BeTrue
+        }
+
+        It 'gdy działa inny proces STD, Sync-StdAppFolder kopiuje, ale nie usuwa starych wersji' {
+            $app = Get-StdPath -Kind App
+            foreach ($name in @('3.9.0', '4.0.9', '4.0.10')) { Set-TestFile -Path (Join-Path (Join-Path $app $name) 'plik.txt') -Text $name }
+            $source = New-TestSource -Version '4.0.11'
+            $holder = Start-TestMutexHolder -Name $script:TestMutexName
+            try {
+                $target = Sync-StdAppFolder -Source $source
+                Test-StdAppCopyCurrent -Source $source -Target $target | Should -BeTrue
+                (Get-TestAppVersions) -join '|' | Should -Be '3.9.0|4.0.10|4.0.11|4.0.9'
+            } finally {
+                Stop-TestMutexHolder -Holder $holder
+            }
+            [void](Sync-StdAppFolder -Source $source)
+            (Get-TestAppVersions) -join '|' | Should -Be '4.0.10|4.0.11'
+        }
+
+        It 'blokada trzymana przez ten proces nie wstrzymuje usuwania starych wersji' {
+            Enter-StdAppInstance | Should -BeTrue
+            $app = Get-StdPath -Kind App
+            foreach ($name in @('3.9.0', '4.0.9', '4.0.10')) { Set-TestFile -Path (Join-Path (Join-Path $app $name) 'plik.txt') -Text $name }
+            [void](Sync-StdAppFolder -Source (New-TestSource -Version '4.0.11'))
+            (Get-TestAppVersions) -join '|' | Should -Be '4.0.10|4.0.11'
+            # Sprawdzenie w Sync-StdAppFolder nie zwolniło blokady tego procesu.
+            Test-TestMutexFree -Name $script:TestMutexName | Should -BeFalse
+        }
+    }
+
+    Context 'Get-StdNetworkPath: start z dysku sieciowego' {
+        It 'ścieżka UNC zostaje bez zmian' {
+            $result = Get-StdNetworkPath -Path '\\srv-files\STD$\std\SmartToolforDeployment.ps1'
+            $result.IsNetwork | Should -BeTrue
+            $result.UncPath | Should -Be '\\srv-files\STD$\std\SmartToolforDeployment.ps1'
+        }
+
+        It 'ścieżka \\?\UNC\ to udział sieciowy' {
+            $result = Get-StdNetworkPath -Path '\\?\UNC\srv\udział\STD'
+            $result.IsNetwork | Should -BeTrue
+            $result.UncPath | Should -Be '\\srv\udział\STD'
+        }
+
+        It 'litera dysku zmapowanego zamienia się na \\serwer\udział' {
+            Mock -ModuleName STD -CommandName Get-AppDriveType -MockWith { 'Network' }
+            Mock -ModuleName STD -CommandName Get-AppDriveRemotePath -MockWith { '\\srv\Wdrożenia STD\' }
+            $result = Get-StdNetworkPath -Path 'z:\STD 4\SmartToolforDeployment.ps1'
+            $result.IsNetwork | Should -BeTrue
+            $result.UncPath | Should -Be '\\srv\Wdrożenia STD\STD 4\SmartToolforDeployment.ps1'
+            (Get-StdNetworkPath -Path 'Z:\').UncPath | Should -Be '\\srv\Wdrożenia STD\'
+            Should -Invoke -ModuleName STD -CommandName Get-AppDriveRemotePath -ParameterFilter { $Drive -eq 'Z:' }
+        }
+
+        It 'dysk sieciowy bez znanego udziału: IsNetwork = $true, UncPath = $null' {
+            Mock -ModuleName STD -CommandName Get-AppDriveType -MockWith { 'Network' }
+            Mock -ModuleName STD -CommandName Get-AppDriveRemotePath -MockWith { $null }
+            $result = Get-StdNetworkPath -Path 'Z:\STD\SmartToolforDeployment.ps1'
+            $result.IsNetwork | Should -BeTrue
+            $result.UncPath | Should -BeNullOrEmpty
+        }
+
+        It 'dysk lokalny, pendrive i ścieżka bez litery to nie sieć' {
+            Mock -ModuleName STD -CommandName Get-AppDriveType -MockWith { 'Removable' }
+            (Get-StdNetworkPath -Path 'E:\STD\SmartToolforDeployment.ps1').IsNetwork | Should -BeFalse
+            (Get-StdNetworkPath -Path '/media/usb/STD').IsNetwork | Should -BeFalse
+            (Get-StdNetworkPath -Path $TestDrive).IsNetwork | Should -BeFalse
+        }
+    }
+
+    Context 'Program: plik startowy, dziennik okien, ponowne uruchomienie' {
+        BeforeAll {
+            $script:StartupFunctions = Import-TestStartupFunction -Name @('Protect-StartupText', 'Get-StartupBootstrap', 'Get-StartupEarlyExitCode')
+        }
+
+        It 'Get-StartupBootstrap: błędny bootstrap.json na pendrive''ie -> adres zapisany na komputerze i jeden komunikat' {
+            . $script:StartupFunctions
+            $messages = New-Object 'System.Collections.Generic.List[string]'
+            function Show-StdMessage { param($Message, $Title, $Image) $messages.Add([string]$Message) }
+            function Show-StartupMessage { param($Message, $Title, $Icon) $messages.Add([string]$Message) }
+            Save-StdBootstrapLocal -Bootstrap @{ server = 'https://zapisany.firma.pl/std/' }
+            $usb = New-TestFolder 'usb'
+            Set-TestFile -Path (Join-Path $usb 'bootstrap.json') -Text '{ "server": "http://bez-https/std/" }'
+            $result = Get-StartupBootstrap -ServerUrl $null -Root $usb
+            $result.server | Should -Be 'https://zapisany.firma.pl/std/'
+            $messages | Should -HaveCount 1
+            $messages[0] | Should -Match 'https://zapisany\.firma\.pl/std/'
+        }
+
+        It 'Get-StartupBootstrap: błędny bootstrap.json bez zapisanego adresu -> $null i jeden komunikat' {
+            . $script:StartupFunctions
+            $messages = New-Object 'System.Collections.Generic.List[string]'
+            function Show-StdMessage { param($Message, $Title, $Image) $messages.Add([string]$Message) }
+            function Show-StartupMessage { param($Message, $Title, $Icon) $messages.Add([string]$Message) }
+            $usb = New-TestFolder 'usb'
+            Set-TestFile -Path (Join-Path $usb 'bootstrap.json') -Text '{ to nie jest JSON'
+            Get-StartupBootstrap -ServerUrl $null -Root $usb | Should -BeNullOrEmpty
+            $messages | Should -HaveCount 1
+            $messages[0] | Should -Match 'oknie logowania'
+        }
+
+        It 'Get-StartupBootstrap: zły -Server -> poprawny bootstrap.json z pendrive''a' {
+            . $script:StartupFunctions
+            $messages = New-Object 'System.Collections.Generic.List[string]'
+            function Show-StdMessage { param($Message, $Title, $Image) $messages.Add([string]$Message) }
+            function Show-StartupMessage { param($Message, $Title, $Icon) $messages.Add([string]$Message) }
+            $usb = New-TestFolder 'usb'
+            Set-TestFile -Path (Join-Path $usb 'bootstrap.json') -Text '{ "server": "https://pendrive.firma.pl/std/" }'
+            (Get-StartupBootstrap -ServerUrl 'ftp://zly' -Root $usb).server | Should -Be 'https://pendrive.firma.pl/std/'
+            $messages | Should -HaveCount 1
+        }
+
+        It 'Get-StartupBootstrap: poprawny bootstrap.json -> bez komunikatu' {
+            . $script:StartupFunctions
+            $messages = New-Object 'System.Collections.Generic.List[string]'
+            function Show-StdMessage { param($Message, $Title, $Image) $messages.Add([string]$Message) }
+            function Show-StartupMessage { param($Message, $Title, $Icon) $messages.Add([string]$Message) }
+            $usb = New-TestFolder 'usb'
+            Set-TestFile -Path (Join-Path $usb 'bootstrap.json') -Text '{ "server": "https://pendrive.firma.pl/std/" }'
+            (Get-StartupBootstrap -ServerUrl $null -Root $usb).server | Should -Be 'https://pendrive.firma.pl/std/'
+            $messages | Should -HaveCount 0
+        }
+
+        It 'Get-StartupEarlyExitCode: kod procesu, który zakończył się od razu; $null, gdy proces nadal działa' {
+            . $script:StartupFunctions
+            $exe = (Get-Process -Id $PID).Path
+            $quick = [System.Diagnostics.Process]::Start($exe, '-NoProfile -NonInteractive -Command exit 3')
+            Get-StartupEarlyExitCode -Process $quick -Milliseconds 60000 | Should -Be 3
+            $slow = [System.Diagnostics.Process]::Start($exe, '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 60')
+            $slowId = $slow.Id
+            try {
+                Get-StartupEarlyExitCode -Process $slow -Milliseconds 200 | Should -BeNullOrEmpty
+            } finally {
+                Stop-Process -Id $slowId -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Start-StdElevated -PassThru zwraca obiekt procesu, bez obiektu $true, a przy odmowie UAC $false' {
+            Mock -ModuleName STD -CommandName Start-CoreElevatedProcess -MockWith { New-Object System.Diagnostics.Process }
+            $result = Start-StdElevated -ScriptPath 'C:\STD\SmartToolforDeployment.ps1' -PassThru
+            ($result -is [System.Diagnostics.Process]) | Should -BeTrue
+            $result.Dispose()
+            Should -Invoke -ModuleName STD -CommandName Start-CoreElevatedProcess -Times 1 -Exactly -ParameterFilter { $PassThru }
+            # Bez -PassThru wynik to nadal [bool].
+            Start-StdElevated -ScriptPath 'C:\STD\SmartToolforDeployment.ps1' | Should -BeExactly $true
+
+            Mock -ModuleName STD -CommandName Start-CoreElevatedProcess -MockWith { }
+            Start-StdElevated -ScriptPath 'C:\STD\SmartToolforDeployment.ps1' -PassThru | Should -BeExactly $true
+            Mock -ModuleName STD -CommandName Start-CoreElevatedProcess -MockWith { throw (New-Object System.ComponentModel.Win32Exception(1223)) }
+            Start-StdElevated -ScriptPath 'C:\STD\SmartToolforDeployment.ps1' -PassThru | Should -BeExactly $false
+        }
+
+        It 'program: ścieżki UNC przy starcie z sieci, sprawdzenie szybkiego końca, blokada przed kopią, dziennik okien przed pierwszym oknem' {
+            $text = [System.IO.File]::ReadAllText((Join-Path $script:V4Root 'SmartToolforDeployment.ps1'))
+            $text | Should -Match 'Get-StdNetworkPath -Path \$stdAppScriptPath'
+            $text | Should -Match "Invoke-StartupRelaunch -ScriptPath \`$stdAppRelaunchPath -Stage 'admin'"
+            $text | Should -Match 'Get-StartupEarlyExitCode -Process'
+            $text | Should -Match 'Protect-StdDataFolder -Path \(Get-StdDataRoot\)'
+            $text | Should -Match "Register-StdFileLogSink -Name 'StdUi'"
+            $text | Should -Match '\$script:StdUiLogPath = \$stdAppUiLog'
+            $text.IndexOf('Enter-StdAppInstance -WaitSec') | Should -BeGreaterThan 0
+            $text.IndexOf('Enter-StdAppInstance -WaitSec') | Should -BeLessThan $text.IndexOf('Sync-StdAppFolder -Source')
+            $text.IndexOf("Register-StdFileLogSink -Name 'StdUi'") | Should -BeLessThan $text.IndexOf('Show-StdConnectWindow -OriginRoot')
+            # Okno główne dostaje plik startowy z logowania, bez ponownego czytania bootstrap.json.
+            $text | Should -Match "\`$stdAppLogin\['Bootstrap'\]"
+            ([regex]::Matches($text, 'Get-StartupBootstrap -ServerUrl')).Count | Should -Be 1
         }
     }
 

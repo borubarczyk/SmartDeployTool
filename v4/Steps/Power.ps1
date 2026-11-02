@@ -5,6 +5,8 @@
 # SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED) w wątku silnika
 # (Set-StdKeepAwake z modułu STD): komputer nie zaśnie i nie wygasi ekranu do końca wdrożenia.
 # Silnik sam przywraca zwykłe usypianie, gdy wdrożenie się kończy (także po błędzie i przerwaniu).
+# Przy włączonym zadaniu SuspendSleep silnik wstrzymuje usypianie także sam na starcie każdego wdrożenia,
+# bo przy „Ponów nieudane” (-OnlySteps) i -Resume ten krok nie jest uruchamiany ponownie.
 # Krok jest wcześnie (Order 5), żeby komputer nie zasnął już w czasie czekania na sieć.
 
 $powerStep = @{

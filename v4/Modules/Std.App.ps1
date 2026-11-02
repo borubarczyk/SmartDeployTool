@@ -17,12 +17,26 @@
 #   których w źródle już nie ma (żeby stary krok z Steps\ nie został wczytany);
 # - nowa wersja trafia do nowego folderu App\<wersja>. Reszta %ProgramData%\STD (ustawienia, cache)
 #   zostaje bez zmian. W App\ zostają dwie najnowsze wersje (według [version]) i zawsze ta,
-#   z której właśnie startujemy; foldery o nazwach, które nie są wersją, nie są ruszane.
+#   z której właśnie startujemy; foldery o nazwach, które nie są wersją, nie są ruszane;
+# - kod z App\<wersja> działa jako administrator, więc App\ ma uprawnienia tylko dla Administratorów
+#   i SYSTEM (Protect-StdDataFolder). Kopii, która jest dowiązaniem (junction / symlink), ma dowiązanie
+#   w środku, nie należy do Administratorów / SYSTEM albo nie ma jeszcze tych uprawnień (kopia sprzed tego
+#   zabezpieczenia), nie ufamy: jest usuwana i kopiowana od nowa. Sprawdzona kopia dostaje te uprawnienia.
+#   Foldery przeglądamy sami (bez GetFiles(AllDirectories), które w .NET 4.8 wchodzi w junction) i nigdy
+#   nie wchodzimy w dowiązania - dowiązanie usuwamy jako dowiązanie, a nie pliki, na które wskazuje;
+# - jedna instancja STD na komputerze: mutex Global\STD4-SmartToolForDeployment (Enter-StdAppInstance).
+#   Gdy trzyma go inny proces STD, Sync-StdAppFolder nie usuwa starych wersji.
 #
 # Funkcje pomocnicze bez "-Std" w nazwie nie są eksportowane z modułu (Export-ModuleMember *-Std*).
 
 # Pliki i foldery narzędzia kopiowane do App\<wersja> (względem folderu v4).
 $script:StdAppItems = @('STD.psd1', 'STD.psm1', 'SmartToolforDeployment.ps1', 'Modules', 'GUI', 'Steps')
+
+# Blokada jednej instancji STD (wszystkie sesje Windows) i mutex trzymany przez ten proces.
+$script:StdAppMutexName = 'Global\STD4-SmartToolForDeployment'
+if (-not (Get-Variable -Name 'StdAppInstanceMutex' -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:StdAppInstanceMutex = $null
+}
 
 # ---------------------------------------------------------------------------------------------
 # Pomocnicze (prywatne)
@@ -93,20 +107,62 @@ function Assert-AppSource {
     }
 }
 
+function Get-AppTree {
+    # Zawartość folderu na każdej głębokości: @{ Files; Directories; Links } (pełne ścieżki). Własny przegląd
+    # ze stosem zamiast GetFiles/GetDirectories(AllDirectories), które w .NET 4.8 wchodzą w junction i zwróciłyby
+    # pliki spoza folderu (junction może założyć każdy użytkownik z prawem zapisu w folderze). Dowiązania
+    # (junction, symlink) trafiają do Links i nie są przeglądane; folder, który sam jest dowiązaniem, też.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $files = New-Object 'System.Collections.Generic.List[string]'
+    $directories = New-Object 'System.Collections.Generic.List[string]'
+    $links = New-Object 'System.Collections.Generic.List[string]'
+    $pending = New-Object 'System.Collections.Generic.Stack[string]'
+    if (Test-CoreIsLink -Path $Path) {
+        $links.Add($Path)
+    } else {
+        $pending.Push($Path)
+    }
+    while ($pending.Count -gt 0) {
+        $current = $pending.Pop()
+        foreach ($entry in [System.IO.Directory]::GetFileSystemEntries($current)) {
+            $attributes = [System.IO.File]::GetAttributes($entry)
+            if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                $links.Add($entry)
+            } elseif (($attributes -band [System.IO.FileAttributes]::Directory) -ne 0) {
+                $directories.Add($entry)
+                $pending.Push($entry)
+            } else {
+                $files.Add($entry)
+            }
+        }
+    }
+    return @{ Files = $files.ToArray(); Directories = $directories.ToArray(); Links = $links.ToArray() }
+}
+
+function Get-AppLinkError {
+    # Komunikat [STD-APP-COPY] dla dowiązania w folderze narzędzia.
+    param([Parameter(Mandatory = $true)][string]$Link)
+    return "[STD-APP-COPY] $Link to dowiązanie (junction / symlink) - STD nie kopiuje ani nie usuwa plików przez dowiązania."
+}
+
 function Get-AppFileTable {
     # Pliki narzędzia w folderze: słownik ścieżka względna -> pełna ścieżka (tylko elementy $script:StdAppItems).
+    # Dowiązanie wśród nich -> [STD-APP-COPY] (pliki, na które wskazuje, nie mogą trafić do kopii ani do usunięcia).
     param([Parameter(Mandatory = $true)][string]$Root)
     $table = New-Object 'System.Collections.Generic.Dictionary[string,string]' -ArgumentList (Get-AppPathComparer)
     if (-not [System.IO.Directory]::Exists($Root)) { return , $table }
     $trim = [char[]]@([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
     foreach ($item in $script:StdAppItems) {
         $path = [System.IO.Path]::Combine($Root, $item)
+        if (Test-CoreIsLink -Path $path) { throw (Get-AppLinkError -Link $path) }
         if ([System.IO.File]::Exists($path)) {
             $table[$item] = $path
             continue
         }
         if (-not [System.IO.Directory]::Exists($path)) { continue }
-        foreach ($file in [System.IO.Directory]::GetFiles($path, '*', [System.IO.SearchOption]::AllDirectories)) {
+        $tree = Get-AppTree -Path $path
+        if ($tree.Links.Count -gt 0) { throw (Get-AppLinkError -Link $tree.Links[0]) }
+        foreach ($file in $tree.Files) {
             $relative = $file.Substring($Root.Length).TrimStart($trim)
             $table[$relative] = $file
         }
@@ -153,12 +209,12 @@ function Clear-AppReadOnly {
 }
 
 function Remove-AppEmptyFolders {
-    # Puste podfoldery (np. po usunięciu pliku z GUI\Screens) w folderach narzędzia w celu.
+    # Puste podfoldery (np. po usunięciu pliku z GUI\Screens) w folderach narzędzia w celu. Bez wchodzenia w dowiązania.
     param([Parameter(Mandatory = $true)][string]$TargetRoot)
     foreach ($item in $script:StdAppItems) {
         $path = [System.IO.Path]::Combine($TargetRoot, $item)
-        if (-not [System.IO.Directory]::Exists($path)) { continue }
-        $dirs = @([System.IO.Directory]::GetDirectories($path, '*', [System.IO.SearchOption]::AllDirectories) | Sort-Object -Property Length -Descending)
+        if ((Test-CoreIsLink -Path $path) -or -not [System.IO.Directory]::Exists($path)) { continue }
+        $dirs = @((Get-AppTree -Path $path).Directories | Sort-Object -Property Length -Descending)
         foreach ($dir in $dirs) {
             if (@([System.IO.Directory]::GetFileSystemEntries($dir)).Count -eq 0) {
                 [System.IO.Directory]::Delete($dir, $false)
@@ -173,6 +229,7 @@ function Copy-AppFiles {
         [Parameter(Mandatory = $true)][string]$SourceRoot,
         [Parameter(Mandatory = $true)][string]$TargetRoot
     )
+    if (Test-CoreIsLink -Path $TargetRoot) { throw (Get-AppLinkError -Link $TargetRoot) }
     $sourceTable = Get-AppFileTable -Root $SourceRoot
     $targetTable = Get-AppFileTable -Root $TargetRoot
     $diff = Get-AppCopyDifference -SourceTable $sourceTable -TargetTable $targetTable
@@ -195,12 +252,118 @@ function Copy-AppFiles {
 }
 
 function Remove-AppFolder {
-    # Usuwa folder z całą zawartością (najpierw zdejmuje atrybut „tylko do odczytu” z plików).
+    # Usuwa folder z całą zawartością (najpierw zdejmuje atrybut „tylko do odczytu” z plików). Dowiązania
+    # (junction, symlink; także sam folder, gdy jest dowiązaniem) usuwa jako dowiązania - nigdy nie wchodzi
+    # do folderu, na który wskazują, i nie usuwa niczego poza $Path.
     param([Parameter(Mandatory = $true)][string]$Path)
-    foreach ($file in [System.IO.Directory]::GetFiles($Path, '*', [System.IO.SearchOption]::AllDirectories)) {
-        Clear-AppReadOnly -Path $file
+    if (Test-CoreIsLink -Path $Path) {
+        Remove-CoreLink -Path $Path
+        return
     }
-    [System.IO.Directory]::Delete($Path, $true)
+    $tree = Get-AppTree -Path $Path
+    foreach ($link in $tree.Links) { Remove-CoreLink -Path $link }
+    foreach ($file in $tree.Files) {
+        Clear-AppReadOnly -Path $file
+        [System.IO.File]::Delete($file)
+    }
+    foreach ($dir in @($tree.Directories | Sort-Object -Property Length -Descending)) {
+        [System.IO.Directory]::Delete($dir, $false)
+    }
+    [System.IO.Directory]::Delete($Path, $false)
+}
+
+function Test-AppTrustedOwner {
+    # Czy właścicielem folderu są Administratorzy albo SYSTEM. Folder założony wcześniej przez zwykłego
+    # użytkownika należy do niego: może on zmieniać jego uprawnienia i podmieniać pliki po sprawdzeniu SHA-256.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    try {
+        $owner = (Get-CoreDirectorySecurity -Path $Path).GetOwner([System.Security.Principal.SecurityIdentifier])
+    } catch {
+        return $false
+    }
+    if ($null -eq $owner) { return $false }
+    return ($owner.Value -eq 'S-1-5-32-544' -or $owner.Value -eq 'S-1-5-18')
+}
+
+function Reset-AppUntrustedFolder {
+    # Przed sprawdzeniem i kopią App\<wersja>: kopia, która jest dowiązaniem albo ma dowiązanie w środku, jest
+    # usuwana - Copy-AppFiles założy ją od nowa z uprawnieniami App\. -CheckTrust (administrator, Windows):
+    # usuwana jest też kopia, której właścicielem nie są Administratorzy / SYSTEM, i kopia bez uprawnień
+    # z Protect-StdDataFolder (STD nadaje je po każdej sprawdzonej kopii) - to kopia sprzed tego zabezpieczenia,
+    # do której zwykły użytkownik mógł dopisać swoje pliki. Usuwane są tylko same dowiązania, nigdy pliki,
+    # na które wskazują.
+    param([Parameter(Mandatory = $true)][string]$Path, [bool]$CheckTrust)
+    $reason = $null
+    if (Test-CoreIsLink -Path $Path) {
+        $reason = 'folder jest dowiązaniem (junction / symlink)'
+    } elseif (-not [System.IO.Directory]::Exists($Path)) {
+        return
+    } elseif ((Get-AppTree -Path $Path).Links.Count -gt 0) {
+        $reason = 'w folderze jest dowiązanie (junction / symlink)'
+    } elseif ($CheckTrust) {
+        if (-not (Test-AppTrustedOwner -Path $Path)) {
+            $reason = 'właścicielem folderu nie są Administratorzy ani SYSTEM'
+        } else {
+            $sealed = $false
+            try { $sealed = [bool](Test-CoreDataFolderProtected -Path $Path) } catch { }
+            if (-not $sealed) { $reason = 'folder nie ma jeszcze uprawnień tylko dla Administratorów i SYSTEM' }
+        }
+    }
+    if ($null -eq $reason) { return }
+    Remove-AppFolder -Path $Path
+    Write-StdLog -Level Warn -Source 'Sync-StdAppFolder' -Message "Usunięto kopię STD $Path ($reason) - STD skopiuje ją od nowa."
+}
+
+function Test-AppOtherInstance {
+    # Czy mutex jednej instancji trzyma inny proces (albo wątek) STD. Mutex trzymany przez ten wątek się nie liczy
+    # (WaitOne właściciela zawsze się udaje). Nie da się sprawdzić -> $true (ostrożnie: bez usuwania starych wersji).
+    $mutex = $null
+    try {
+        if (-not [System.Threading.Mutex]::TryOpenExisting($script:StdAppMutexName, [ref]$mutex)) { return $false }
+        $acquired = $false
+        try {
+            $acquired = $mutex.WaitOne(0)
+        } catch [System.Threading.AbandonedMutexException] {
+            # Poprzedni proces STD zakończył się bez zwolnienia mutexu - nikt go już nie trzyma.
+            $acquired = $true
+        }
+        if (-not $acquired) { return $true }
+        $mutex.ReleaseMutex()
+        return $false
+    } catch {
+        Write-StdLog -Level Warn -Source 'Sync-StdAppFolder' -Message "Nie udało się sprawdzić, czy działa inny proces STD - $(Format-CoreErrorText $_)"
+        return $true
+    } finally {
+        if ($null -ne $mutex) { $mutex.Dispose() }
+    }
+}
+
+function Get-AppDriveType {
+    # Typ dysku dla litery (np. 'Z:'): 'Network', 'Fixed', 'Removable'... Poza Windows: ''.
+    # Osobna funkcja, żeby testy mogły ją podmienić (Mock).
+    param([Parameter(Mandatory = $true)][string]$Drive)
+    if (-not (Test-CoreIsWindows)) { return '' }
+    try {
+        return [string](New-Object System.IO.DriveInfo($Drive)).DriveType
+    } catch {
+        return ''
+    }
+}
+
+function Get-AppDriveRemotePath {
+    # Udział sieciowy (\\serwer\udział) dla litery zmapowanego dysku (np. 'Z:'): Win32_LogicalDisk.ProviderName,
+    # a gdy go brak - HKCU:\Network\<litera>\RemotePath (dysk mapowany na stałe). Nie wiadomo -> $null.
+    param([Parameter(Mandatory = $true)][string]$Drive)
+    $letter = $Drive.Substring(0, 1).ToUpperInvariant()
+    try {
+        $disk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter ("DeviceID='{0}:'" -f $letter) -ErrorAction Stop | Select-Object -First 1
+        if ($null -ne $disk -and -not [string]::IsNullOrWhiteSpace([string]$disk.ProviderName)) { return [string]$disk.ProviderName }
+    } catch { }
+    try {
+        $remote = [string](Get-ItemProperty -LiteralPath ('HKCU:\Network\' + $letter) -Name 'RemotePath' -ErrorAction Stop).RemotePath
+        if (-not [string]::IsNullOrWhiteSpace($remote)) { return $remote }
+    } catch { }
+    return $null
 }
 
 function Remove-AppOldVersions {
@@ -302,7 +465,8 @@ function Test-StdAppCopyCurrent {
     .SYNOPSIS
     $true, gdy folder -Target ma dokładnie te same pliki narzędzia co -Source (te same ścieżki względne
     i te same sumy SHA-256; liczą się STD.psd1, STD.psm1, SmartToolforDeployment.ps1, Modules, GUI, Steps).
-    Brak folderu docelowego -> $false. Źródło bez STD.psd1 -> [STD-APP-SOURCE].
+    Brak folderu docelowego -> $false. Źródło bez STD.psd1 -> [STD-APP-SOURCE]. Dowiązanie (junction / symlink)
+    wśród plików narzędzia -> [STD-APP-COPY].
     #>
     [CmdletBinding()]
     [OutputType([bool])]
@@ -329,8 +493,13 @@ function Sync-StdAppFolder {
     Kopiuje narzędzie z folderu -Source (v4, np. pendrive) do <Get-StdPath App>\<wersja> i zwraca ten folder.
     Kopia jest pomijana, gdy pliki są identyczne (SHA-256); przy różnicach kopiowane są tylko zmienione
     i nowe pliki, a zbędne usuwane. Potem usuwa stare wersje z App\: zostają -Keep najnowsze (według
-    [version]) i zawsze wersja docelowa. -Version domyślnie z <Source>\STD.psd1.
-    Gdy -Source to już folder docelowy, niczego nie kopiuje. Błędy: [STD-APP-SOURCE], [STD-APP-COPY].
+    [version]) i zawsze wersja docelowa; gdy działa inny proces STD (Enter-StdAppInstance), stare wersje zostają.
+    -Version domyślnie z <Source>\STD.psd1. Gdy -Source to już folder docelowy, niczego nie kopiuje.
+    Bezpieczeństwo (kod z App\ działa jako administrator): App\ jako dowiązanie jest zastępowany zwykłym folderem;
+    w Windows w procesie administratora App\ i App\<wersja> dostają uprawnienia z Protect-StdDataFolder. Kopia, która jest
+    dowiązaniem, ma dowiązanie w środku albo (administrator, Windows) nie należy do Administratorów / SYSTEM lub nie ma
+    jeszcze tych uprawnień, jest usuwana i kopiowana od nowa. Nic poza App\<wersja> nie jest usuwane.
+    Błędy: [STD-APP-SOURCE], [STD-APP-COPY].
     #>
     [CmdletBinding()]
     [OutputType([string])]
@@ -347,6 +516,18 @@ function Sync-StdAppFolder {
     Assert-AppSource -SourceRoot $sourceRoot
     if ($null -eq $Version) { $Version = Get-AppSourceVersion -SourceRoot $sourceRoot }
     $appRoot = Get-StdPath -Kind App
+    $protect = Test-CoreDataProtectionNeeded
+    try {
+        if (Test-CoreIsLink -Path $appRoot) {
+            # Junction App\ -> dowolny folder: kopia i usuwanie starych wersji trafiłyby tam.
+            Remove-CoreLink -Path $appRoot
+            [void][System.IO.Directory]::CreateDirectory($appRoot)
+            Write-StdLog -Level Warn -Source 'Sync-StdAppFolder' -Message "Folder $appRoot był dowiązaniem (junction / symlink) - usunięto samo dowiązanie."
+        }
+        if ($protect) { Protect-StdDataFolder -Path $appRoot }
+    } catch {
+        throw "[STD-APP-COPY] Nie udało się zabezpieczyć folderu kopii STD $appRoot - $(Format-CoreErrorText $_)"
+    }
     $targetRoot = Get-AppNormalPath -Path (Get-StdAppFolder -Version $Version)
 
     if (Test-AppPathEqual -Path $sourceRoot -Other $targetRoot) {
@@ -354,6 +535,11 @@ function Sync-StdAppFolder {
     } else {
         if (Test-AppPathInside -Path $targetRoot -Parent $sourceRoot) {
             throw "[STD-APP-COPY] Folder kopii $targetRoot leży wewnątrz folderu źródłowego $sourceRoot - ustaw inny folder danych STD."
+        }
+        try {
+            Reset-AppUntrustedFolder -Path $targetRoot -CheckTrust $protect
+        } catch {
+            throw "[STD-APP-COPY] Nie udało się usunąć niezaufanej kopii STD $targetRoot - $(Format-CoreErrorText $_)"
         }
         if (Test-StdAppCopyCurrent -Source $sourceRoot -Target $targetRoot) {
             Write-StdLog -Level Info -Source 'Sync-StdAppFolder' -Message "Kopia STD $Version w $targetRoot jest aktualna - bez kopiowania."
@@ -368,9 +554,23 @@ function Sync-StdAppFolder {
             }
             Write-StdLog -Level Info -Source 'Sync-StdAppFolder' -Message ("Skopiowano STD {0} do {1} (skopiowane pliki: {2}, usunięte: {3})." -f $Version, $targetRoot, $result.Copied, $result.Removed)
         }
+        if ($protect) {
+            # Sprawdzona kopia dostaje uprawnienia tylko dla Administratorów i SYSTEM i właściciela Administratorzy (także
+            # gdy folder założył proces bez UAC, np. wbudowane konto Administrator): następny start jej zaufa.
+            try {
+                Protect-StdDataFolder -Path $targetRoot
+            } catch {
+                Write-StdLog -Level Warn -Source 'Sync-StdAppFolder' -Message (Format-CoreErrorText $_ 600)
+            }
+        }
     }
 
-    [void](Remove-AppOldVersions -AppRoot $appRoot -Keep $Keep -Protect @($targetRoot, $sourceRoot))
+    if (Test-AppOtherInstance) {
+        # Inny STD może właśnie działać z jednej ze starszych wersji - usunięcie folderu spod niego by go zepsuło.
+        Write-StdLog -Level Info -Source 'Sync-StdAppFolder' -Message 'Działa inny proces STD - stare wersje z App\ usunę przy następnym uruchomieniu.'
+    } else {
+        [void](Remove-AppOldVersions -AppRoot $appRoot -Keep $Keep -Protect @($targetRoot, $sourceRoot))
+    }
     return $targetRoot
 }
 
@@ -436,6 +636,103 @@ function Get-StdRelaunchArgument {
         $tokens.Add($text)
     }
     return , $tokens.ToArray()
+}
+
+function Get-StdNetworkPath {
+    <#
+    .SYNOPSIS
+    Czy ścieżka leży na dysku sieciowym i jaka jest jej postać UNC: @{ IsNetwork; UncPath }.
+    Proces uruchomiony jako administrator nie widzi liter dysków zmapowanych przez zwykłego użytkownika
+    (osobna sesja logowania), więc program przekazuje mu ścieżkę UNC. Ścieżka UNC (\\serwer\udział\...)
+    zostaje bez zmian; litera dysku zmapowanego (np. Z:\STD) jest zamieniana na \\serwer\udział\STD.
+    UncPath = $null, gdy dysk jest sieciowy, ale nie wiadomo, na jaki udział wskazuje. Dysk lokalny,
+    pendrive i Linux: IsNetwork = $false.
+    #>
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Path
+    )
+    if ($Path -match '^[\\/]{2}[?.][\\/]') {
+        # Ścieżki urządzeń: \\?\UNC\serwer\udział to udział sieciowy, \\?\C:\... - zwykła ścieżka z literą dysku.
+        if ($Path -match '^[\\/]{2}[?.][\\/]UNC[\\/](.+)$') { return @{ IsNetwork = $true; UncPath = ('\\' + $Matches[1]) } }
+        $Path = $Path.Substring(4)
+    } elseif ($Path -match '^[\\/]{2}[^\\/]') {
+        return @{ IsNetwork = $true; UncPath = $Path }
+    }
+    if ($Path -notmatch '^([A-Za-z]):') { return @{ IsNetwork = $false; UncPath = $null } }
+    $drive = $Matches[1].ToUpperInvariant() + ':'
+    if ((Get-AppDriveType -Drive $drive) -ne 'Network') { return @{ IsNetwork = $false; UncPath = $null } }
+    $remote = Get-AppDriveRemotePath -Drive $drive
+    if ([string]::IsNullOrWhiteSpace($remote)) {
+        Write-StdLog -Level Warn -Source 'Get-StdNetworkPath' -Message "Nie udało się ustalić udziału sieciowego dysku $drive."
+        return @{ IsNetwork = $true; UncPath = $null }
+    }
+    $rest = $Path.Substring(2)
+    if ($rest.Length -gt 0 -and $rest[0] -ne [char]'\' -and $rest[0] -ne [char]'/') { $rest = '\' + $rest }
+    return @{ IsNetwork = $true; UncPath = ($remote.TrimEnd('\', '/') + $rest) }
+}
+
+function Enter-StdAppInstance {
+    <#
+    .SYNOPSIS
+    Blokada jednej instancji STD na komputerze: mutex Global\STD4-SmartToolForDeployment (wszystkie sesje
+    Windows), trzymany przez wątek wywołujący do końca procesu albo do Exit-StdAppInstance.
+    $true: ten proces ma blokadę (także gdy już ją miał, albo gdy blokady nie da się utworzyć - wtedy ostrzeżenie
+    w logu i praca bez niej); $false: działa już inny proces STD. -WaitSec: ile sekund czekać na zwolnienie
+    blokady (proces z kopii w App\<wersja> czeka, bo proces z pendrive'a oddaje ją chwilę po jego uruchomieniu).
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [ValidateRange(0, 600)]
+        [int]$WaitSec = 0
+    )
+    if ($null -ne $script:StdAppInstanceMutex) { return $true }
+    $mutex = $null
+    $acquired = $false
+    try {
+        $mutex = New-Object System.Threading.Mutex($false, $script:StdAppMutexName)
+        try {
+            $acquired = $mutex.WaitOne($WaitSec * 1000)
+        } catch [System.Threading.AbandonedMutexException] {
+            # Poprzedni proces STD zakończył się bez zwolnienia blokady - teraz należy do tego wątku.
+            $acquired = $true
+        }
+    } catch {
+        if ($null -ne $mutex) { $mutex.Dispose() }
+        Write-StdLog -Level Warn -Source 'Enter-StdAppInstance' -Message "Nie udało się utworzyć blokady jednej instancji STD ($($script:StdAppMutexName)) - $(Format-CoreErrorText $_). STD działa bez niej."
+        return $true
+    }
+    if (-not $acquired) {
+        $mutex.Dispose()
+        Write-StdLog -Level Warn -Source 'Enter-StdAppInstance' -Message 'STD już działa na tym komputerze (blokada jednej instancji jest zajęta).'
+        return $false
+    }
+    $script:StdAppInstanceMutex = $mutex
+    return $true
+}
+
+function Exit-StdAppInstance {
+    <#
+    .SYNOPSIS
+    Zwalnia blokadę z Enter-StdAppInstance (np. przed przekazaniem pracy do kopii w App\<wersja>).
+    Bez blokady nic nie robi. Wołać z tego samego wątku co Enter-StdAppInstance.
+    #>
+    [CmdletBinding()]
+    param()
+    $mutex = $script:StdAppInstanceMutex
+    if ($null -eq $mutex) { return }
+    $script:StdAppInstanceMutex = $null
+    try {
+        $mutex.ReleaseMutex()
+    } catch {
+        Write-StdLog -Level Warn -Source 'Exit-StdAppInstance' -Message "Nie udało się zwolnić blokady jednej instancji STD - $(Format-CoreErrorText $_)"
+    } finally {
+        $mutex.Dispose()
+    }
 }
 
 function Test-StdNetworkAvailable {

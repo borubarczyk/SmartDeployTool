@@ -637,9 +637,7 @@ function Select-StdMainClient {
     $bootstrap = $Ui.Bootstrap
     if ($null -eq $Ui.Session -and $null -ne $bootstrap) {
         # Praca offline: bez serwera (bez sesji tylko kopie lustrzane, cache i pendrive).
-        $mirrors = @(Get-StdUiValue $bootstrap 'mirrors') | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
-        $bootstrap = $null
-        if (@($mirrors).Count -gt 0) { $bootstrap = @{ mirrors = @($mirrors) } }
+        $bootstrap = Get-StdUiOfflineBootstrap -Bootstrap $bootstrap
     } elseif ($null -ne $bootstrap) {
         $bootstrap = ConvertTo-StdHashtable -InputObject $bootstrap
     }
@@ -919,13 +917,19 @@ function Start-StdMainPlan {
 
 function New-StdMainEngineConfig {
     # Konfiguracja dla silnika: wynik Resolve-StdEffectiveConfig + Answers (bez haseł) + plik startowy (adres serwera).
+    # Praca offline (bez sesji): bez adresu serwera STD, w Bootstrap tylko kopie lustrzane (jak przy pobieraniu
+    # konfiguracji) i Offline = $true - kroki wiedzą, że serwer nie odpowiadał (np. czekanie na sieć go nie sprawdza).
     param([Parameter(Mandatory = $true)][hashtable]$Ui)
     $eff = $Ui.Effective
     $config = @{}
     foreach ($key in @($eff.Keys)) { $config[[string]$key] = $eff[$key] }
     # Odpowiedzi technika (etap 3: ekran pytań). Hasła nigdy tutaj nie trafiają.
     $config['Answers'] = @{ computerName = $null; apps = @($eff['Apps']); tasks = $eff['Tasks'] }
-    if ($null -ne $Ui.Bootstrap) {
+    if ($null -eq $Ui.Session) {
+        $config['Offline'] = $true
+        $offlineBootstrap = Get-StdUiOfflineBootstrap -Bootstrap $Ui.Bootstrap
+        if ($null -ne $offlineBootstrap) { $config['Bootstrap'] = $offlineBootstrap }
+    } elseif ($null -ne $Ui.Bootstrap) {
         $config['Bootstrap'] = ConvertTo-StdHashtable -InputObject $Ui.Bootstrap
         $server = Get-StdUiText $Ui.Bootstrap 'server'
         if ($null -ne $server) { $config['Server'] = $server }
@@ -1147,29 +1151,60 @@ function Set-StdMainEngine {
 function Invoke-StdMainTick {
     # Co 200 ms (DispatcherTimer okna): wpisy logu okna, zdarzenia silnika, zwalnianie zakończonych silników,
     # zamykanie okna po przerwaniu wdrożenia. Bez ponownego wejścia (np. gdy wynik otwiera okno komunikatu).
+    # Każda część ma własny try/catch: błąd jednej nie zatrzymuje timera ani pozostałych części (zamykanie okna
+    # działa zawsze) - trafia do logu, a okno z błędem pokazuje się najwyżej raz (Write-StdMainTickError).
     param([Parameter(Mandatory = $true)][hashtable]$Ui)
     if ($Ui.InTick) { return }
     $Ui.InTick = $true
     try {
-        Receive-StdMainUiLog -Ui $Ui
-        Receive-StdMainEngine -Ui $Ui
-        for ($i = $Ui.Retired.Count - 1; $i -ge 0; $i--) {
-            $old = $Ui.Retired[$i]
-            if ($null -eq $old.AsyncResult -or $old.AsyncResult.IsCompleted) {
-                try { Close-StdEngine -Engine $old } catch { }
-                $Ui.Retired.RemoveAt($i)
+        try { Receive-StdMainUiLog -Ui $Ui } catch { Write-StdMainTickError -Ui $Ui -ErrorRecord $_ -Part 'dziennik okna' }
+        try { Receive-StdMainEngine -Ui $Ui } catch { Write-StdMainTickError -Ui $Ui -ErrorRecord $_ -Part 'zdarzenia silnika' }
+        try {
+            for ($i = $Ui.Retired.Count - 1; $i -ge 0; $i--) {
+                $old = $Ui.Retired[$i]
+                if ($null -eq $old.AsyncResult -or $old.AsyncResult.IsCompleted) {
+                    try { Close-StdEngine -Engine $old } catch { }
+                    $Ui.Retired.RemoveAt($i)
+                }
             }
-        }
-        if ($Ui.CloseRequested -and -not $Ui.ForceClose) {
-            $elapsed = ((Get-Date) - $Ui.CloseRequestedAt).TotalSeconds
-            if (-not (Test-StdMainEngineBusy -Ui $Ui) -or $elapsed -ge 20) {
-                $Ui.ForceClose = $true
-                $Ui.Window.Close()
+        } catch { Write-StdMainTickError -Ui $Ui -ErrorRecord $_ -Part 'zwalnianie silników' }
+        try {
+            if ($Ui.CloseRequested -and -not $Ui.ForceClose) {
+                $elapsed = 0
+                if ($null -ne $Ui.CloseRequestedAt) { $elapsed = ((Get-Date) - $Ui.CloseRequestedAt).TotalSeconds }
+                if (-not (Test-StdMainEngineBusy -Ui $Ui) -or $elapsed -ge 20) {
+                    $Ui.ForceClose = $true
+                    $Ui.Window.Close()
+                }
             }
-        }
+        } catch { Write-StdMainTickError -Ui $Ui -ErrorRecord $_ -Part 'zamykanie okna' }
     } finally {
         $Ui.InTick = $false
     }
+}
+
+function Write-StdMainTickError {
+    # Błąd w części tiku timera okna: log (każdy inny błąd raz) i okno z błędem najwyżej raz na okno
+    # (bez serii okien co 200 ms). Timer działa dalej. Sama obsługa błędu nigdy nie rzuca wyjątku.
+    param([Parameter(Mandatory = $true)][hashtable]$Ui, [AllowNull()]$ErrorRecord, [Parameter(Mandatory = $true)][string]$Part)
+    try {
+        $context = 'Błąd w obsłudze okna ({0}). Okno działa dalej.' -f $Part
+        $text = Format-StdUiErrorText -ErrorObject $ErrorRecord
+        $key = $Part + '|' + $text
+        if ($null -eq $Ui.TickErrors) { $Ui.TickErrors = @{} }
+        if (-not $Ui.TickErrorShown) {
+            # Show-StdUiError zapisuje błąd (ze śladem stosu) w logu i pokazuje go w oknie komunikatu.
+            $Ui.TickErrorShown = $true
+            $Ui.TickErrors[$key] = $true
+            $owner = $null
+            if ($Ui.Window -is [System.Windows.Window]) { $owner = $Ui.Window }
+            Show-StdUiError -ErrorObject $ErrorRecord -Context $context -Owner $owner
+            return
+        }
+        if ($Ui.TickErrors.ContainsKey($key) -or $Ui.TickErrors.Count -ge 50) { return }
+        $Ui.TickErrors[$key] = $true
+        Write-StdLog -Level Error -Source 'UI' -Message ('{0} {1}' -f $context, $text)
+    } catch { }
 }
 
 function Receive-StdMainUiLog {
@@ -1256,7 +1291,7 @@ function Complete-StdMainEngine {
         if ($Status -eq 'Finished' -and $null -ne $Ui.Plan) {
             $Ui.PlanError = $null
             Set-StdMainState -Ui $Ui -State Plan
-            if ($deploy -and -not $Ui.CloseRequested -and -not $Ui.Closed) { Confirm-StdMainDeploy -Ui $Ui }
+            if ($deploy -and -not $Ui.CloseRequested -and -not $Ui.Closed) { Request-StdMainDeployLater -Ui $Ui }
             return
         }
         if ($Status -eq 'Cancelled') {
@@ -1283,6 +1318,21 @@ function Complete-StdMainEngine {
     $kind = @{ Ok = 'Success'; Warn = 'Warning'; Crit = 'Error' }[$outcome.Tone]
     if ($null -eq $kind) { $kind = 'Info' }
     Show-StdToast -Window $Ui.Window -Message $outcome.Title -Kind $kind -Seconds 6
+}
+
+function Request-StdMainDeployLater {
+    # „Wdróż” bez planu, po zakończeniu „Sprawdź”: potwierdzenie i start wdrożenia (okno komunikatu, Start-StdEngine)
+    # poza tikiem timera, w kolejce okna. Błąd (np. brak plików STD po wyjęciu pendrive'a) jest pokazany jak po
+    # kliknięciu „Wdróż”, a timer okna działa dalej. Stan okna idzie jako argument (bez zmiennych tej funkcji).
+    param([Parameter(Mandatory = $true)][hashtable]$Ui)
+    $deployLater = [System.Action[object]]{
+        param($stdDeployUi)
+        Invoke-StdUiAction -Owner $stdDeployUi.Window -ErrorContext 'Nie udało się uruchomić wdrożenia.' -Action {
+            if ($stdDeployUi.Closed -or $stdDeployUi.CloseRequested) { return }
+            Confirm-StdMainDeploy -Ui $stdDeployUi
+        }
+    }
+    [void]$Ui.Window.Dispatcher.BeginInvoke([System.Windows.Threading.DispatcherPriority]::Background, $deployLater, $Ui)
 }
 
 function Set-StdMainStep {
@@ -1605,6 +1655,11 @@ function Confirm-StdMainClosing {
         return $true
     }
     if ($Ui.CloseRequested) {
+        if ($null -eq $Ui.Timer -or -not $Ui.Timer.IsEnabled) {
+            # Timer okna nie działa, więc okno samo się nie zamknie - zamykamy od razu (silnik zatrzymuje Stop-StdMainWork).
+            $Ui.ForceClose = $true
+            return $true
+        }
         Show-StdToast -Window $Ui.Window -Message 'Czekam na zatrzymanie bieżącego kroku - okno zamknie się samo.' -Kind Warning
         return $false
     }
@@ -1810,6 +1865,8 @@ function New-StdMainWindow {
         State             = 'Select'
         Suppress          = $false
         InTick            = $false
+        TickErrorShown    = $false
+        TickErrors        = @{}
         Started           = $false
         Closed            = $false
         CloseRequested    = $false

@@ -398,13 +398,54 @@ if ([System.IO.File]::Exists((Join-Path $Context.Config.WorkDir 'fail.txt'))) { 
             (Get-TestStep $result 'Test.Normal').State | Should -Be 'Error'
             (Get-TestStep $result 'Test.Crit').State | Should -Be 'Error'
             (Get-TestStep $result 'Test.Crit').Detail | Should -Be 'krytyczny problem'
-            (Get-TestStep $result 'Test.After').State | Should -Be 'Skipped'
+            # Niewykonany krok to Cancelled (do „Ponów nieudane”), ale wdrożenie nie jest przez to przerwane.
+            (Get-TestStep $result 'Test.After').State | Should -Be 'Cancelled'
             (Get-TestStep $result 'Test.After').Detail | Should -BeLike '*krytyczny*Krok Test.Crit*'
             (Get-TestStep $result 'Test.Next').State | Should -Be 'Ok'
             (Get-TestRuns $work) -join ',' | Should -Be 'Test.Normal,Test.Crit,Test.Next'
             $result.Counts.Error | Should -Be 2
-            $result.Counts.Skipped | Should -Be 1
+            $result.Counts.Skipped | Should -Be 0
+            $result.Counts.Cancelled | Should -Be 1
             $result.Counts.Ok | Should -Be 1
+            @($run.Events | Where-Object { $_.Type -eq 'Finished' })[0].Status | Should -Be 'Finished'
+            (Read-StdJsonFile -Path $script:StatePath).status | Should -Be 'Finished'
+        }
+
+        It 'kroki pominięte po błędzie kroku -Critical wracają w -OnlySteps (Ponów nieudane) i -Resume' {
+            $work = New-TestFolder 'critical-retry'
+            $dir = New-TestSteps -Content @(
+                ((New-TestStepText -Id 'Test.First' -Order 10) + "`n" +
+                    (New-TestStepText -Id 'Test.Crit' -Order 20 -Critical -Run $script:FailWhenMarked) + "`n" +
+                    (New-TestStepText -Id 'Test.After' -Order 30) + "`n" +
+                    (New-TestStepText -Id 'Test.Last' -Order 40))
+            )
+            $config = New-TestConfig -WorkDir $work
+            [System.IO.File]::WriteAllText((Join-Path $work 'fail.txt'), 'x')
+            $first = Invoke-TestEngine -Start @{ Mode = 'Run'; Config = $config; StepsPath = $dir; DeploymentId = 'critical-retry' }
+            (Get-TestStep $first.Result 'Test.Crit').State | Should -Be 'Error'
+            (Get-TestStep $first.Result 'Test.After').State | Should -Be 'Cancelled'
+            (Get-TestStep $first.Result 'Test.Last').State | Should -Be 'Cancelled'
+            $state = Read-StdJsonFile -Path $script:StatePath
+            $state.steps['Test.After'].state | Should -Be 'Cancelled'
+            $state.steps['Test.After'].detail | Should -BeLike '*krytyczny*'
+
+            # „Ponów nieudane”: okno wybiera kroki Error / Cancelled - krok krytyczny znów zawodzi, reszta znów czeka.
+            $retry = Invoke-TestEngine -Start @{ Mode = 'Run'; Config = $config; StepsPath = $dir; DeploymentId = 'critical-retry'; OnlySteps = @('Test.Crit', 'Test.After', 'Test.Last') }
+            (Get-TestStep $retry.Result 'Test.Crit').State | Should -Be 'Error'
+            (Get-TestStep $retry.Result 'Test.After').State | Should -Be 'Cancelled'
+
+            # Po usunięciu przyczyny -Resume uruchamia krok krytyczny i kroki, które przez niego nie ruszyły.
+            Remove-Item -LiteralPath (Join-Path $work 'fail.txt')
+            $resumed = Invoke-TestEngine -Start @{ Mode = 'Run'; Config = $config; StepsPath = $dir; Resume = $true }
+            $resumed.Id | Should -Be 'critical-retry'
+            $resumed.Result.Status | Should -Be 'Finished'
+            (Get-TestStep $resumed.Result 'Test.First').State | Should -Be 'Ok'
+            (Get-TestStep $resumed.Result 'Test.Crit').State | Should -Be 'Ok'
+            (Get-TestStep $resumed.Result 'Test.After').State | Should -Be 'Ok'
+            (Get-TestStep $resumed.Result 'Test.Last').State | Should -Be 'Ok'
+            (Get-TestRuns $work) -join ',' | Should -Be 'Test.First,Test.Crit,Test.Crit,Test.Crit,Test.After,Test.Last'
+            $state = Read-StdJsonFile -Path $script:StatePath
+            foreach ($id in @('Test.First', 'Test.Crit', 'Test.After', 'Test.Last')) { $state.steps[$id].state | Should -Be 'Ok' -Because $id }
         }
 
         It 'Reboot w fazie 1: reszta fazy 1 działa, faza 2 czeka, RebootRequired' {
@@ -650,6 +691,53 @@ $null = $Context.Secrets.Remove('DomainJoin')
             $state.revision | Should -Be 7
         }
 
+        It 'awaria poza pętlą silnika (<Case>) czyści Secrets' -TestCases @(
+            @{ Case = 'moduł się nie wczytał'; Broken = 'Manifest'; Code = 'STD-ENGINE-START' }
+            @{ Case = 'pętla rzuciła przed startem'; Broken = 'Loop'; Code = 'STD-ENGINE-FAILED' }
+        ) {
+            param($Case, $Broken, $Code)
+            # Skrypt startowy silnika uruchamiany wprost w nowym runspace, z popsutym manifestem albo z trybem
+            # spoza ValidateSet (Invoke-StdEngineLoop rzuca przy wiązaniu parametrów, przed swoim try).
+            $bootstrap = InModuleScope -ModuleName STD -ScriptBlock { $script:StdEngineBootstrap }
+            $manifest = Join-Path $PSScriptRoot '..\STD.psd1'
+            $mode = 'Run'
+            if ($Broken -eq 'Manifest') { $manifest = Join-Path (New-TestFolder 'no-module') 'STD.psd1' } else { $mode = 'Nieznany' }
+            $secrets = [hashtable]::Synchronized(@{
+                    DomainJoin = (New-Object System.Management.Automation.PSCredential('FIRMA\jan.tajny', (ConvertTo-SecureString 'Haslo-Startu-1!' -AsPlainText -Force)))
+                })
+            $extra = [ordered]@{ LocalAdminPassword = (ConvertTo-SecureString 'Haslo-Startu-2!' -AsPlainText -Force) }
+            $shared = [hashtable]::Synchronized(@{
+                    Events          = (New-Object 'System.Collections.Concurrent.ConcurrentQueue[object]')
+                    PauseRequested  = $false
+                    CancelRequested = $false
+                    ForceCancel     = $false
+                    Status          = 'Running'
+                    Result          = $null
+                })
+            $loop = @{ Mode = $mode; Config = (New-TestConfig -WorkDir (New-TestFolder 'boot')); Shared = $shared; Secrets = $secrets; DeploymentId = 'boot-test'; ExtraSecrets = $extra }
+            $start = @{ ManifestPath = $manifest; StepFiles = @(); Shared = $shared; Loop = $loop }
+            $iss = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault2()
+            if ($script:IsWindowsOs) { $iss.ExecutionPolicy = [Microsoft.PowerShell.ExecutionPolicy]::Bypass }
+            $runspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace($iss)
+            $powerShell = $null
+            try {
+                $runspace.Open()
+                $runspace.SessionStateProxy.SetVariable('StdEngineStart', $start)
+                $powerShell = [System.Management.Automation.PowerShell]::Create()
+                $powerShell.Runspace = $runspace
+                [void]$powerShell.AddScript($bootstrap).Invoke()
+            } finally {
+                if ($null -ne $powerShell) { $powerShell.Dispose() }
+                $runspace.Dispose()
+            }
+            $shared.Status | Should -Be 'Failed'
+            $shared.Result.Error | Should -BeLike ('*`[{0}`]*' -f $Code)
+            $secrets.Count | Should -Be 0
+            $extra.Count | Should -Be 0
+            $types = @(foreach ($item in $shared.Events.ToArray()) { $item.Type })
+            $types[-1] | Should -Be 'Finished'
+        }
+
         It 'Invoke-StdProcess maskuje argumenty w logu' {
             Clear-StdLogMasks
             Register-StdLogMask -Value 'TajnyArgument-55'
@@ -769,6 +857,88 @@ if (-not $r.Success) { $state = 'Error' }
         }
     }
 
+    Context 'Krok Network.WaitForNetwork' {
+        # Adresy kart i porty TCP są podstawione (Mock), więc testy nie zależą od sieci komputera.
+        BeforeAll {
+            Clear-StdSteps
+            . (Join-Path $script:StepsRoot 'Network.ps1')
+            $script:NetworkStep = Get-StdStep -Id 'Network.WaitForNetwork'
+            $script:DeadServer = 'https://std.firma.example/std/'
+        }
+        AfterAll { Clear-StdSteps }
+
+        It 'praca offline: Detect nie czeka na serwer STD, wystarcza adres IPv4' {
+            Mock Get-NetworkStepAddresses { @('10.20.30.40') }
+            Mock Test-StdTcpPort { $false }
+            $config = @{
+                Server    = $script:DeadServer
+                Bootstrap = @{ server = $script:DeadServer; mirrors = @() }
+                Sources   = @{ web = @{ type = 'https'; url = 'https://std.firma.example/std/files/testowy/'; auth = 'session' } }
+            }
+            $online = & $script:NetworkStep.Detect @{ Config = $config }
+            $online.State | Should -Be 'Todo'
+            $online.Detail | Should -BeLike '*std.firma.example:443 nie odpowiada*'
+
+            $config['Offline'] = $true
+            $offline = & $script:NetworkStep.Detect @{ Config = $config }
+            $offline.State | Should -Be 'Done'
+            $offline.Detail | Should -BeLike '*10.20.30.40*praca offline*'
+            $offline.Detail | Should -Not -BeLike '*std.firma.example*'
+            # Tylko jedno sprawdzenie serwera - to z pracy z serwerem.
+            Should -Invoke Test-StdTcpPort -Times 1 -Exactly
+            $run = & $script:NetworkStep.Run @{ Config = $config; Step = @{ TimeoutMin = 10 } }
+            $run.Result | Should -Be 'Ok'
+            Should -Invoke Test-StdTcpPort -Times 1 -Exactly
+        }
+
+        It 'praca offline: sprawdza źródła bez sesji STD (https z auth none, UNC, kopie lustrzane)' {
+            Mock Get-NetworkStepAddresses { @('10.20.30.40') }
+            Mock Test-StdTcpPort { $HostName -eq 'nas-krk' -and $Port -eq 445 }
+            $config = @{
+                Offline   = $true
+                Server    = $script:DeadServer
+                Site      = @{ id = 'krk'; sourceOrder = @('pliki', 'lan') }
+                Sources   = [ordered]@{
+                    web   = @{ type = 'https'; url = 'https://std.firma.example/std/files/testowy/'; auth = 'session' }
+                    pliki = @{ type = 'https'; url = 'https://pliki.firma.example:8443/std/'; auth = 'none' }
+                    lan   = @{ type = 'unc'; path = '\\nas-krk\STD$\files\testowy\'; auth = 'session' }
+                }
+                Bootstrap = @{ server = $script:DeadServer; mirrors = @('\\srv-files\STD$\std\', '\\NAS-KRK\kopia\', 'E:\offline\std\') }
+            }
+            $targets = Get-NetworkStepTargets -Context @{ Config = $config }
+            (@($targets) | ForEach-Object { $_.Label }) -join ',' | Should -Be 'pliki.firma.example:8443,nas-krk:445,srv-files:445'
+            $detect = & $script:NetworkStep.Detect @{ Config = $config }
+            $detect.State | Should -Be 'Done'
+            $detect.Detail | Should -BeLike '*źródło nas-krk:445 odpowiada*'
+            Should -Invoke Test-StdTcpPort -Times 2 -Exactly
+            Should -Invoke Test-StdTcpPort -Times 0 -Exactly -ParameterFilter { $HostName -eq 'std.firma.example' }
+        }
+
+        It 'praca offline: gdy żadne źródło nie odpowiada, wystarcza adres IPv4' {
+            Mock Get-NetworkStepAddresses { @('10.20.30.40') }
+            Mock Test-StdTcpPort { $false }
+            $config = @{
+                Offline = $true
+                Server  = $script:DeadServer
+                Sources = @{ lan = @{ type = 'unc'; path = '\\nas-krk\STD$\'; auth = 'session' } }
+            }
+            $detect = & $script:NetworkStep.Detect @{ Config = $config }
+            $detect.State | Should -Be 'Done'
+            $detect.Detail | Should -BeLike '*źródło nas-krk:445 nie odpowiada, wystarcza adres IPv4*'
+            Should -Invoke Test-StdTcpPort -Times 1 -Exactly -ParameterFilter { $HostName -eq 'nas-krk' }
+            Should -Invoke Test-StdTcpPort -Times 0 -Exactly -ParameterFilter { $HostName -eq 'std.firma.example' }
+        }
+
+        It 'praca offline bez adresu IPv4 -> Todo (czekanie na sieć)' {
+            Mock Get-NetworkStepAddresses { @() }
+            Mock Test-StdTcpPort { $true }
+            $detect = & $script:NetworkStep.Detect @{ Config = @{ Offline = $true; Server = $script:DeadServer } }
+            $detect.State | Should -Be 'Todo'
+            $detect.Detail | Should -BeLike 'Brak adresu IPv4*'
+            Should -Invoke Test-StdTcpPort -Times 0 -Exactly
+        }
+    }
+
     Context 'Zasilanie i informacje o komputerze' {
         It 'Set-StdKeepAwake działa w Windows, a w innych systemach zwraca $false' {
             if ($script:IsWindowsOs) {
@@ -777,6 +947,36 @@ if (-not $r.Success) { $state = 'Error' }
             } else {
                 Set-StdKeepAwake -Enabled $true | Should -BeFalse
             }
+        }
+
+        It 'zadanie SuspendSleep: silnik wstrzymuje usypianie na starcie każdego wdrożenia, także -OnlySteps i -Resume' {
+            # Folder kroków bez Power.SuspendSleep - jak „Ponów nieudane” albo -Resume, w których ten krok nie rusza.
+            $work = New-TestFolder 'keepawake'
+            $dir = New-TestSteps -Content @(((New-TestStepText -Id 'Test.A' -Order 10) + "`n" + (New-TestStepText -Id 'Test.B' -Order 20)))
+            $config = New-TestConfig -WorkDir $work -Tasks @{ SuspendSleep = $true }
+            $runs = @(
+                (Invoke-TestEngine -Start @{ Mode = 'Run'; Config = $config; StepsPath = $dir; DeploymentId = 'keepawake-test' }),
+                (Invoke-TestEngine -Start @{ Mode = 'Run'; Config = $config; StepsPath = $dir; DeploymentId = 'keepawake-test'; OnlySteps = @('Test.B') }),
+                (Invoke-TestEngine -Start @{ Mode = 'Run'; Config = $config; StepsPath = $dir; Resume = $true })
+            )
+            foreach ($run in $runs) {
+                $run.Result.Status | Should -Be 'Finished'
+                $messages = @($run.Events | Where-Object { $_.Type -eq 'Log' } | ForEach-Object { [string]$_.Message })
+                $kept = @($messages | Where-Object { $_ -like 'Wstrzymano usypianie komputera*' }).Count
+                $restored = @($messages | Where-Object { $_ -eq 'Przywrócono zwykłe usypianie komputera.' }).Count
+                if ($script:IsWindowsOs) {
+                    $kept | Should -Be 1
+                    $restored | Should -Be 1
+                } else {
+                    $kept | Should -Be 0
+                }
+            }
+            (Get-TestRuns $work) -join ',' | Should -Be 'Test.A,Test.B,Test.B'
+
+            # Zadanie wyłączone: silnik nie rusza usypiania.
+            $off = Invoke-TestEngine -Start @{ Mode = 'Run'; Config = (New-TestConfig -WorkDir $work -Tasks @{ SuspendSleep = $false }); StepsPath = $dir; OnlySteps = @('Test.A') }
+            $offMessages = @($off.Events | Where-Object { $_.Type -eq 'Log' } | ForEach-Object { [string]$_.Message })
+            @($offMessages | Where-Object { $_ -like 'Wstrzymano usypianie komputera*' -or $_ -eq 'Przywrócono zwykłe usypianie komputera.' }).Count | Should -Be 0
         }
 
         It 'Get-StdComputerInfo zwraca wszystkie pola i nie rzuca wyjątków' {

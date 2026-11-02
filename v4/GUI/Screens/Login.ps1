@@ -8,8 +8,10 @@
 # Logowanie jest udane tylko wtedy, gdy listę klientów dał serwer (źródło 'server') - wtedy login i hasło są
 # sprawdzone. Gdy serwer odmówił albo nie odpowiada, a lista przyszła z kopii, okno pokazuje błąd serwera
 # i proponuje pracę offline z tą kopią (bez sesji).
-# Wynik Show-StdLoginWindow: @{ Session; Index; Source } albo $null (okno zamknięte). Hasło żyje tylko
-# w pamięci (SecureString w sesji) - nie trafia do logu ani do pliku.
+# Wynik Show-StdLoginWindow: @{ Session; Index; Source; Bootstrap } albo $null (okno zamknięte). Bootstrap to plik
+# startowy dla okna głównego: po udanym logowaniu ten, którego użyło logowanie (także adres wpisany w oknie
+# i zapisany), przy pracy offline - plik startowy podany oknu. Program nie musi więc czytać bootstrap.json drugi raz.
+# Hasło żyje tylko w pamięci (SecureString w sesji) - nie trafia do logu ani do pliku.
 
 $script:StdLoginXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -182,7 +184,7 @@ function Start-StdLoginAttempt {
     }
     if ($Ui.Preview) {
         $data = $Ui.PreviewData
-        $Ui.Result = @{ Session = $null; Index = (Get-StdUiValue $data 'Index'); Source = 'preview' }
+        $Ui.Result = @{ Session = $null; Index = (Get-StdUiValue $data 'Index'); Source = 'preview'; Bootstrap = $Ui.Bootstrap }
         $Ui.Window.Close()
         return
     }
@@ -218,12 +220,12 @@ function Complete-StdLoginAttempt {
         }
         $session = Get-StdUiValue $Result 'Session'
         Write-StdLog -Source 'Logowanie' -Message ('Zalogowano do serwera STD jako {0}. Lista klientów: rewizja {1}.' -f [string]$session.UserName, (Get-StdUiValue $index 'Revision'))
-        $Ui.Result = @{ Session = $session; Index = (Get-StdUiValue $index 'Index'); Source = 'server' }
+        $Ui.Result = @{ Session = $session; Index = (Get-StdUiValue $index 'Index'); Source = 'server'; Bootstrap = $Ui.LoginBootstrap }
         $Ui.Window.Close()
         return
     }
     $failure = Get-StdUiLoginFailure -IndexResult $index
-    $Ui.OfflineResult = @{ Session = $null; Index = (Get-StdUiValue $index 'Index'); Source = $source }
+    $Ui.OfflineResult = @{ Session = $null; Index = (Get-StdUiValue $index 'Index'); Source = $source; Bootstrap = $Ui.Bootstrap }
     Set-StdLoginError -Ui $Ui -Text ('{0}{1}{1}Dostępna jest kopia listy klientów ({2}) - możesz pracować offline.' -f $failure.Message, "`n", (Get-StdUiSourceLabel $source))
     Update-StdLoginOffline -Ui $Ui
     if ($failure.Message -like 'Nieprawidłowy login lub hasło*') { $Ui.C.pwdPassword.Clear(); [void]$Ui.C.pwdPassword.Focus() }
@@ -241,15 +243,11 @@ function Start-StdLoginOffline {
         return
     }
     if ($Ui.Preview) {
-        $Ui.Result = @{ Session = $null; Index = (Get-StdUiValue $Ui.PreviewData 'Index'); Source = 'cache' }
+        $Ui.Result = @{ Session = $null; Index = (Get-StdUiValue $Ui.PreviewData 'Index'); Source = 'cache'; Bootstrap = $Ui.Bootstrap }
         $Ui.Window.Close()
         return
     }
-    $offlineBootstrap = $null
-    if ($null -ne $Ui.Bootstrap) {
-        $mirrors = @(Get-StdUiValue $Ui.Bootstrap 'mirrors') | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
-        if (@($mirrors).Count -gt 0) { $offlineBootstrap = @{ mirrors = @($mirrors) } }
-    }
+    $offlineBootstrap = Get-StdUiOfflineBootstrap -Bootstrap $Ui.Bootstrap
     Set-StdLoginError -Ui $Ui -Text ''
     Set-StdLoginBusy -Ui $Ui -Text 'Wczytywanie kopii listy klientów...'
     $null = Start-StdUiTask -Name 'Praca offline' -Owner $Ui.Window -ScriptText $script:StdLoginOfflineScript `
@@ -259,7 +257,7 @@ function Start-StdLoginOffline {
             Set-StdLoginBusy -Ui $Ui -Text ''
             $source = [string](Get-StdUiValue $Result 'Source')
             Write-StdLog -Level Warn -Source 'Logowanie' -Message ('Praca offline z kopią listy klientów ({0}).' -f (Get-StdUiSourceLabel $source))
-            $Ui.Result = @{ Session = $null; Index = (Get-StdUiValue $Result 'Index'); Source = $source }
+            $Ui.Result = @{ Session = $null; Index = (Get-StdUiValue $Result 'Index'); Source = $source; Bootstrap = $Ui.Bootstrap }
             $Ui.Window.Close()
         }) `
         -OnError (New-StdUiCallback -Ui $Ui -Handler {
@@ -366,8 +364,9 @@ function New-StdLoginWindow {
 function Show-StdLoginWindow {
     <#
     .SYNOPSIS
-    Ekran logowania do serwera STD. Wynik: @{ Session; Index; Source } (Source = 'server', albo źródło kopii
-    przy pracy offline - wtedy Session = $null) albo $null, gdy technik zamknął okno.
+    Ekran logowania do serwera STD. Wynik: @{ Session; Index; Source; Bootstrap } (Source = 'server', albo źródło
+    kopii przy pracy offline - wtedy Session = $null) albo $null, gdy technik zamknął okno. Bootstrap: plik startowy
+    użyty do logowania (także adres wpisany w oknie i zapisany), offline - plik startowy podany oknu (może być $null).
     -PreviewData: podgląd z przykładowymi danymi (bez serwera), jak w New-StdLoginWindow.
     #>
     [CmdletBinding()]
