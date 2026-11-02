@@ -435,3 +435,171 @@ install-std-server.sh [--domain NAZWA] [--cert PLIK --key PLIK | --self-signed] 
 - `.github/workflows/v4-server-iis.yml` (`windows-latest`): certyfikat testowy w `Cert:\LocalMachine\My`, instalacja, lokalne konta testowe
   przez `Add-StdServerUser.ps1 -Create`, te same sprawdzenia (`curl.exe -k`), ponowne uruchomienie i sprawdzenie zachowania.
 - Oba workflow: `on: push` (ścieżki `v4/Server/**` i plik workflow) oraz `workflow_dispatch`.
+
+---
+
+# Etap 2: silnik, okna, uruchamianie
+
+## 6. Silnik wdrożenia: `Modules\Std.Engine.ps1`
+
+Silnik jest częścią modułu STD (dot-source w `STD.psm1` po `Std.Legacy.ps1`, potem `Std.App.ps1` z 8), nie używa WPF i działa w **osobnym runspace**.
+Okno tylko pokazuje stan: o nic nie pyta w trakcie wdrożenia i nie wywołuje bloków kroków.
+
+### 6.1 Kroki
+
+Kroki są w plikach `v4\Steps\*.ps1`. Każdy plik woła `Register-StdStep` dla swoich kroków. Pliki są dot-source'owane
+**wewnątrz runspace silnika** (bloki skryptu nie przechodzą między runspace'ami).
+
+```powershell
+Register-StdStep -Id 'Network.WaitForNetwork' -Title 'Czekanie na sieć' -Phase 1 -Order 10 -TaskId 'WaitForNetwork' `
+    [-TimeoutMin 10] [-Critical] `
+    -Detect { param($Context) @{ State = 'Done'|'Todo'|'Blocked'; Detail = '...' } } `
+    -Run    { param($Context) @{ Result = 'Ok'|'Error'|'Skipped'; Detail = '...'; Reboot = $false } }
+```
+
+- `Id` unikalne (`Grupa.Nazwa`), `Title` po polsku, `Phase` 1 (przed restartem) lub 2 (po), `Order` w fazie.
+- `TaskId` (lista 2.8): krok jest włączony, gdy `Context.Config.Tasks[TaskId]` = `$true`. Bez `TaskId` krok jest zawsze włączony.
+- `Detect` niczego nie zmienia; wynik `Blocked` oznacza „nie da się wykonać” (z `Detail` - dlaczego).
+- `Run` zwraca wynik albo rzuca wyjątek (= `Error` z komunikatem wyjątku). `Reboot = $true`: krok wymaga restartu.
+- `-Critical`: błąd tego kroku przerywa resztę fazy (pozostałe kroki dostają `Skipped` z opisem). Bez `-Critical` silnik idzie dalej.
+- `Get-StdStep [-Id]`, `Clear-StdSteps` (testy).
+
+`Context` (tworzony przez silnik): `@{ Config` (wynik `Resolve-StdEffectiveConfig` plus `Answers`) `; State` (stan wdrożenia, 6.3) `;
+Secrets` (`[hashtable]::Synchronized` z `SecureString` / `PSCredential`, tylko w pamięci) `; Shared` (6.2) `; DeploymentId; LogPath }`.
+Kroki piszą do logu przez `Write-StdLog`, sprawdzają przerwanie przez `Test-StdEngineCancel -Context $Context`
+(zwraca `$true` przy żądaniu przerwania) i uruchamiają programy przez `Invoke-StdProcess`.
+
+### 6.2 API silnika (strona okna)
+
+| Funkcja | Opis |
+| --- | --- |
+| `Start-StdEngine -Mode Plan\|Run -Config <hashtable> [-StepsPath <dir>] [-Secrets <hashtable>] [-DeploymentId <string>] [-OnlySteps <string[]>] [-Resume]` | Tworzy runspace (STA nie jest potrzebne, `ApartmentState MTA`), importuje `STD.psd1` z tego samego folderu, dot-source'uje kroki i uruchamia `Invoke-StdEngineLoop` asynchronicznie. Zwraca uchwyt `@{ Id; Mode; Shared; PowerShell; AsyncResult; Runspace }`. `StepsPath` domyślnie `<v4>\Steps`. `DeploymentId` domyślnie `yyyyMMdd-HHmmss-<4 znaki>` |
+| `Receive-StdEngineEvent -Engine <uchwyt> [-Max 500]` | zdarzenia z kolejki (najstarsze pierwsze), bez czekania |
+| `Suspend-StdEngine` / `Resume-StdEngine -Engine` | pauza po bieżącym kroku / wznowienie |
+| `Stop-StdEngine -Engine [-Force]` | przerwanie po bieżącym kroku; `-Force`: także przerwanie bieżącego procesu (`Invoke-StdProcess` zabija drzewo procesów) |
+| `Wait-StdEngine -Engine [-TimeoutSec 600]` | czeka na koniec (testy, tryb bez okna); zwraca `Get-StdEngineResult` |
+| `Get-StdEngineResult -Engine` | `@{ Status = 'Running'\|'Paused'\|'Finished'\|'Cancelled'\|'Failed'; Steps (lista @{ Id; Title; Phase; State; Detail; StartedAt; FinishedAt }); Plan (tryb Plan); Counts @{ Ok; Skipped; Error; Cancelled }; RebootRequired; Error }` |
+| `Close-StdEngine -Engine` | zwalnia runspace (po zakończeniu) |
+
+`Shared` = `[hashtable]::Synchronized(@{ Events = ConcurrentQueue[object]; PauseRequested; CancelRequested; ForceCancel; Status; Result })`.
+Jedyny kanał silnik → okno to `Events`; okno → silnik to flagi.
+
+Zdarzenia (`[pscustomobject]`, zawsze `Type` i `Time`):
+
+| `Type` | Pola |
+| --- | --- |
+| `Log` | `Level`, `Message` (już zamaskowane), `Source` |
+| `Plan` | `Steps` (lista `@{ Id; Title; Phase; Enabled; State ('Done'\|'Todo'\|'Blocked'\|'Disabled'); Detail }`) |
+| `StepState` | `StepId`, `State` (`Pending`, `Running`, `Ok`, `Skipped`, `Error`, `Cancelled`), `Detail` |
+| `Progress` | `Percent` (0-100), `Text` |
+| `Paused` / `Resumed` | |
+| `Finished` | `Status`, `Counts`, `RebootRequired` |
+
+### 6.3 Przebieg i stan
+
+- **Plan**: dla każdego zarejestrowanego kroku `Enabled` + `Detect` (wyjątek w `Detect` = `Blocked` z komunikatem), zdarzenie `Plan`, koniec.
+  Nic nie jest zmieniane. To jest przycisk „Sprawdź”.
+- **Run**: kroki włączone w kolejności `Phase`, `Order`. Przed każdym krokiem: przerwanie? → reszta `Cancelled`; pauza? → czekanie
+  (zdarzenia `Paused` / `Resumed`). Potem `Detect`: `Done` → `Skipped` („już zrobione: …”), `Blocked` → `Error`; `Todo` → `Run`.
+  Po kroku z `Reboot = $true` w fazie 1 silnik kończy fazę 1 i zwraca `RebootRequired = $true` (restart i wznowienie: etap 4).
+- `-OnlySteps`: uruchamia tylko podane kroki („Ponów nieudane”).
+- **Stan** `Get-StdPath State` (`state.json`, zapis atomowy po każdym kroku):
+  `{ deploymentId, clientId, siteId, profile, revision, startedAt, updatedAt, phase, status, steps: { <id>: { state, detail, at } }, answers: { computerName, apps, tasks } }`.
+  **Bez haseł i bez zawartości `Secrets`.** `-Resume` wczytuje stan: kroki `Ok` / `Skipped` nie są uruchamiane ponownie.
+- **Log wdrożenia**: `Logs\<deploymentId>\deploy.log` (`Register-StdFileLogSink`) i `events.jsonl` (każde zdarzenie jako JSON w osobnej linii).
+  Runspace silnika ma własną kopię modułu, więc silnik **od nowa rejestruje maski** dla każdej wartości z `Secrets`
+  (hasło `PSCredential` / `SecureString`) i dla wartości sekretów konfiguracji, zanim wykona pierwszy krok.
+- Hasła z `Secrets` krok usuwa po użyciu (`$Context.Secrets.Remove('DomainJoin')`); silnik po zakończeniu czyści całe `Secrets`.
+
+### 6.4 `Invoke-StdProcess`
+
+`Invoke-StdProcess -FilePath <string> [-ArgumentList <string>] [-TimeoutMin 30] [-Context <ctx>] [-WorkingDirectory <dir>] [-SuccessCodes <int[]>]`
+
+- `System.Diagnostics.Process` bez okna; odczyt `Handle` zaraz po starcie (kod wyjścia w 5.1); pętla `WaitForExit(500)` sprawdzająca
+  `Shared.ForceCancel` i limit czasu; przy przerwaniu / przekroczeniu czasu zabija drzewo procesów (`taskkill /T /F /PID`, na Linuksie `kill`).
+- Wynik `@{ ExitCode; TimedOut; Cancelled; Success (kod w SuccessCodes, domyślnie 0,1641,3010); DurationSec }`. Argumenty są maskowane w logu.
+
+## 7. Okna: `v4\GUI\`
+
+Okna ładuje tylko program (`SmartToolforDeployment.ps1`) i testy UI, nie moduł STD. `GUI\Std.UI.ps1` dot-source'uje
+`Std.Theme.ps1` i `Screens\*.ps1`.
+
+### 7.1 Motyw: `GUI\Std.Theme.ps1`
+
+Przeniesiony z STD 3.1 (`SmartToolforDeployment.ps1`: `$script:ThemePalettes`, `$script:ThemeStylesXaml`, `New-ThemedWindow`,
+`Update-WindowTheme`, `Set-WindowTitleBarTheme`, `Show-ThemedMessageBox`, `Show-Toast`, `Get-Glyph`, `Set-ButtonContent`, `New-AppIconBytes`)
+z tymi samymi kolorami i stylami, tylko z prefiksem `Std`:
+
+| Funkcja | Opis |
+| --- | --- |
+| `Get-StdThemePalette`, `Get-StdThemeColor -Key` | paleta Dark / Light (te same klucze co w 3.1) |
+| `Set-StdTheme -Dark <bool>` | zmienia motyw we wszystkich otwartych oknach i zapisuje go w `prefs.json` |
+| `New-StdWindow -Xaml <xml> [-Owner <Window>]` | słownik stylów **parsowany raz** i dołączany do każdego okna; ikona, ciemny pasek tytułu, ograniczenie do obszaru roboczego ekranu, czcionka Segoe UI 13 |
+| `Show-StdMessage -Message -Title [-Button OK\|OKCancel\|YesNo\|YesNoCancel] [-Image Information\|Warning\|Error\|Question\|Success] [-Owner]` | okno komunikatu w motywie |
+| `Show-StdToast -Window -Message [-Kind Info\|Success\|Warning\|Error]` | krótkie powiadomienie w rogu |
+| `Get-StdGlyph -Code 'E7B8'`, `Set-StdButtonContent -Button -Text -Icon` | ikony z Segoe Fluent Icons / MDL2 Assets |
+| `New-StdAppIcon` | ikona STD (jak w 3.1) jako `BitmapFrame` |
+
+### 7.2 Zadania w tle: `Start-StdUiTask`
+
+`Start-StdUiTask -ScriptText <string> [-Arguments <hashtable>] -OnComplete <scriptblock> [-OnError <scriptblock>]` - wykonuje
+tekst skryptu w nowym runspace (z zaimportowanym modułem STD), a `DispatcherTimer` (200 ms) sprawdza zakończenie i woła
+`OnComplete` / `OnError` w wątku okna. Używane do logowania, pobierania konfiguracji, listy sieci Wi-Fi - okno nigdy się nie zawiesza.
+Zakaz `Do-WpfEvents`, `PushFrame`, `Start-Sleep` w kodzie okien.
+
+### 7.3 Ekrany: `v4\GUI\Screens\`
+
+1. **Połącz z siecią** (`Show-StdConnectWindow`) - tylko gdy brak sieci: stan połączenia, lista sieci Wi-Fi (`netsh wlan show networks`
+   w tle), hasło sieci (wpisywane, profil tworzony z szablonu XML w `%TEMP%` i usuwany zaraz po imporcie), „Importuj z pendrive'a”
+   (`<OriginRoot>\wifi\*.xml`), „Odśwież”, „Pomiń”. Wynik: `Connected` / `Skipped`.
+2. **Logowanie** (`Show-StdLoginWindow`) - adres serwera (z `bootstrap.json`; pole do wpisania, gdy go nie ma - zapis przez
+   `Save-StdBootstrapLocal`), login, hasło, „Zaloguj” (w tle: `New-StdSession` + `Get-StdClientIndex`), błąd pod polami, „Pracuj offline”
+   (gdy jest kopia listy klientów w cache / na pendrive'ie). Wynik: `@{ Session; Index; Source }` albo `$null`.
+3. **Okno główne** (`Show-StdMainWindow`):
+   - nagłówek: logo, „Smart Tool for Deployment 4.0.0”, pastylka źródła (`serwer` / `kopia lustrzana` / `cache` / `pendrive`), klient · lokalizacja · rev,
+     przełącznik motywu;
+   - wybór **Klient → Lokalizacja → Profil** (listy; ostatnio używane z `prefs.json` na górze), konfiguracja pobierana w tle (`Get-StdRelease`);
+   - podsumowanie konfiguracji wynikowej (aplikacje, zadania - tylko do odczytu; ekran pytań to etap 3) i karta „Komputer”
+     (model, numer seryjny, Windows, CPU, RAM, dysk, TPM - `Get-StdComputerInfo` w tle);
+   - przyciski **„Sprawdź”** (`Start-StdEngine -Mode Plan` → tabela Krok | Stan | Szczegóły) i **„Wdróż”** (potwierdzenie z listą kroków →
+     widok wdrożenia).
+4. **Widok wdrożenia** (w oknie głównym): lista kroków ze stanem (ikona i kolor), bieżący krok, pasek postępu (także `TaskbarItemInfo`),
+   dziennik na żywo (ostatnie 3000 wpisów, filtr poziomu), przyciski Pauza / Wznów / Przerwij (drugie potwierdzenie dla „Przerwij natychmiast”).
+   W trakcie zablokowane wszystko poza nimi i dziennikiem; zamknięcie okna wymaga potwierdzenia. Na końcu podsumowanie
+   OK / Pominięto / Błąd, „Ponów nieudane” (`-OnlySteps`) i „Kopiuj podsumowanie”.
+
+Zdarzenia silnika odbiera `DispatcherTimer` (200 ms, `Receive-StdEngineEvent`), dziennik dostaje wpisy paczkami.
+
+`Get-StdComputerInfo` (w `Modules\Std.Engine.ps1`, bez WPF): `@{ ComputerName; Manufacturer; Model; SerialNumber; Bios; Os; OsBuild; Cpu;
+RamGB; Disks (@{ Name; SizeGB; FreeGB; Type }); Tpm (@{ Present; Ready; Version }); Network (@{ Name; Ipv4; Mac }) }` przez CIM, każde pole
+osobno w try/catch (brak danych = `$null`, nie błąd).
+
+## 8. Uruchamianie
+
+- `v4\Start-STD.cmd`: `powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0SmartToolforDeployment.ps1" %*`.
+- `v4\SmartToolforDeployment.ps1 [-Server <url>] [-OriginRoot <dir>] [-NoCopy] [-PreviewMode]`:
+  1. Brak uprawnień administratora (`Test-StdIsAdmin`) → `Start-StdElevated` z tymi samymi parametrami i wyjście; odmowa UAC →
+     komunikat „STD wymaga uprawnień administratora” i wyjście.
+  2. Wątek nie STA → ponowne uruchomienie z `-STA`.
+  3. Program uruchomiony spoza `Get-StdPath App\<wersja>` i bez `-NoCopy` → kopia `STD.psd1`, `STD.psm1`, `Modules`, `GUI`, `Steps`
+     do `App\<wersja>` (pomijana, gdy pliki są identyczne - porównanie SHA-256) i ponowne uruchomienie stamtąd z `-OriginRoot <folder startowy>`.
+     `OriginRoot` to pendrive: tam szukamy `bootstrap.json`, `offline\` i `wifi\`. Nowa wersja = nowy folder `App\<wersja>`; reszta `ProgramData\STD`
+     (ustawienia, cache) zostaje. Stare wersje w `App\` (poza dwiema najnowszymi) są usuwane.
+  4. Import modułu i okien, `Initialize-StdNetwork`, motyw z `prefs.json`, ekrany z 7.3.
+  5. `-PreviewMode`: bez podnoszenia uprawnień, kopiowania i pokazywania okien (testy i podgląd UI).
+- Logika kroków 1-3 jest w `Modules\Std.App.ps1` (bez WPF, testowalna): `Get-StdAppFolder -Version`, `Test-StdAppCopyCurrent -Source -Target`,
+  `Sync-StdAppFolder -Source <v4> [-Version] [-Keep 2]` (kopia z porównaniem SHA-256, usuwanie starszych wersji, zwraca folder docelowy),
+  `Get-StdRelaunchArgument -BoundParameters <hashtable> [-Add <hashtable>]` (poprawnie cytowane argumenty dla `Start-StdElevated`).
+
+## 9. Kroki etapu 2, podgląd UI i testy
+
+- `Steps\Network.ps1`: `Network.WaitForNetwork` (`TaskId WaitForNetwork`, Detect: jest adres IPv4 spoza 169.254/127 i serwer (albo
+  pierwsze źródło `https`) odpowiada na port 443 → `Done`; Run: sprawdzanie co 3 s do `TimeoutMin`, z przerwaniem).
+- `Steps\Power.ps1`: `Power.SuspendSleep` (`TaskId SuspendSleep`, Run: `SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED|ES_DISPLAY_REQUIRED)`
+  w wątku silnika; silnik przywraca stan przy końcu wdrożenia).
+- Pozostałe kroki (aplikacje, konto, domena, ustawienia, BitLocker, Deinstalator, ...) i ekran pytań: etap 3.
+- `v4\Tests\Std.Engine.Tests.ps1`: silnik z fałszywymi krokami w `TestDrive` (plan, kolejność, pauza, przerwanie, błąd i `-Critical`,
+  `RebootRequired`, `state.json` bez haseł, `-Resume`, `-OnlySteps`, maski w logu silnika, `Invoke-StdProcess`: kod wyjścia, limit czasu, przerwanie).
+- `v4\Tests\Std.UI.Tests.ps1` (Windows): każde okno buduje się w obu motywach bez błędów, `Start-StdUiTask` woła `OnComplete`.
+- `v4\Tools\Render-StdUiPreview.ps1` + `.github\workflows\v4-ui-preview.yml`: jak podgląd UI 3.1 - każde okno STD 4 (z przykładowymi danymi,
+  także widok wdrożenia w trakcie, z błędem i po końcu) w obu motywach do PNG, kontrole CLIP / STALE / GLYPH / EMOJI / CONTRAST, błąd przy uwagach.
