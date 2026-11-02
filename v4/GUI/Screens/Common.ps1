@@ -1435,7 +1435,8 @@ function Set-StdUiButton {
     # Przycisk: tekst z ikoną, styl z zasobów okna (np. PrimaryButton; pusty = domyślny), podpowiedź.
     param(
         [Parameter(Mandatory = $true, Position = 0)][System.Windows.Controls.Button]$Button,
-        [Parameter(Mandatory = $true, Position = 1)][string]$Text,
+        # Pusty tekst = sam przycisk z ikoną (np. przełącznik motywu).
+        [Parameter(Mandatory = $true, Position = 1)][AllowEmptyString()][string]$Text,
         [string]$Icon = '',
         [AllowNull()][AllowEmptyString()][string]$Style,
         [AllowNull()][AllowEmptyString()][string]$ToolTip

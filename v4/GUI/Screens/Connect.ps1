@@ -14,7 +14,7 @@
 $script:StdConnectXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Połącz z siecią - STD" Width="600" Height="640" MinWidth="460" MinHeight="420"
+        Title="Połącz z siecią - STD" Width="600" Height="640" MinWidth="460" MinHeight="460"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource ThemeBackground}" Foreground="{DynamicResource ThemeText}">
     <Grid>
@@ -40,7 +40,7 @@ $script:StdConnectXaml = @'
         <Grid Grid.Row="1" Margin="20,16,20,12">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*" MinHeight="110"/>
+                <RowDefinition Height="*" MinHeight="50"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>

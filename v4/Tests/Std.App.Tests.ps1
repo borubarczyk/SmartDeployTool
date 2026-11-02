@@ -134,7 +134,7 @@ Describe 'Std.App' {
     }
 
     Context 'Get-StdAppFolder i Test-StdInAppFolder' {
-        It 'Get-StdAppFolder zwraca App\<wersja modułu>' {
+        It 'Get-StdAppFolder zwraca App\(wersja modułu)' {
             Get-StdAppFolder | Should -Be (Join-Path (Get-StdPath -Kind App) (Get-StdVersion).ToString())
         }
 
@@ -158,8 +158,8 @@ Describe 'Std.App' {
         }
     }
 
-    Context 'Sync-StdAppFolder: kopia do App\<wersja>' {
-        It 'kopiuje tylko pliki narzędzia do App\<wersja z STD.psd1> i zwraca ten folder' {
+    Context 'Sync-StdAppFolder: kopia do App\(wersja)' {
+        It 'kopiuje tylko pliki narzędzia do App\(wersja z STD.psd1) i zwraca ten folder' {
             $source = New-TestSource -Version '4.0.2'
             $target = Sync-StdAppFolder -Source $source
             $target | Should -Be (Join-Path (Get-StdPath -Kind App) '4.0.2')
@@ -222,7 +222,7 @@ Describe 'Std.App' {
             [System.IO.File]::ReadAllText($file) | Should -Be 'nowa wersja pliku'
         }
 
-        It 'nie kopiuje, gdy źródło to już folder App\<wersja>' {
+        It 'nie kopiuje, gdy źródło to już folder App\(wersja)' {
             $target = Sync-StdAppFolder -Source (New-TestSource)
             Set-TestOldTimes -Root $target
             Sync-StdAppFolder -Source $target | Should -Be $target
