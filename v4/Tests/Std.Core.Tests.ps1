@@ -425,8 +425,14 @@ Describe 'Std.Core' {
                 Write-StdLog -Message 'Zażółć gęślą jaźń'
                 Write-StdLog -Message 'uwaga sekret123' -Level Warn
                 Write-StdLog -Message 'błąd' -Level Error
-                # plik da się czytać w trakcie zapisu
-                $lines = @([System.IO.File]::ReadAllText($path, (New-Object System.Text.UTF8Encoding($false))) -split "`r?`n" | Where-Object { $_ })
+                # plik da się czytać w trakcie zapisu - czytelnik musi dopuścić zapis (FileShare.ReadWrite), bo plik
+                # jest otwarty do zapisu; [IO.File]::ReadAllText tego nie robi i na Windows kończy się błędem blokady.
+                $fs = New-Object System.IO.FileStream($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
+                try {
+                    $reader = New-Object System.IO.StreamReader($fs, (New-Object System.Text.UTF8Encoding($false)))
+                    $text = $reader.ReadToEnd()
+                } finally { $fs.Dispose() }
+                $lines = @($text -split "`r?`n" | Where-Object { $_ })
             } finally {
                 Unregister-StdLogSink -Name 'test-plik'
                 Clear-StdLogMasks

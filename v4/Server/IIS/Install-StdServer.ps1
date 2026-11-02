@@ -92,6 +92,7 @@ $script:StdSrvClientFeatures = @('IIS-WebServerRole', 'IIS-WebServer', 'IIS-Comm
 # bez tego IIS odpowiada 404.3 na nieznane rozszerzenia.
 $script:StdSrvMimeTypes = [ordered]@{
     '.sdt'  = 'application/json'
+    '.json' = 'application/json'
     '.msi'  = 'application/octet-stream'
     '.exe'  = 'application/octet-stream'
     '.msix' = 'application/octet-stream'
@@ -776,17 +777,16 @@ function Set-StdSrvCollection {
 }
 
 function Set-StdSrvMimeMaps {
-    # Podmienia / dodaje typy MIME (dziedziczony wpis z poziomu serwera -> <remove> + nowy wpis).
+    # Lista typów MIME witryny od zera (<clear /> + pełna lista STD). Witryna serwuje tylko pliki STD, a dopisywanie
+    # do listy dziedziczonej z poziomu serwera kończyło się błędem "Cannot add duplicate collection entry" (np. '.zip').
+    # Za każdym uruchomieniem wynik jest ten sam, więc aktualizacja jest bezpieczna.
     param($StaticContentSection, [System.Collections.IDictionary]$Types)
     $collection = $StaticContentSection.GetCollection()
+    $collection.Clear()
     foreach ($ext in @($Types.Keys)) {
-        $want = $Types[$ext]
-        $existing = @($collection | Where-Object { "$($_['fileExtension'])" -eq $ext })
-        if ($existing.Count -eq 1 -and "$($existing[0]['mimeType'])" -eq $want) { continue }
-        foreach ($e in $existing) { $collection.Remove($e) }
         $map = $collection.CreateElement('mimeMap')
         $map['fileExtension'] = $ext
-        $map['mimeType'] = $want
+        $map['mimeType'] = $Types[$ext]
         [void]$collection.Add($map)
     }
 }
