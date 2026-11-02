@@ -27,7 +27,7 @@ Plan i decyzje: [PLAN.md](PLAN.md). Umowa techniczna (funkcje, formaty, kody bł
 | --- | --- |
 | 1. Fundament | gotowy |
 | 1b. Serwer (IIS i nginx) | gotowy, testy instalacji w CI |
-| 2. Silnik i okna | zrobiony, czeka na pierwszy przebieg CI w Windows (testy okien i podgląd UI) |
+| 2. Silnik i okna | gotowy (testy w CI przechodzą, podgląd okien bez uwag) |
 | 3. Kroki i ekran pytań | następny |
 
 Etap 1 zawiera:

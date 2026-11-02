@@ -76,8 +76,8 @@ Szczegóły techniczne (format konfiguracji, funkcje modułów, serwer) są w [S
 | --- | --- | --- |
 | 1. Fundament | Moduły: log z maskowaniem, JSON, HTTP, podpis i weryfikacja, sekrety, konfiguracja (pobranie, kopia, ochrona przed starszą wersją), konwerter starego `config.json`; narzędzia „utwórz certyfikat” i „opublikuj”; testy | gotowy (testy w CI przechodzą) |
 | 1b. Serwer | Instalka IIS (Windows Server) i nginx (Linux), dodawanie kont techników, aktualizacja z zachowaniem ustawień, testy instalacji w CI | gotowy (testy w CI przechodzą) |
-| 2. Silnik i okna | Wdrożenie w osobnym wątku, pauza i przerywanie, plik stanu, okno wdrożenia, motyw, ekrany „Połącz” i „Logowanie”, wybór klienta, samodzielne podniesienie uprawnień | w toku |
-| 3. Kroki | Przeniesienie zadań z 3.1, instalator z wykrywaniem i SHA-256, ekran pytań, „Sprawdź”, Deinstalator, Informacje o systemie | |
+| 2. Silnik i okna | Wdrożenie w osobnym wątku, pauza i przerywanie, plik stanu, okno wdrożenia, motyw, ekrany „Połącz” i „Logowanie”, wybór klienta, samodzielne podniesienie uprawnień | gotowy (testy w CI przechodzą) |
+| 3. Kroki | Przeniesienie zadań z 3.1, instalator z wykrywaniem i SHA-256, ekran pytań, „Sprawdź”, Deinstalator, Informacje o systemie | następny |
 | 4. Restart i raport | Wznowienie po restarcie, fazy, „Ponów nieudane”, raport, klucz BitLocker na serwer, „Zgłoś problem” | |
 | 5. Edytor administratora | Z obecnych Ustawień: klienci i lokalizacje, SHA-256 z pliku, „Opublikuj”, import starego `config.json` | |
 | Pilot | Jeden klient, 3.1 jako zapas | |
