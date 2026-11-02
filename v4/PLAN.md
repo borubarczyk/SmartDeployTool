@@ -74,8 +74,8 @@ Szczegóły techniczne (format konfiguracji, funkcje modułów, serwer) są w [S
 
 | Etap | Zakres | Stan |
 | --- | --- | --- |
-| 1. Fundament | Moduły: log z maskowaniem, JSON, HTTP, podpis i weryfikacja, sekrety, konfiguracja (pobranie, kopia, ochrona przed starszą wersją), konwerter starego `config.json`; narzędzia „utwórz certyfikat” i „opublikuj”; testy | w toku |
-| 1b. Serwer | Instalka IIS (Windows Server) i nginx (Linux), dodawanie kont techników, aktualizacja z zachowaniem ustawień, testy instalacji w CI | w toku |
+| 1. Fundament | Moduły: log z maskowaniem, JSON, HTTP, podpis i weryfikacja, sekrety, konfiguracja (pobranie, kopia, ochrona przed starszą wersją), konwerter starego `config.json`; narzędzia „utwórz certyfikat” i „opublikuj”; testy | kod gotowy, testy w CI |
+| 1b. Serwer | Instalka IIS (Windows Server) i nginx (Linux), dodawanie kont techników, aktualizacja z zachowaniem ustawień, testy instalacji w CI | kod gotowy, testy w CI |
 | 2. Silnik i okna | Wdrożenie w osobnym wątku, pauza i przerywanie, plik stanu, okno wdrożenia, motyw, ekrany „Połącz” i „Logowanie”, wybór klienta, samodzielne podniesienie uprawnień | następny |
 | 3. Kroki | Przeniesienie zadań z 3.1, instalator z wykrywaniem i SHA-256, ekran pytań, „Sprawdź”, Deinstalator, Informacje o systemie | |
 | 4. Restart i raport | Wznowienie po restarcie, fazy, „Ponów nieudane”, raport, klucz BitLocker na serwer, „Zgłoś problem” | |
@@ -92,8 +92,7 @@ v4/
   Modules\                      Std.Core.ps1, Std.Http.ps1, Std.Crypto.ps1, Std.Config.ps1, Std.Legacy.ps1, Std.TrustedSigners.psd1
   schema\                       std-release.v4.schema.json
   Tools\                        New-StdSigningCertificate.ps1, Publish-StdRelease.ps1, Convert-StdLegacyConfig.ps1
-  Server\IIS\                   Install-StdServer.ps1, Add-StdServerUser.ps1
-  Server\Linux\                 install-std-server.sh, std-server
-  Server\README.md              instalacja, aktualizacja, konta techników, plik bootstrap.json dla pendrive'a
-  Tests\                        *.Tests.ps1 (Pester 5, Windows PowerShell 5.1), Fixtures\
+  Server\IIS\                   Install-StdServer.ps1, Add-StdServerUser.ps1, README.md (instalacja, aktualizacja, konta, bootstrap.json)
+  Server\Linux\                 install-std-server.sh, std-server, README.md (to samo dla nginx)
+  Tests\                        *.Tests.ps1 (Pester 5, Windows PowerShell 5.1), Invoke-StdSmoke.ps1 (test od początku do końca), Fixtures\
 ```

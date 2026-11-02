@@ -1,0 +1,264 @@
+name: STD 4 - serwer IIS
+
+# Test instalki serwera STD dla Windows Server + IIS (v4/SPEC.md, sekcja 5.4):
+# certyfikat testowy w Cert:\LocalMachine\My, instalacja, konta testowe przez Add-StdServerUser.ps1 -Create,
+# sprawdzenia curl.exe -k (logowanie, odczyt, zapis do drop, brak odczytu drop, std-admin, HTTP -> 301),
+# potem ponowne uruchomienie instalki bez parametrów (aktualizacja) i sprawdzenie, że ustawienia, konta,
+# grupy i pliki zostały, a sprawdzenia nadal przechodzą.
+#
+# Teksty w blokach "run" są bez polskich znaków: runner zapisuje skrypt kroku bez BOM, a Windows PowerShell 5.1
+# czyta taki plik jako ANSI.
+
+on:
+  push:
+    paths:
+      - 'v4/Server/IIS/**'
+      - '.github/workflows/v4-server-iis.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  iis:
+    name: Instalacja, sprawdzenia i aktualizacja (IIS)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      STD_SETTINGS: C:\ProgramData\STD-Server\settings.json
+      STD_DATA: C:\STD-Server\data\std
+
+    steps:
+      - name: Pobranie repozytorium
+        uses: actions/checkout@v4
+
+      - name: Certyfikat testowy i hasla kont testowych
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cert = New-SelfSignedCertificate -DnsName 'localhost' -CertStoreLocation 'Cert:\LocalMachine\My' -FriendlyName 'STD CI test' -NotAfter (Get-Date).AddDays(3)
+          Write-Host "Certyfikat testowy: $($cert.Thumbprint)"
+          # Hasla losowe dla tego przebiegu (maskowane w logu), spelniaja wymagania zlozonosci Windows.
+          function New-TestPassword { 'Std-' + [guid]::NewGuid().ToString('N').Substring(0, 16) + '-Aa1' }
+          $tech = New-TestPassword
+          $admin = New-TestPassword
+          Write-Output "::add-mask::$tech"
+          Write-Output "::add-mask::$admin"
+          Add-Content -Path $env:GITHUB_ENV -Encoding ascii -Value @("STD_THUMB=$($cert.Thumbprint)", "STD_TECH_PW=$tech", "STD_ADMIN_PW=$admin")
+
+      - name: Skrypt sprawdzen (curl.exe)
+        shell: powershell
+        run: |
+          $checks = @'
+          param([Parameter(Mandatory = $true)][string]$Phase)
+          $ErrorActionPreference = 'Stop'
+          $base = 'https://localhost'
+          $tech = "std-ci-tech:$env:STD_TECH_PW"
+          $admin = "std-ci-admin:$env:STD_ADMIN_PW"
+          $failures = New-Object System.Collections.Generic.List[string]
+          $name = "ci-$Phase"
+          $body = Join-Path $env:RUNNER_TEMP "$name.json"
+          $bodyText = '{"ci":"' + $Phase + '","run":"' + $env:GITHUB_RUN_ID + '"}'
+          [IO.File]::WriteAllText($body, $bodyText, (New-Object System.Text.UTF8Encoding($false)))
+
+          function Get-Code([string[]]$CurlArgs) {
+              $out = & curl.exe -k -s -o NUL -w '%{http_code}' --max-time 60 @CurlArgs
+              return ("$out").Trim()
+          }
+          function Assert-Code([string]$Title, [string[]]$Expected, [string[]]$CurlArgs) {
+              $code = Get-Code $CurlArgs
+              if ($Expected -contains $code) { Write-Host ('OK    {0} -> {1}' -f $Title, $code) }
+              else {
+                  Write-Host ('BLAD  {0} -> {1} (oczekiwano {2})' -f $Title, $code, ($Expected -join '/'))
+                  $failures.Add("$Title -> $code")
+              }
+          }
+          function Assert-True([string]$Title, [bool]$Condition, [string]$Detail) {
+              if ($Condition) { Write-Host ('OK    {0}' -f $Title) }
+              else { Write-Host ('BLAD  {0}: {1}' -f $Title, $Detail); $failures.Add("$Title : $Detail") }
+          }
+
+          Write-Host "=== Sprawdzenia: $Phase ==="
+          # SPEC 5.4
+          Assert-Code 'GET bez logowania -> 401' @('401') @("$base/std/clients.sdt")
+          Assert-Code 'technik GET clients.sdt -> 200' @('200') @('-u', $tech, "$base/std/clients.sdt")
+          Assert-Code 'technik PUT do /std/drop/ -> 201/204' @('201', '204') @('-u', $tech, '-T', $body, "$base/std/drop/$name.json")
+          # IIS: odmowa z autoryzacji URL to 401 (401.2), nginx daje 403 - oba oznaczaja brak dostepu.
+          Assert-Code 'technik GET pliku w /std/drop/ -> 401/403' @('401', '403') @('-u', $tech, "$base/std/drop/$name.json")
+          Assert-Code 'technik GET /std/drop/ (lista) -> 401/403' @('401', '403') @('-u', $tech, "$base/std/drop/")
+          Assert-Code 'technik PUT do /std-admin/ -> 401/403' @('401', '403') @('-u', $tech, '-T', $body, "$base/std-admin/files/$name-tech.bin")
+          Assert-Code 'administrator MKCOL /std-admin/files/<katalog>/ -> 201' @('201') @('-u', $admin, '-X', 'MKCOL', "$base/std-admin/files/$name/")
+          Assert-Code 'administrator PUT do /std-admin/ -> 201/204' @('201', '204') @('-u', $admin, '-T', $body, "$base/std-admin/files/$name/ci-admin.bin")
+          Assert-Code 'HTTP -> 301' @('301') @('http://localhost/std/clients.sdt')
+          # Dodatkowe
+          Assert-Code 'technik, zle haslo -> 401' @('401') @('-u', 'std-ci-tech:Zle-haslo-123', "$base/std/clients.sdt")
+          Assert-Code 'administrator GET clients.sdt -> 200' @('200') @('-u', $admin, "$base/std/clients.sdt")
+          Assert-Code 'technik PUT do /std/ poza drop -> 401/403' @('401', '403') @('-u', $tech, '-T', $body, "$base/std/clients/$name.json")
+          Assert-Code 'technik PROPFIND /std/ -> odmowa' @('401', '403', '405') @('-u', $tech, '-X', 'PROPFIND', '-H', 'Depth: 1', "$base/std/")
+          Assert-Code 'technik GET /std-admin/ -> 401/403' @('401', '403') @('-u', $tech, "$base/std-admin/clients.sdt")
+          Assert-Code 'technik GET pliku wgranego przez administratora -> 200' @('200') @('-u', $tech, "$base/std/files/$name/ci-admin.bin")
+          Assert-Code 'administrator GET raportu przez /std-admin/drop/ -> 200' @('200') @('-u', $admin, "$base/std-admin/drop/$name.json")
+
+          $content = ("$(& curl.exe -k -s --max-time 60 -u $tech "$base/std/clients.sdt")").Trim()
+          Assert-True 'tresc clients.sdt' ($content -eq '{"kind":"std.signed","ci":true}') "otrzymano: $content"
+
+          $headers = (@(& curl.exe -k -s -D - -o NUL --max-time 60 -u $tech "$base/std/clients.sdt") -join "`n")
+          Assert-True 'naglowek Strict-Transport-Security' ($headers -match '(?im)^Strict-Transport-Security:\s*max-age=31536000') $headers
+          Assert-True 'naglowek X-Content-Type-Options' ($headers -match '(?im)^X-Content-Type-Options:\s*nosniff') $headers
+          Assert-True 'Content-Type .sdt = application/json' ($headers -match '(?im)^Content-Type:\s*application/json') $headers
+          Assert-True 'Cache-Control no-cache dla .sdt' ($headers -match '(?im)^Cache-Control:.*no-cache') $headers
+
+          $location = ("$(& curl.exe -s -o NUL -w '%{redirect_url}' --max-time 30 'http://localhost/std/clients.sdt')").Trim()
+          Assert-True 'HTTP przekierowuje na https://localhost' ($location -like 'https://localhost*') "Location: $location"
+          if ($location -ne 'https://localhost/std/clients.sdt') { Write-Host "UWAGA: Location = $location (oczekiwano https://localhost/std/clients.sdt)" }
+
+          $dropFile = Join-Path $env:STD_DATA "drop\$name.json"
+          Assert-True 'raport technika zapisany na dysku' ((Test-Path -LiteralPath $dropFile) -and ([IO.File]::ReadAllText($dropFile) -eq $bodyText)) $dropFile
+          Assert-True 'plik administratora zapisany na dysku' (Test-Path -LiteralPath (Join-Path $env:STD_DATA "files\$name\ci-admin.bin")) "files\$name\ci-admin.bin"
+
+          if ($failures.Count -gt 0) {
+              Write-Host ''
+              Write-Host "NIEUDANE SPRAWDZENIA ($Phase): $($failures.Count)"
+              $failures | ForEach-Object { Write-Host " - $_" }
+              exit 1
+          }
+          Write-Host "Wszystkie sprawdzenia ($Phase) przeszly."
+          exit 0
+          '@
+          Set-Content -Path (Join-Path $env:RUNNER_TEMP 'std-checks.ps1') -Value $checks -Encoding UTF8
+          Write-Host 'Zapisano skrypt sprawdzen.'
+
+      - name: Instalacja (pierwsze uruchomienie)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File v4\Server\IIS\Install-StdServer.ps1 -HostName localhost -CertificateThumbprint $env:STD_THUMB
+          if ($LASTEXITCODE -ne 0) { throw "Instalka zakonczyla sie kodem $LASTEXITCODE" }
+          $s = Get-Content -Path $env:STD_SETTINGS -Raw | ConvertFrom-Json
+          $s | Format-List | Out-String | Write-Host
+          if ($s.HostName -ne 'localhost' -or $s.CertificateThumbprint -ne $env:STD_THUMB -or [int]$s.Port -ne 443 -or $s.SiteName -ne 'STD') {
+            throw 'settings.json ma inne wartosci niz parametry instalacji.'
+          }
+          foreach ($d in 'clients', 'files', 'files\common', 'tool', 'drop') {
+            if (-not (Test-Path -LiteralPath (Join-Path $env:STD_DATA $d) -PathType Container)) { throw "Brak katalogu $d" }
+          }
+          foreach ($g in 'STD-Technicy', 'STD-Administratorzy') {
+            if (-not (Get-LocalGroup -Name $g -ErrorAction SilentlyContinue)) { throw "Brak grupy $g" }
+          }
+          exit 0
+
+      - name: Dane testowe i konta testowe
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $utf8 = New-Object System.Text.UTF8Encoding($false)
+          [IO.File]::WriteAllText((Join-Path $env:STD_DATA 'clients.sdt'), '{"kind":"std.signed","ci":true}', $utf8)
+          [IO.File]::WriteAllText((Join-Path $env:STD_DATA 'files\common\ci-marker.txt'), "marker $env:GITHUB_RUN_ID", $utf8)
+
+          $tool = '.\v4\Server\IIS\Add-StdServerUser.ps1'
+          $global:LASTEXITCODE = 0
+          & $tool -UserName std-ci-tech -Role Technician -Create -Password (ConvertTo-SecureString $env:STD_TECH_PW -AsPlainText -Force)
+          if ($LASTEXITCODE -ne 0) { throw "Add-StdServerUser (technik): kod $LASTEXITCODE" }
+          & $tool -UserName std-ci-admin -Role Admin -Create -Password (ConvertTo-SecureString $env:STD_ADMIN_PW -AsPlainText -Force)
+          if ($LASTEXITCODE -ne 0) { throw "Add-StdServerUser (administrator): kod $LASTEXITCODE" }
+          # Ponowne dodanie istniejacego konta: bez zmian, bez bledu.
+          & $tool -UserName std-ci-tech -Role Technician -Create
+          if ($LASTEXITCODE -ne 0) { throw "Add-StdServerUser (ponownie): kod $LASTEXITCODE" }
+          # Nieistniejace konto bez -Create: blad.
+          & $tool -UserName std-ci-brak -Role Technician
+          if ($LASTEXITCODE -eq 0) { throw 'Add-StdServerUser bez -Create dla nieistniejacego konta powinien zakonczyc sie bledem.' }
+          $global:LASTEXITCODE = 0
+          Get-LocalGroupMember -Group 'STD-Technicy' | Format-Table -AutoSize | Out-String | Write-Host
+          Get-LocalGroupMember -Group 'STD-Administratorzy' | Format-Table -AutoSize | Out-String | Write-Host
+          exit 0
+
+      - name: Sprawdzenia po instalacji
+        shell: powershell
+        run: |
+          & (Join-Path $env:RUNNER_TEMP 'std-checks.ps1') -Phase install
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          exit 0
+
+      - name: Aktualizacja (ponowne uruchomienie bez parametrow)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $before = Get-Content -Path $env:STD_SETTINGS -Raw | ConvertFrom-Json
+          $markerPath = Join-Path $env:STD_DATA 'files\common\ci-marker.txt'
+          $marker = [IO.File]::ReadAllText($markerPath)
+          $backupDir = 'C:\ProgramData\STD-Server\backup'
+          $backupsBefore = @(Get-ChildItem -Path $backupDir -Directory).Count
+
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File v4\Server\IIS\Install-StdServer.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Aktualizacja zakonczyla sie kodem $LASTEXITCODE" }
+
+          $after = Get-Content -Path $env:STD_SETTINGS -Raw | ConvertFrom-Json
+          $errors = New-Object System.Collections.Generic.List[string]
+          foreach ($k in 'HostName', 'CertificateThumbprint', 'Port', 'SiteName', 'DataPath', 'TechnicianGroup', 'AdminGroup', 'InstalledAt') {
+            if ("$($before.$k)" -ne "$($after.$k)") { $errors.Add("settings.json: $k zmienione z '$($before.$k)' na '$($after.$k)'") }
+          }
+          if ("$($after.UpdatedAt)" -eq "$($before.UpdatedAt)") { $errors.Add('settings.json: UpdatedAt sie nie zmienilo') }
+          if ((Get-Content -Path $env:STD_SETTINGS -Raw) -match '(?i)password|passwd|haslo|secret|token') { $errors.Add('settings.json zawiera pole przypominajace haslo') }
+          foreach ($u in 'std-ci-tech', 'std-ci-admin') {
+            if (-not (Get-LocalUser -Name $u -ErrorAction SilentlyContinue)) { $errors.Add("Brak konta $u") }
+          }
+          $techMembers = @(Get-LocalGroupMember -Group 'STD-Technicy' | ForEach-Object { $_.Name })
+          $adminMembers = @(Get-LocalGroupMember -Group 'STD-Administratorzy' | ForEach-Object { $_.Name })
+          if (-not ($techMembers | Where-Object { $_ -like '*\std-ci-tech' })) { $errors.Add('std-ci-tech nie jest juz w grupie STD-Technicy') }
+          if (-not ($adminMembers | Where-Object { $_ -like '*\std-ci-admin' })) { $errors.Add('std-ci-admin nie jest juz w grupie STD-Administratorzy') }
+          if (-not (Test-Path -LiteralPath $markerPath) -or [IO.File]::ReadAllText($markerPath) -ne $marker) { $errors.Add('Plik testowy files\common\ci-marker.txt zniknal albo sie zmienil') }
+          foreach ($f in 'clients.sdt', 'drop\ci-install.json', 'files\ci-install\ci-admin.bin') {
+            if (-not (Test-Path -LiteralPath (Join-Path $env:STD_DATA $f))) { $errors.Add("Brak pliku $f po aktualizacji") }
+          }
+          $backupsAfter = @(Get-ChildItem -Path $backupDir -Directory).Count
+          if ($backupsAfter -le $backupsBefore) { $errors.Add("Aktualizacja nie zrobila kopii zapasowej ($backupsBefore -> $backupsAfter)") }
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Host "BLAD  $_" }
+            exit 1
+          }
+          Write-Host 'Ustawienia, konta, grupy, pliki i kopia zapasowa - OK.'
+          exit 0
+
+      - name: Sprawdzenia po aktualizacji
+        shell: powershell
+        run: |
+          & (Join-Path $env:RUNNER_TEMP 'std-checks.ps1') -Phase upgrade
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          exit 0
+
+      - name: Diagnostyka (IIS, http.sys, NTFS, logi)
+        if: always()
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $appcmd = Join-Path $env:windir 'System32\inetsrv\appcmd.exe'
+          if (Test-Path $appcmd) {
+            Write-Host '==== appcmd list site / apppool / vdir ===='
+            & $appcmd list site
+            & $appcmd list apppool
+            & $appcmd list vdir
+          }
+          Write-Host '==== netsh http show sslcert ===='
+          netsh http show sslcert
+          Write-Host '==== NTFS ===='
+          icacls C:\STD-Server\data\std
+          icacls C:\STD-Server\data\std\drop
+          icacls C:\STD-Server\data\std\drop\ci-install.json
+          Write-Host '==== applicationHost.config: <location path="STD..."> ===='
+          $cfgPath = Join-Path $env:windir 'System32\inetsrv\config\applicationHost.config'
+          if (Test-Path $cfgPath) {
+            $cfg = [IO.File]::ReadAllText($cfgPath)
+            [regex]::Matches($cfg, '(?s)<location path="STD[^"]*".*?</location>') | ForEach-Object { Write-Host $_.Value }
+          }
+          Write-Host '==== Logi IIS (status i podstatus, np. 401.2 / 401.3) ===='
+          netsh http flush logbuffer | Out-Null
+          Get-ChildItem -Path 'C:\inetpub\logs\LogFiles' -Recurse -Filter *.log -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "== $($_.FullName)"
+            Get-Content -Path $_.FullName -Tail 80
+          }
+          Write-Host '==== Logi instalki ===='
+          Get-ChildItem -Path 'C:\ProgramData\STD-Server\logs' -Filter *.log -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "== $($_.FullName)"
+            Get-Content -Path $_.FullName -Tail 300
+          }
+          exit 0

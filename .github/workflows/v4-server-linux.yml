@@ -1,0 +1,290 @@
+name: v4 Server Linux
+
+# Test instalki serwera STD 4 (Linux + nginx) na czystym Ubuntu - SPEC.md, sekcja 5.4.
+# Instalacja z certyfikatem samopodpisanym, konta testowe (hasła przez --password-stdin),
+# sprawdzenie praw dostępu przez curl -k, potem ponowne uruchomienie instalki (aktualizacja)
+# i sprawdzenie, że konta, ustawienia i pliki zostały, a prawa dostępu działają dalej.
+# Hasła testowe są losowane w kroku, maskowane w logu i nie trafiają do żadnego pliku
+# ani do wiersza poleceń (curl dostaje je przez -K - ze standardowego wejścia).
+on:
+  push:
+    paths:
+      - 'v4/Server/Linux/**'
+      - '.github/workflows/v4-server-linux.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nginx:
+    name: Instalka Linux + nginx
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LC_ALL: C.UTF-8
+      STD_INSTALLER: v4/Server/Linux/install-std-server.sh
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: ShellCheck
+        run: shellcheck -x v4/Server/Linux/install-std-server.sh v4/Server/Linux/std-server
+
+      # Obraz runnera ma zainstalowane apache2 i nginx; porty 80 i 443 muszą być wolne.
+      - name: Przygotowanie runnera
+        run: |
+          sudo systemctl stop apache2 2>/dev/null || true
+          sudo systemctl disable apache2 2>/dev/null || true
+          sudo systemctl stop nginx 2>/dev/null || true
+
+      - name: Instalacja, konta, prawa dostępu, aktualizacja
+        shell: bash
+        run: |
+          set -euo pipefail
+          INSTALLER="$PWD/$STD_INSTALLER"
+          TOOL=/usr/local/sbin/std-server
+          HOST=localhost
+          DATA=/srv/std/std
+          TECH=ci-technik
+          ADMIN=ci-admin
+          TECH_PW=$(openssl rand -hex 16)
+          ADMIN_PW=$(openssl rand -hex 16)
+          OTHER_PW=$(openssl rand -hex 16)
+          if [ -n "${GITHUB_ACTIONS:-}" ]; then
+            echo "::add-mask::$TECH_PW"
+            echo "::add-mask::$ADMIN_PW"
+            echo "::add-mask::$OTHER_PW"
+          fi
+          WORK=$(mktemp -d)
+          trap 'rm -rf "$WORK"' EXIT
+          FAILED=0
+
+          fail() { printf 'BŁĄD  %s\n' "$*"; [ -z "${GITHUB_ACTIONS:-}" ] || printf '::error::%s\n' "$*"; FAILED=1; }
+          ok() { printf 'OK    %s\n' "$*"; }
+
+          # Kod HTTP dla zapytania. $1 = konto (none | tech | admin | other | bad), dalej argumenty curl.
+          # Login i hasło idą do curl przez plik konfiguracji czytany ze stdin (-K -), nie przez argumenty.
+          http_code() {
+            local who=$1 cfg=''
+            shift
+            case $who in
+              tech) cfg="user = \"$TECH:$TECH_PW\"" ;;
+              admin) cfg="user = \"$ADMIN:$ADMIN_PW\"" ;;
+              other) cfg="user = \"ci-inny:$OTHER_PW\"" ;;
+              bad) cfg="user = \"$TECH:zle-haslo-$RANDOM\"" ;;
+            esac
+            printf '%s\n' "$cfg" | curl -K - -k -s --noproxy '*' --max-time 60 -o /dev/null -w '%{http_code}' "$@" || true
+          }
+
+          # $1 = opis, $2 = oczekiwane kody (wyrażenie, np. 201|204), $3 = konto, dalej argumenty curl.
+          check() {
+            local desc=$1 want=$2 who=$3 got
+            shift 3
+            got=$(http_code "$who" "$@")
+            if [[ $got =~ ^($want)$ ]]; then ok "$desc: $got"; else fail "$desc: $got (oczekiwano $want)"; fi
+          }
+
+          check_cmd() {
+            # $1 = opis, $2 = oczekiwany kod wyjścia, dalej polecenie
+            local desc=$1 want=$2 rc=0
+            shift 2
+            "$@" >"$WORK/cmd.out" 2>&1 || rc=$?
+            if [ "$rc" = "$want" ]; then ok "$desc: kod $rc"; else fail "$desc: kod $rc (oczekiwano $want)"; cat "$WORK/cmd.out"; fi
+          }
+
+          perm_of() { sudo stat -c '%U:%G %a' "$1"; }
+
+          expect_perm() {
+            local path=$1 want=$2 got
+            got=$(perm_of "$path" 2>/dev/null || echo brak)
+            if [ "$got" = "$want" ]; then ok "uprawnienia $path: $got"; else fail "uprawnienia $path: $got (oczekiwano $want)"; fi
+          }
+
+          settings_value() { sudo sed -n "s/^$1=//p" /etc/std-server/settings.conf; }
+
+          run_checks() {
+            local phase=$1 port=${2:-443} b hdrs loc
+            if [ "$port" = 443 ]; then b="https://$HOST"; else b="https://$HOST:$port"; fi
+            echo "::group::Sprawdzenia: $phase"
+            printf '{"ci":"%s"}\n' "$phase" > "$WORK/report.json"
+            printf 'sdt-%s\n' "$phase" > "$WORK/clients.sdt"
+            truncate -s $((50 * 1024 * 1024 + 1024)) "$WORK/big.bin"
+
+            # SPEC 5.4
+            check "GET bez hasła -> 401" '401' none "$b/std/clients.sdt"
+            check "administrator PUT do /std-admin/ -> 201/204" '201|204' admin -T "$WORK/clients.sdt" "$b/std-admin/clients.sdt"
+            check "technik GET clients.sdt -> 200" '200' tech "$b/std/clients.sdt"
+            check "technik PUT do drop -> 201/204" '201|204' tech -T "$WORK/report.json" "$b/std/drop/ci/$phase-report.json"
+            check "technik GET drop/ -> 403" '403' tech "$b/std/drop/"
+            check "technik PUT do /std-admin/ -> 401/403" '401|403' tech -T "$WORK/clients.sdt" "$b/std-admin/clients.sdt"
+            check "HTTP -> 301" '301' none "http://$HOST/std/clients.sdt"
+
+            # Dodatkowe
+            check "złe hasło -> 401" '401' bad "$b/std/clients.sdt"
+            check "administrator GET /std/clients.sdt -> 200" '200' admin "$b/std/clients.sdt"
+            check "administrator PUT do drop -> 201/204" '201|204' admin -T "$WORK/report.json" "$b/std/drop/ci/$phase-admin.json"
+            check "technik GET pliku w drop -> 403" '403' tech "$b/std/drop/ci/$phase-report.json"
+            check "technik DELETE w drop -> 403" '403' tech -X DELETE "$b/std/drop/ci/$phase-report.json"
+            check "technik PUT do /std/ (tylko odczyt) -> 403" '403' tech -T "$WORK/clients.sdt" "$b/std/clients.sdt"
+            check "technik GET /std/ (listowanie) -> 403" '403' tech "$b/std/"
+            check "technik GET /std-admin/ -> 401" '401' tech "$b/std-admin/clients.sdt"
+            check "drop powyżej 50 MB -> 413" '413' tech -T "$WORK/big.bin" "$b/std/drop/ci/duzy.bin"
+            check "administrator PUT z tworzeniem katalogów -> 201/204" '201|204' admin -T "$WORK/clients.sdt" "$b/std-admin/clients/ci/history/$phase.sdt"
+            check "technik GET pliku opublikowanego w podkatalogu -> 200" '200' tech "$b/std/clients/ci/history/$phase.sdt"
+            check "administrator MKCOL nowego katalogu -> 201" '201' admin -X MKCOL "$b/std-admin/files/ci-$phase/"
+            check "administrator MKCOL istniejącego katalogu -> 405" '405' admin -X MKCOL "$b/std-admin/files/ci-$phase/"
+            check "administrator DELETE katalogu -> 204" '204' admin -X DELETE "$b/std-admin/files/ci-$phase/"
+            check "administrator GET raportu przez /std-admin/drop/ -> 200" '200' admin "$b/std-admin/drop/ci/$phase-report.json"
+            check "administrator DELETE całego /std-admin/ -> 403" '403' admin -X DELETE "$b/std-admin/"
+            check "administrator DELETE /std-admin/clients/ -> 403" '403' admin -X DELETE "$b/std-admin/clients/"
+            check "administrator DELETE pliku -> 204" '204' admin -X DELETE "$b/std-admin/drop/ci/$phase-admin.json"
+            check "nieznana ścieżka -> 404" '404' none "$b/inne/"
+
+            hdrs=$(printf 'user = "%s:%s"\n' "$TECH" "$TECH_PW" | curl -K - -k -s --noproxy '*' -D - -o /dev/null "$b/std/clients.sdt" | tr -d '\r' || true)
+            for h in 'Strict-Transport-Security: max-age=31536000' 'X-Content-Type-Options: nosniff' 'Content-Type: application/json' 'Cache-Control: no-cache'; do
+              if grep -qiF "$h" <<<"$hdrs"; then ok "nagłówek $h"; else fail "brak nagłówka: $h"; fi
+            done
+            loc=$(curl -s --noproxy '*' -o /dev/null -w '%{redirect_url}' "http://$HOST/std/clients.sdt" || true)
+            if [ "$loc" = "$b/std/clients.sdt" ]; then ok "przekierowanie HTTP -> $loc"; else fail "przekierowanie HTTP -> '$loc' (oczekiwano $b/std/clients.sdt)"; fi
+
+            if [ "$(sudo cat "$DATA/clients.sdt")" = "sdt-$phase" ]; then ok "zawartość clients.sdt po PUT"; else fail "zawartość clients.sdt po PUT"; fi
+            expect_perm "$DATA/drop/ci/$phase-report.json" 'www-data:www-data 640'
+            expect_perm "$DATA/clients/ci/history" 'www-data:www-data 750'
+            expect_perm "$DATA" 'www-data:www-data 750'
+            expect_perm /etc/std-server/technicians.htpasswd 'root:www-data 640'
+            expect_perm /etc/std-server/admins.htpasswd 'root:www-data 640'
+            expect_perm /etc/std-server/readers.htpasswd 'root:www-data 640'
+            if sudo test -e "$DATA/drop/ci/duzy.bin"; then fail "plik powyżej 50 MB został zapisany"; else ok "plik powyżej 50 MB nie został zapisany"; fi
+            echo "::endgroup::"
+          }
+
+          snapshot() {
+            # Stan, który aktualizacja musi zachować (bez znacznika czasu ostatniego uruchomienia).
+            sudo sha256sum /etc/std-server/technicians.htpasswd /etc/std-server/admins.htpasswd \
+              /etc/std-server/tls/std-server.crt /etc/std-server/tls/std-server.key
+            sudo grep -v '^UPDATED_AT=' /etc/std-server/settings.conf
+            sudo find "$DATA" -type f -printf '%P %s\n' | LC_ALL=C sort
+            sudo sha256sum "$DATA/drop/ci/instalacja-report.json" "$DATA/clients/ci/history/instalacja.sdt"
+          }
+
+          no_password_leak() {
+            # Hasła testowe nie mogą trafić do żadnego pliku ani logu serwera.
+            if sudo grep -rqF -e "$TECH_PW" -e "$ADMIN_PW" -e "$OTHER_PW" /etc/std-server /var/lib/std-server /var/log/nginx /etc/nginx "$DATA" 2>/dev/null; then
+              fail "hasło testowe znalezione w plikach serwera"
+            else
+              ok "hasła nie występują w plikach i logach serwera"
+            fi
+          }
+
+          echo "::group::1. Instalacja"
+          sudo bash "$INSTALLER" --self-signed --domain "$HOST" --yes
+          echo "::endgroup::"
+
+          echo "::group::2. Konta"
+          printf '%s\n' "$TECH_PW" | sudo "$TOOL" add-tech "$TECH" --password-stdin
+          printf '%s\n' "$ADMIN_PW" | sudo "$TOOL" add-admin "$ADMIN" --password-stdin
+          accounts=$(sudo "$TOOL" list)
+          printf '%s\n' "$accounts"
+          if grep -Eq "^$TECH +technik\$" <<<"$accounts"; then ok "list: $TECH = technik"; else fail "list: brak technika $TECH"; fi
+          if grep -Eq "^$ADMIN +administrator\$" <<<"$accounts"; then ok "list: $ADMIN = administrator"; else fail "list: brak administratora $ADMIN"; fi
+          check_cmd "hasło w argumentach jest odrzucane" 2 sudo "$TOOL" add-tech ci-x --password nie-wolno
+          check_cmd "za krótkie hasło jest odrzucane" 1 sh -c "printf 'krotkie\n' | sudo $TOOL add-tech ci-x --password-stdin"
+          check_cmd "nieprawidłowy login jest odrzucany" 2 sh -c "printf 'dlugie-haslo-1\n' | sudo $TOOL add-tech 'zly:login' --password-stdin"
+          echo "::endgroup::"
+
+          run_checks instalacja
+
+          echo "::group::3. Dodanie, zmiana roli i usunięcie konta"
+          printf '%s\n' "$OTHER_PW" | sudo "$TOOL" add-tech ci-inny --password-stdin
+          check "nowy technik GET -> 200" '200' other "https://$HOST/std/clients.sdt"
+          check "nowy technik PUT do /std-admin/ -> 401" '401' other -T "$WORK/clients.sdt" "https://$HOST/std-admin/clients.sdt"
+          printf '%s\n' "$OTHER_PW" | sudo "$TOOL" add-admin ci-inny --password-stdin
+          accounts=$(sudo "$TOOL" list)
+          if grep -Eq '^ci-inny +administrator$' <<<"$accounts"; then ok "zmiana roli na administratora"; else fail "zmiana roli na administratora"; fi
+          if sudo grep -q '^ci-inny:' /etc/std-server/technicians.htpasswd; then fail "po zmianie roli konto nadal w technikach"; else ok "po zmianie roli konto tylko w administratorach"; fi
+          check "po zmianie roli MKCOL w /std-admin/ -> 201" '201' other -X MKCOL "https://$HOST/std-admin/files/ci-rola/"
+          check "po zmianie roli DELETE w /std-admin/ -> 204" '204' other -X DELETE "https://$HOST/std-admin/files/ci-rola/"
+          sudo "$TOOL" remove ci-inny
+          check "usunięte konto -> 401" '401' other "https://$HOST/std/clients.sdt"
+          check_cmd "usunięcie nieistniejącego konta" 1 sudo "$TOOL" remove ci-inny
+          check_cmd "std-server status" 0 sudo "$TOOL" status
+          check_cmd "std-server rebuild" 0 sudo "$TOOL" rebuild
+          echo "::endgroup::"
+
+          snapshot > "$WORK/before.txt"
+          backups_before=$(sudo find /var/lib/std-server/backup -mindepth 1 -maxdepth 1 -type d | wc -l)
+
+          echo "::group::4. Aktualizacja (ponowne uruchomienie instalki bez parametrów)"
+          sudo bash "$INSTALLER" --yes
+          echo "::endgroup::"
+
+          snapshot > "$WORK/after.txt"
+          if diff -u "$WORK/before.txt" "$WORK/after.txt"; then ok "aktualizacja zachowała konta, ustawienia, certyfikat i pliki"; else fail "aktualizacja zmieniła konta, ustawienia, certyfikat albo pliki"; fi
+          [ "$(settings_value DOMAIN)" = "$HOST" ] && ok "ustawienie DOMAIN zostało" || fail "ustawienie DOMAIN"
+          [ "$(settings_value TLS_MODE)" = self-signed ] && ok "ustawienie TLS_MODE zostało" || fail "ustawienie TLS_MODE"
+          backups_after=$(sudo find /var/lib/std-server/backup -mindepth 1 -maxdepth 1 -type d | wc -l)
+          [ "$backups_after" -gt "$backups_before" ] && ok "aktualizacja zrobiła kopię zapasową" || fail "brak nowej kopii zapasowej"
+          accounts=$(sudo "$TOOL" list)
+          if grep -Eq "^$TECH +technik\$" <<<"$accounts" && grep -Eq "^$ADMIN +administrator\$" <<<"$accounts"; then ok "konta po aktualizacji"; else fail "konta po aktualizacji"; fi
+          check "raport sprzed aktualizacji: administrator GET przez /std-admin/ -> 200" '200' admin "https://$HOST/std-admin/drop/ci/instalacja-report.json"
+          check "konfiguracja sprzed aktualizacji: technik GET -> 200" '200' tech "https://$HOST/std/clients/ci/history/instalacja.sdt"
+
+          run_checks aktualizacja
+
+          echo "::group::5. Parametr z wiersza poleceń nadpisuje ustawienia i jest zapisywany"
+          sudo bash "$INSTALLER" --port 8443 --yes
+          [ "$(settings_value PORT)" = 8443 ] && ok "PORT=8443 zapisany" || fail "PORT=8443 nie zapisany"
+          [ "$(settings_value DOMAIN)" = "$HOST" ] && ok "DOMAIN zostało przy zmianie portu" || fail "DOMAIN przy zmianie portu"
+          check "port 8443: GET bez hasła -> 401" '401' none "https://$HOST:8443/std/clients.sdt"
+          check "port 8443: technik GET -> 200" '200' tech "https://$HOST:8443/std/clients.sdt"
+          loc=$(curl -s --noproxy '*' -o /dev/null -w '%{redirect_url}' "http://$HOST/std/clients.sdt" || true)
+          [ "$loc" = "https://$HOST:8443/std/clients.sdt" ] && ok "HTTP -> $loc" || fail "HTTP -> '$loc' (oczekiwano https://$HOST:8443/std/clients.sdt)"
+          sudo bash "$INSTALLER" --port 443 --yes
+          [ "$(settings_value PORT)" = 443 ] && ok "PORT=443 przywrócony" || fail "PORT=443 nie przywrócony"
+          echo "::endgroup::"
+
+          echo "::group::6. Błędne parametry i nieudany test nginx: nic się nie zmienia"
+          conf_before=$(sudo sha256sum /etc/nginx/conf.d/std-server.conf /etc/std-server/settings.conf)
+          check_cmd "nieistniejący certyfikat" 1 sudo bash "$INSTALLER" --cert /nie/ma/cert.pem --key /nie/ma/key.pem --yes
+          check_cmd "nazwa serwera z niedozwolonymi znakami" 2 sudo bash "$INSTALLER" --domain 'zla;nazwa' --yes
+          check_cmd "katalog danych systemowy" 2 sudo bash "$INSTALLER" --data-dir /etc --yes
+          printf 'std_ci_broken_directive on;\n' | sudo tee /etc/nginx/conf.d/zz-std-ci-broken.conf >/dev/null
+          check_cmd "nieudany nginx -t (zmiana portu przy zepsutej konfiguracji)" 1 sudo bash "$INSTALLER" --port 8443 --yes
+          sudo rm -f /etc/nginx/conf.d/zz-std-ci-broken.conf
+          conf_after=$(sudo sha256sum /etc/nginx/conf.d/std-server.conf /etc/std-server/settings.conf)
+          [ "$conf_before" = "$conf_after" ] && ok "konfiguracja i ustawienia przywrócone / niezmienione" || fail "konfiguracja albo ustawienia zmienione po nieudanej próbie"
+          [ "$(settings_value PORT)" = 443 ] && ok "PORT nadal 443" || fail "PORT zmieniony mimo błędu"
+          check "po nieudanej próbie: GET bez hasła -> 401" '401' none "https://$HOST/std/clients.sdt"
+          check "po nieudanej próbie: technik GET -> 200" '200' tech "https://$HOST/std/clients.sdt"
+          echo "::endgroup::"
+
+          echo "::group::7. Stan końcowy"
+          check_cmd "std-server status" 0 sudo "$TOOL" status
+          sudo "$TOOL" status
+          if sudo nginx -t >/dev/null 2>&1; then ok "nginx -t"; else fail "nginx -t"; fi
+          no_password_leak
+          echo "::endgroup::"
+
+          if [ "$FAILED" != 0 ]; then
+            echo "Niektóre sprawdzenia nie przeszły."
+            exit 1
+          fi
+          echo "Wszystkie sprawdzenia przeszły."
+
+      - name: Diagnostyka
+        if: failure()
+        shell: bash
+        run: |
+          sudo /usr/local/sbin/std-server status || true
+          echo '---- /etc/nginx/conf.d/std-server.conf'
+          sudo cat /etc/nginx/conf.d/std-server.conf || true
+          echo '---- /etc/std-server/settings.conf'
+          sudo cat /etc/std-server/settings.conf || true
+          echo '---- nginx -t'
+          sudo nginx -t || true
+          echo '---- logi nginx'
+          sudo tail -n 100 /var/log/nginx/std-server.error.log /var/log/nginx/error.log || true
+          sudo journalctl -u nginx --no-pager -n 50 || true
+          sudo ss -ltnp || true

@@ -1,0 +1,5 @@
+# STD 4: w repozytorium zawsze LF. Skrypty serwera Linux muszą mieć LF także po pobraniu repo na Windows
+# (z CRLF bash nie uruchomi ich na serwerze). PowerShell 5.1 czyta LF bez problemu.
+* text=auto eol=lf
+*.sh text eol=lf
+Server/Linux/std-server text eol=lf
